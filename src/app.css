@@ -1,0 +1,56 @@
+:root {
+  /* Pencil notebook palette.
+   *
+   * `--paper`, `--graphite` and `--grid-line` are used everywhere. The
+   * accent colors below are RESERVED — per the design pillars (DESIGN §17
+   * "Color discipline"), color is used sparingly, the way mathematicians
+   * use colored pencils. The palette below will activate in Phase 3 as
+   * number families unlock:
+   *
+   *   --accent-red    primes
+   *   --accent-blue   negatives
+   *   --accent-green  rationals / decimals
+   *   --accent-purple complex
+   *   --highlighter   active selection / callouts
+   *
+   * They're declared here so future slices reach for the established
+   * vocabulary rather than inventing new hues. `--graphite-light` is the
+   * subdued companion to `--graphite` for muted UI text. */
+  --paper: #fbf7ee;
+  --grid-line: #c8d4e0;
+  --graphite: #3a3a3a;
+  --graphite-light: #6a6a6a;
+  --accent-red: #c8473c;
+  --accent-blue: #4a6b8a;
+  --accent-green: #4a7a4a;
+  --accent-purple: #6b4a8a;
+  --highlighter: #f4e68a;
+
+  /* Font stack — kept in sync with PENCIL_FONT_FAMILY in `pixi/typography.ts`.
+   * The TS constant drives canvas-side Text; this variable drives DOM-side
+   * UI (Score header, Literature sidebar, Marginalia). Updating the font
+   * means touching exactly two places. */
+  --pencil-font: 'Kalam', 'Patrick Hand', 'Caveat', Georgia, serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--paper);
+  font-family: var(--pencil-font);
+  color: var(--graphite);
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
