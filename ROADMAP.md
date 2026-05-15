@@ -7,27 +7,35 @@ north star is `DESIGN.md`. This file is the execution plan.
 
 ## 1. Where we are
 
-**Phases 1, 2, 3, 3.5, 4, and the Phase 4 UX polish pass are complete.** The factory runs without
-constant clicking: the canvas pans and zooms; warehouses store typed
-stacks at capacity; magnitude-rated pipes carry blocks automatically
-between cells; three cultivation cells (arithmetic, geometric, Fibonacci)
-generate streams from a single seed; multiplication and exponentiation
-pay fuel per firing (a tick retries blocked cells once fuel becomes
-available); cleanup bots sweep loose blocks into matching warehouses;
-and a Comprehension cap gates manual lifts so big numbers must be earned.
-The number families are admitted: subtraction yields negatives, division
-yields exact rationals, roots yield irrationals and complex via `√(-1)`.
-The fuel economy is in place: magnitude-scaled costs, warehouses as a
-real currency reservoir, rule-based warehouses with predicate catalogs
-(`<10`, `<100`, `<1000`, `prime`, `composite`), an optional fuel port
-on tier-1 operators, and cultivation cells that self-throttle as
-emissions climb. Plus Phase 4 discovery & engineering: the Number
-Gallery (Integers / Primes / Perfects / Famous tabs); Filter cells
-sharing the warehouse-rule predicate catalog; predicate-cost Literature
-entries ("10 primes", "5 primes ≥ 100"); and Blueprints v1 — rectangle-
-drag selection captures a subgraph as a named layout, stamped copies
-appear on the canvas as raw cells (no packed-cell unwrap semantics
-yet). Save schema v11; blueprints in their own localStorage key.
+**Phases 1, 2, 3, 3.5, 4, the Phase 4 UX polish pass, and the operator
++ rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c) are complete.**
+The factory runs without constant clicking: the canvas pans and zooms;
+warehouses store typed stacks at capacity; magnitude-rated pipes carry
+blocks automatically between cells; three cultivation cells (arithmetic,
+geometric, Fibonacci) generate streams from a single seed; the
+multiplicative operators (×, ÷, ^) pay fuel per firing with an optional
+fuel port; the hyperoperators (`↑↑`, `↑↑↑`, `↑ⁿ`) each have a
+required fuel port that won't fire without explicit wiring; cleanup bots
+sweep loose blocks into matching warehouses; and a Comprehension cap
+gates manual lifts so big numbers must be earned. The number families
+are admitted: subtraction yields negatives, division yields exact
+rationals, roots yield irrationals and complex via `√(-1)`. The fuel
+economy is in place: magnitude-scaled costs, warehouses as a real
+currency reservoir, rule-based warehouses with predicate catalogs
+(`<10`, `<100`, `<1000`, `prime`, `composite`), and cultivation cells
+that self-throttle as emissions climb. Plus Phase 4 discovery &
+engineering: the Number Gallery (Integers / Primes / Perfects / Famous
+tabs); Filter cells sharing the warehouse-rule predicate catalog;
+predicate-cost Literature entries ("10 primes", "5 primes ≥ 100"); and
+Blueprints v1 — rectangle-drag selection captures a subgraph as a named
+layout, stamped copies appear on the canvas as raw cells (no packed-cell
+unwrap semantics yet). And Phase 5's operator hierarchy: tetration,
+pentation, and a variadic Knuth arrow cell, each tier 2+ with required
+fuel routing and Decimal-valued cost; plus the magnitude-ladder
+renderer in `pixi/value-label.ts` that routes every block's label
+through five tiers (digits → commas → sci → power tower → arrow) with a
+narrator beat per transition. Save schema v11; blueprints in their own
+localStorage key.
 
 A subsequent review pass closed real bugs (pipes can now deliver seeds to
 cultivation cells; cooldown-remaining is preserved across save/load;
@@ -418,15 +426,29 @@ This phase lands BEFORE Phase 4 because Phase 4's Filters and special-currency L
 ### Phase 5: The Long Arc
 **Goal:** open-ended escalation. The game has no end.
 
-| Slice | Content |
-|---|---|
-| **6.1** | Tetration, pentation, arrow notation operators |
-| **6.2** | Magnitude-ladder rendering tiers (scientific notation → power towers → arrow notation → FGH placeholder) |
-| **6.3** | Prestige system + Ancestral Numbers shelf |
-| **6.4** | Ordinals (ω, ε₀, Γ₀), surreal numbers |
-| **6.5** | Named giant numbers as currency targets (Graham, TREE(3), Loader, Rayo) |
+Slices 6.1 and 6.2 were interleaved in execution: each operator unlocked
+needs the rendering tier its output produces, and the rendering tiers
+can't be tested without operators that produce values at that scale.
 
-**Deliverable:** Endgame. Numbers climb beyond any conventional notation. Prestige offers acceleration without trivialization. The player can chase named giants for the rest of their lives.
+| Slice | Content | Status |
+|---|---|---|
+| **6.1a** | **Tetration cell** (`a↑↑b`, tier 4, required fuel port). Switched `computationalCost` / `spendFuel` / `consumeFuelOrFail` to `Decimal` so future stacked-tower inputs don't overflow `Number.MAX_SAFE_INTEGER`. New `valueTetrate` via `Decimal.tetrate`. | ✅ done |
+| **6.2a** | **Magnitude-ladder skeleton + sci-notation tier.** New `pixi/value-label.ts` returns a Pixi `Container` per `Value`, routed via `valueLabelTier`. Plain digits / commas (`1,234`) / sci (`1.50×10⁴⁵` via Unicode superscript). Notation-transition marginalia (*"Comma notation discontinued"*). | ✅ done |
+| **6.2b** | **Power-tower tier.** Stacks of `10`s with the Decimal's `mag` at the top, sized adaptively for 1–4 visible levels; truncated towers add a `⋮` row and an `↕N` height badge. Tier classifier switched to use `Decimal.layer`. Marginalia (*"This number is now a building"*). | ✅ done |
+| **6.1b** | **Pentation cell** (`a↑↑↑b`, tier 8). Mirrors tetration's structure; `valuePentate` via `Decimal.pentate`. `PENTATE_HEIGHT_CAP = 100`. | ✅ done |
+| **6.2c** | **Arrow-notation tier.** For values whose tower height exceeds `TIER_ARROW_LAYER_MIN = 100_000`, the visual stack stops communicating — compact `10↑↑N` notation takes over (sci-formatted N for huge counts, `∞` for break_eternity overflow). Marginalia (*"We have stopped writing the tower out. Use your imagination."*). | ✅ done |
+| **6.1c** | **Variadic Knuth arrow cell** (`a↑ⁿb`). Three operand inputs (base, arrows, height) + fuel; tier scales as `2^n` (computed at firing time from the arrows input). break_eternity has no native `arrow(n)` past pentation, so for `n ≥ 4` we iterate the recursive definition `a↑ⁿb = a↑^(n-1)(a↑ⁿ(b-1))`. Heights cap progressively: 1000 for tetration, 100 for pentation, 50 for higher. Cost preview shows `fuel ≥ N` like the binary cells (the shared `updateCostBadge` is polymorphic). | ✅ done |
+| **6.3** | Prestige system + Ancestral Numbers shelf | not started |
+| **6.4** | Ordinals (ω, ε₀, Γ₀), surreal numbers | not started |
+| **6.5** | Named giant numbers as currency targets (Graham, TREE(3), Loader, Rayo) | not started |
+
+**Architectural notes (Phase 5 in progress):**
+- **`Decimal`-valued cost.** `computationalCost(type, inputs)` and `cultivationEmissionCost(value)` return `Decimal`; `spendFuel(cost)` and `consumeFuelOrFail(cell, cost)` take `Decimal`. Cost-preview badges in `binary-cell.ts` / `cultivation-cell.ts` / `variadic-arrow-cell.ts` use `cost.toString()` which emits `eXX` notation cleanly for tetration-tier costs.
+- **Required fuel port.** `consumeFuelOrFail` reads `costTier(cell.type)` and routes tier-2+ cells through `'awaiting-pipe'` when the fuel slot is empty (no global-pool fallback). Tier-1 (mul/div/exp) still falls through to global as a safety net.
+- **`Decimal.layer` drives the tier classifier.** Layer 0 with mag < 1000 is digits; layer 0 with mag < 10⁶ is commas; layer 0 ≥ 10⁶ or layer 1 is sci; layer 2 to ~10⁵ is tower; beyond is arrow. The sci tier's mantissa-and-exponent split works for any layer-1 value, so `2↑↑5 ≈ 2e19728` renders cleanly without overflowing the exponent cap.
+- **Variadic-arrow tier formula.** `costTier('variadic-arrow')` returns the baseline 2 (so `consumeFuelOrFail`'s `>= 2` check treats it as required-fuel); the actual cost is computed inline in `computationalCost` from the runtime arrows-input slot (slot 1).
+
+**Deliverable so far:** the operator hierarchy is complete from successor through arbitrary-arrow hyperoperations. Outputs at every magnitude render in the appropriate notation tier — digits, commas, scientific, power tower, arrow — and the narrator notes each transition. The mid-late game now has a real climb past exponentiation, with each operator requiring tighter fuel routing than the last. Phase 5 remaining: prestige, ordinals/surreals, named giants.
 
 ---
 

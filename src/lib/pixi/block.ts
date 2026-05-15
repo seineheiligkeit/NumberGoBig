@@ -4,6 +4,7 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedBlock } from '../world';
 import { valueExceeds, valueLabel, type Value } from '../value';
 import { valueColor } from '../family';
+import { drawValueLabel } from './value-label';
 
 /**
  * Renders a single number block in the pencil-notebook style.
@@ -76,9 +77,15 @@ export function drawBlock(value: Value, x: number, y: number): Container {
  */
 function drawNumeralInto(container: Container, value: Value): void {
   switch (value.kind) {
-    case 'real':
-      drawSingleLineNumeral(container, value, 38);
+    case 'real': {
+      // Real Values route through the magnitude-ladder renderer (Slice 6.2a):
+      // digits / commas / sci-notation per `valueLabelTier`. The renderer
+      // returns a Container which we add directly; per-instance jitter is
+      // baked in there so two `1729`s still look distinct.
+      const labelContainer = drawValueLabel(value, { baseFontSize: 38, color: valueColor(value) });
+      container.addChild(labelContainer);
       return;
+    }
     case 'rational':
       drawRationalNumeral(container, value);
       return;

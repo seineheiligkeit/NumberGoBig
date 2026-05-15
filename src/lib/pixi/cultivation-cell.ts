@@ -1,4 +1,5 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+import Decimal from 'break_eternity.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
@@ -180,11 +181,11 @@ export function updateCultivationBadge(cell: PlacedCell): void {
       const step = cell.cultivationStep ?? 0;
       const nextValue = cultivationEmit(cell.type, cell.seed, step);
       const nextCost = cultivationEmissionCost(nextValue);
-      if (nextCost === 0) {
+      if (nextCost.lte(Decimal.dZero)) {
         costBadge.text = '';
         costBadge.alpha = 0;
       } else {
-        costBadge.text = `next ≥ ${nextCost}`;
+        costBadge.text = `next ≥ ${nextCost.toString()}`;
         costBadge.alpha = 0.65;
       }
     }

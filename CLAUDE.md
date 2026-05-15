@@ -17,8 +17,9 @@ changes.
 
 ## Current state
 
-**Phases 1, 2, 3, 3.5, and 4 are complete.** Phase 1: manual construction of
-any natural number via Successor / Addition / Multiplication /
+**Phases 1–4 complete, plus the operator + rendering legs of Phase 5
+(Slices 6.1a/b/c and 6.2a/b/c).** Phase 1: manual construction of any
+natural number via Successor / Addition / Multiplication /
 Exponentiation plus decomposition (Decrement, Factor); Theorem
 milestones; repeatable Literature with scaling costs; localStorage
 autosave. Phase 2: the factory — pan/zoom canvas, typed warehouses,
@@ -26,34 +27,44 @@ magnitude-rated pipes, three cultivation cells, computational cost,
 cleanup bots, Comprehension cap. Phase 3: number families — negatives,
 rationals (`{num, den}`), irrationals (`{symbol, approx}`), complex
 (`{re, im}`); the `Value` discriminated union backed by
-`break_eternity.js` `Decimal`; family colour polish. Phase 3.5: the fuel economy — magnitude-scaled cost
-(`tier · max(1, ⌈log₁₀(max)⌉)`), warehouse contents fold into Total
-Score AND the Literature affordability pool, fuel paid as one block
-≥ cost (over-payment wasted, under-payment rejected), generalized
-warehouses with predicates (`<10`, `<100`, `<1000`, `prime`,
-`composite`), tier-1 operators (×, ÷, ^) gain an optional fuel input
-port with global fallback when unwired, and cultivation cells pay per
-emission so geometric chains self-throttle. Phase 4:
-discovery & engineering — Number Gallery (Integers grid / Primes /
-Perfects / Famous tabs, driven by the `discoveredValues` store);
-predicate-based Filter cells (one input, two outputs, sharing the
-predicate catalog with `warehouse-rule`); predicate-cost Literature
+`break_eternity.js` `Decimal`; family colour polish. Phase 3.5: the
+fuel economy — magnitude-scaled cost (`tier · max(1, ⌈log₁₀(max)⌉)`),
+warehouse contents fold into Total Score AND the Literature
+affordability pool, fuel paid as one block ≥ cost (over-payment wasted,
+under-payment rejected), generalized warehouses with predicates (`<10`,
+`<100`, `<1000`, `prime`, `composite`), tier-1 operators (×, ÷, ^)
+gain an optional fuel input port with global fallback when unwired, and
+cultivation cells pay per emission so geometric chains self-throttle.
+Phase 4: discovery & engineering — Number Gallery (Integers grid /
+Primes / Perfects / Famous tabs, driven by the `discoveredValues`
+store); predicate-based Filter cells (one input, two outputs, sharing
+the predicate catalog with `warehouse-rule`); predicate-cost Literature
 entries (e.g. "10 primes", "5 primes ≥ 100"); and Blueprints v1 —
 named layouts that capture a subgraph by rectangle-drag and stamp
 copies wholesale (no packed-cell semantics yet; copies appear as raw
 cells, persisted to their own `numbers-go-big.blueprints` localStorage
-key so they survive `clearStorage()`). Plus the Phase 4 UX polish pass
-(most recent): cells are draggable (click on the body to move, pipes
-follow); all output spawn sites share a `spawn.ts` `planSpawnAtPort`
-helper that back-pressures cells when their fan is full (12 unique
-slots of 40 px each); pipes render as orientation-aware cubic bezier
-curves with arc-length-driven label/pulse/hit-test; pan/zoom polished
-(5% wheel step, grab cursor while panning). Save schema v11. See
-`ROADMAP.md` §1 for slice-by-slice notes.
+key so they survive `clearStorage()`). Plus the Phase 4 UX polish pass:
+cells are draggable (click on the body to move, pipes follow); all
+output spawn sites share a `spawn.ts` `planSpawnAtPort` helper that
+back-pressures cells when their fan is full (12 unique slots of 40 px
+each); pipes render as orientation-aware cubic bezier curves with
+arc-length-driven label/pulse/hit-test; pan/zoom polished (5% wheel
+step, grab cursor while panning). And Phase 5's first wave: the
+operator hierarchy now reaches Tetration (`↑↑`, tier 4), Pentation
+(`↑↑↑`, tier 8), and a variadic Knuth-arrow cell (`↑ⁿ`, tier `2^n`),
+each with a REQUIRED fuel port (no global-pool fallback at tier 2+).
+`computationalCost` / `spendFuel` / `consumeFuelOrFail` are
+`Decimal`-valued end-to-end so chained-tetration outputs don't overflow
+`Number.MAX_SAFE_INTEGER`. Every block's label routes through the
+magnitude-ladder renderer in `pixi/value-label.ts`: digits / commas /
+sci (Unicode superscript exponent) / power tower (stacked `10`s with
+`↕N` height badge for truncation) / arrow notation (`10↑↑N` for
+unrenderable towers). Save schema v11. See `ROADMAP.md` §1 for
+slice-by-slice notes.
 
-**Next:** Phase 5 — The Long Arc. Tetration / pentation / arrow
-notation, magnitude-ladder rendering tiers, prestige + Ancestral
-Numbers shelf, ordinals + surreals, named giants (Graham, TREE(3), …).
+**Next:** Phase 5 continued — Prestige + Ancestral Numbers shelf
+(6.3), ordinals + surreals (6.4), named giants like Graham / TREE(3)
+as Literature currency targets (6.5).
 
 ## Tech stack
 
@@ -86,11 +97,15 @@ src/
 │   │                          with `kind: 'operand'|'fuel'` on inputs since 3.5.5),
 │   │                          operate() → { emits, marginalia? }. Cost &
 │   │                          cultivation math re-exported from `./cost`.
-│   ├── cost.ts                Pure math: magnitude-scaled computationalCost,
-│   │                          cultivationEmit, cultivationEmissionCost. Lives
-│   │                          outside cell-types so renderers (binary-cell,
+│   ├── cost.ts                Pure math: magnitude-scaled computationalCost
+│   │                          (returns Decimal; variadic-arrow's `2^n` tier is
+│   │                          a special case), cultivationEmit,
+│   │                          cultivationEmissionCost (also Decimal),
+│   │                          costTier (exported so consumeFuelOrFail can
+│   │                          gate tier-2+ cells out of the global fuel pool).
+│   │                          Lives outside cell-types so renderers (binary-cell,
 │   │                          cultivation-cell) can import the formulas without
-│   │                          threading a runtime cycle back through cell-types
+│   │                          threading a runtime cycle back through cell-types.
 │   ├── warehouse-rules.ts     WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
 │   │                          `prime`, `composite`) + getWarehouseRule. Same
 │   │                          predicate vocabulary Filters and predicate-cost
@@ -147,9 +162,20 @@ src/
 │       ├── block.ts           drawBlock + updateStackBadge + applyComprehensionStyle
 │       ├── river.ts           500-zero parallax flow, interactive
 │       ├── successor-cell.ts  Unary { } visual
-│       ├── binary-cell.ts     Shared visual for +, −, ×, ÷, ^ cells. Mul/div/exp
-│       │                      get a fuel-port socket below; cost-preview badge
-│       │                      `fuel ≥ N` updates on every pending change.
+│       ├── binary-cell.ts     Shared visual for +, −, ×, ÷, ^, ↑↑, ↑↑↑ cells.
+│       │                      Mul/div/exp/tetration/pentation get a fuel-port
+│       │                      socket below; cost-preview badge `fuel ≥ N`
+│       │                      updates on every pending change (works for any
+│       │                      cell that installs `container.__costBadge`).
+│       ├── variadic-arrow-cell.ts  ↑ⁿ cell — three operand inputs (base, arrows,
+│       │                      height) on the left of a taller frame, plus fuel
+│       │                      port below. Italic `a`/`n`/`b` port labels.
+│       ├── value-label.ts     Magnitude-ladder renderer (Slice 6.2a/b/c).
+│       │                      `valueLabelTier(v)` → digits / commas / sci /
+│       │                      tower / arrow based on Decimal.layer + magnitude.
+│       │                      `drawValueLabel` returns the right Container per
+│       │                      tier; block.ts:drawNumeralInto routes real Values
+│       │                      through it.
 │       ├── unary-cell.ts      Shared visual for Decrement / Factor cells
 │       ├── warehouse-cell.ts  Warehouse visual (typed + rule-based) +
 │       │                      updateWarehouseBadge. Rule label baked into the
@@ -220,8 +246,13 @@ src/
    `interaction.ts`.
 6. Add a Literature entry in `literature.ts`.
 7. If it has computational cost, extend `costTier` in `cost.ts`. The
-   formula `tier · max(1, ⌈log₁₀(max(|a|, |b|))⌉)` runs automatically;
-   the fire path consumes the cost via `consumeFuelOrFail`.
+   formula `tier · max(1, ⌈log₁₀(max(|a|, |b|))⌉)` runs automatically
+   and returns a `Decimal`; the fire path consumes the cost via
+   `consumeFuelOrFail`. **Tier ≥ 2 makes the fuel port REQUIRED** — no
+   global-pool fallback when the slot is empty and no pipe is wired.
+   For cost formulas that depend on runtime input (variadic-arrow),
+   special-case inside `computationalCost` itself instead of through
+   `costTier`.
 8. If it needs persistent state (warehouse-style), add fields to
    `PlacedCell`, snapshot in `snapshotCells`, restore in `rehydrateCell`.
 

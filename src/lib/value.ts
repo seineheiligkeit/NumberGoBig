@@ -281,6 +281,214 @@ export function valuePow(a: Value, b: Value): Value {
   return { kind: 'real', n: approximate(a).pow(approximate(b)) };
 }
 
+/**
+ * Tetration — `a ↑↑ b`, a tower of `b` copies of `a` (Slice 6.1a).
+ *
+ * Constraints encoded here so call sites can rely on a Decimal result:
+ *
+ *   - `b` must be a non-negative integer in JS-safe range, AND ≤ a
+ *     hard cap (`TETRATE_HEIGHT_CAP`). A height of 10⁹ would iterate
+ *     billions of times — we'd rather refuse than freeze.
+ *   - `a` collapses to its real approximation for every variant. The
+ *     symbolic preservation that `valueSqrt` does for `√k` isn't extended
+ *     to tetration; symbolic tetration ("a tower of `b` copies of √2")
+ *     would be a CAS of its own.
+ *
+ * Returns `null` when the constraints aren't met. `operate('tetration', …)`
+ * lifts `null` into a narrator beat, so a player who wires a non-integer or
+ * astronomical height gets a quiet refusal rather than a wrong answer.
+ */
+export const TETRATE_HEIGHT_CAP = 1000;
+
+/**
+ * Pentation height cap. Pentation iterates tetration; each rung of the
+ * pentation height multiplies the resulting tower depth astronomically.
+ * 100 is already wildly beyond any meaningful gameplay; the cap mostly
+ * exists to keep the iteration bounded if someone wires an absurd height.
+ */
+export const PENTATE_HEIGHT_CAP = 100;
+
+/**
+ * Variadic-arrow caps (Slice 6.1c). `n` arrows: `a ↑ⁿ b`. Each step up the
+ * hyperoperation hierarchy doubles the operator's destructive power, so
+ * heights have to be capped progressively tighter to keep iteration bounded.
+ *
+ *   - arrows = 1  (exponentiation)   : height ≤ 10⁶  (trust break_eternity)
+ *   - arrows = 2  (tetration)        : height ≤ TETRATE_HEIGHT_CAP (1000)
+ *   - arrows = 3  (pentation)        : height ≤ PENTATE_HEIGHT_CAP (100)
+ *   - arrows ≥ 4                     : height ≤ 50, shrinking trivially as N climbs
+ *
+ * The arrows count itself is capped at ARROW_COUNT_CAP — anything past
+ * 10 arrows produces a value break_eternity can't track meaningfully
+ * (the arrow-notation renderer renders `10↑↑∞` for such cases anyway).
+ */
+export const ARROW_COUNT_CAP = 10;
+
+export function arrowHeightCap(arrows: number): number {
+  if (arrows <= 1) return 1_000_000;
+  if (arrows === 2) return TETRATE_HEIGHT_CAP;
+  if (arrows === 3) return PENTATE_HEIGHT_CAP;
+  return 50;
+}
+
+export function valueTetrate(a: Value, b: Value): Value | null {
+  if (!valueIsNonNegativeInteger(b)) return null;
+  const height = valueToSafeNumber(b);
+  if (height === null) return null;
+  if (height > TETRATE_HEIGHT_CAP) return null;
+
+  // Base collapses to a real Decimal. Complex base lands here too, but
+  // `operate()` refuses that case upstream so we don't reach this point
+  // with `a.kind === 'complex'` in practice.
+  let baseD: Decimal;
+  switch (a.kind) {
+    case 'real':
+      baseD = a.n;
+      break;
+    case 'rational':
+      baseD = a.num.div(a.den);
+      break;
+    case 'irrational':
+      baseD = a.approx;
+      break;
+    case 'complex':
+      baseD = a.re;
+      break;
+  }
+  return { kind: 'real', n: baseD.tetrate(height) };
+}
+
+/**
+ * Pentation — `a ↑↑↑ b`, repeated tetration (Slice 6.1b).
+ *
+ *   a ↑↑↑ 1 = a
+ *   a ↑↑↑ 2 = a ↑↑ a
+ *   a ↑↑↑ 3 = a ↑↑ (a ↑↑ a)
+ *   ... and so on.
+ *
+ * Same shape of constraints as `valueTetrate`: `b` must be a non-negative
+ * integer in safe-JS range AND ≤ `PENTATE_HEIGHT_CAP`. The base collapses
+ * to a real Decimal for every variant; `operate('pentation', …)` refuses
+ * complex bases upstream so we don't reach this point with one in
+ * practice. Returns `null` when the constraints aren't met; the operate
+ * case lifts that into a narrator beat.
+ *
+ * Output magnitudes explode far faster than tetration — `2 ↑↑↑ 4` is
+ * `2 ↑↑ 65536`, a tower 65,535 levels tall. The tower renderer
+ * (Slice 6.2b) handles arbitrary depths via the truncation + height
+ * badge, so this function doesn't need to clamp the output.
+ */
+export function valuePentate(a: Value, b: Value): Value | null {
+  if (!valueIsNonNegativeInteger(b)) return null;
+  const height = valueToSafeNumber(b);
+  if (height === null) return null;
+  if (height > PENTATE_HEIGHT_CAP) return null;
+
+  let baseD: Decimal;
+  switch (a.kind) {
+    case 'real':
+      baseD = a.n;
+      break;
+    case 'rational':
+      baseD = a.num.div(a.den);
+      break;
+    case 'irrational':
+      baseD = a.approx;
+      break;
+    case 'complex':
+      baseD = a.re;
+      break;
+  }
+  return { kind: 'real', n: baseD.pentate(height) };
+}
+
+/**
+ * Variadic Knuth arrow — `a ↑ⁿ b` for any arrow count `n` ≥ 1 (Slice 6.1c).
+ *
+ *   n=1 → a^b           (exponentiation)
+ *   n=2 → a ↑↑ b        (tetration)
+ *   n=3 → a ↑↑↑ b       (pentation)
+ *   n=4 → a ↑↑↑↑ b      (hexation, six arrows...)
+ *   ...
+ *
+ * Each arrow-count step adds a level of hyperoperation. The dedicated
+ * `tetration` and `pentation` cells handle n=2 and n=3 directly; this
+ * generalised cell lets the player parametrise the arrow count at
+ * runtime via a third input port.
+ *
+ * Constraints: `arrows` must be a non-negative integer in `[1, ARROW_COUNT_CAP]`,
+ * `height` must be a non-negative integer ≤ `arrowHeightCap(arrows)`,
+ * `base` collapses to a real Decimal for every variant. Returns `null`
+ * on constraint failure; `operate('variadic-arrow', …)` lifts that into
+ * a narrator beat.
+ */
+export function valueArrow(base: Value, height: Value, arrows: Value): Value | null {
+  if (!valueIsNonNegativeInteger(arrows)) return null;
+  const arrowsN = valueToSafeNumber(arrows);
+  if (arrowsN === null || arrowsN < 1 || arrowsN > ARROW_COUNT_CAP) return null;
+
+  if (!valueIsNonNegativeInteger(height)) return null;
+  const heightN = valueToSafeNumber(height);
+  if (heightN === null) return null;
+  if (heightN > arrowHeightCap(arrowsN)) return null;
+
+  let baseD: Decimal;
+  switch (base.kind) {
+    case 'real':
+      baseD = base.n;
+      break;
+    case 'rational':
+      baseD = base.num.div(base.den);
+      break;
+    case 'irrational':
+      baseD = base.approx;
+      break;
+    case 'complex':
+      baseD = base.re;
+      break;
+  }
+
+  return { kind: 'real', n: computeArrow(baseD, heightN, arrowsN) };
+}
+
+/**
+ * Computes `base ↑ⁿ height` recursively. break_eternity only exposes
+ * `tetrate` (n=2) and `pentate` (n=3) natively; for n ≥ 4 we iterate
+ * the lower hyperoperation by Knuth's definition:
+ *
+ *   a ↑ⁿ 1 = a
+ *   a ↑ⁿ b = a ↑^(n-1) (a ↑ⁿ (b-1))
+ *
+ * The result blows past `Decimal`'s safe-height representation almost
+ * immediately for n ≥ 4 — the first iteration produces a value whose
+ * `layer` is huge, so the next iteration can't pass it as a JS-number
+ * height. We detect that case and return `Decimal(Infinity)`. The
+ * arrow-notation renderer (Slice 6.2c) catches this and labels the block
+ * `10↑↑∞`, which is the honest answer for any hexation+ operation.
+ */
+function computeArrow(baseD: Decimal, heightN: number, arrowsN: number): Decimal {
+  if (heightN === 0) return Decimal.dOne;
+  if (heightN === 1) return baseD;
+  if (arrowsN === 1) return baseD.pow(heightN);
+  if (arrowsN === 2) return baseD.tetrate(heightN);
+  if (arrowsN === 3) return baseD.pentate(heightN);
+
+  // n ≥ 4: iterate. `x` is the running result, threaded as the height of
+  // the next `a ↑^(n-1) x` evaluation. Once x is too large to round-trip
+  // through a JS number, we're past anything break_eternity can chain on,
+  // and the result is effectively unbounded.
+  let x: Decimal = baseD;
+  for (let i = 1; i < heightN; i++) {
+    if (!x.isFinite()) return x;
+    const xNum = x.toNumber();
+    if (!Number.isFinite(xNum) || xNum > Number.MAX_SAFE_INTEGER) {
+      return new Decimal(Infinity);
+    }
+    x = computeArrow(baseD, xNum, arrowsN - 1);
+  }
+  return x;
+}
+
 export function valueNeg(v: Value): Value {
   switch (v.kind) {
     case 'real':

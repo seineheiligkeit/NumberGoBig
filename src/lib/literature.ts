@@ -194,6 +194,42 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
       'Result added to your literature: Exponentiation. Tier-2 fuel cost — tetration, when it arrives, will be ruinous.',
   },
   {
+    id: 'tetration',
+    kind: 'cell',
+    name: 'Tetration Operator',
+    glyph: '↑↑',
+    description:
+      'A tower: a ↑↑ b is a stacked b copies of a. Tier-4 fuel cost — the fuel port is REQUIRED, no global fallback. Wire a dedicated supply.',
+    cost: [{ value: valueOf(100), count: 3 }],
+    costScale: 1.8,
+    unlockMessage:
+      'Result added to your literature: Tetration. We told you it would be ruinous. Wire fuel — this operator will not improvise.',
+  },
+  {
+    id: 'pentation',
+    kind: 'cell',
+    name: 'Pentation Operator',
+    glyph: '↑↑↑',
+    description:
+      'Repeated tetration. a ↑↑↑ b is a tower whose height is itself a tower. Tier-8 fuel cost — heights past 3 are catastrophic.',
+    cost: [{ value: valueOf(1000), count: 3 }],
+    costScale: 1.8,
+    unlockMessage:
+      'Result added to your literature: Pentation. Two arrows were a building; three arrows is the building rebuilding itself.',
+  },
+  {
+    id: 'variadic-arrow',
+    kind: 'cell',
+    name: 'Knuth Arrow Operator',
+    glyph: '↑ⁿ',
+    description:
+      'a ↑ⁿ b — arbitrary-arrow hyperoperation. Three inputs: base, arrow count, height. Fuel cost climbs as 2ⁿ; arrows ≤ 10.',
+    cost: [{ value: valueOf(1000), count: 10 }],
+    costScale: 2.0,
+    unlockMessage:
+      'Result added to your literature: the Knuth Arrow. You may now parametrise the operator hierarchy itself.',
+  },
+  {
     id: 'decrement',
     kind: 'cell',
     name: 'Decrement',

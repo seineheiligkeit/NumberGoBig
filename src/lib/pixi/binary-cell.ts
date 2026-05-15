@@ -1,4 +1,5 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
+import Decimal from 'break_eternity.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import { computationalCost } from '../cost';
@@ -164,15 +165,17 @@ export function updateCostBadge(cell: PlacedCell): void {
     (_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel',
   );
   const cost = computationalCost(cell.type, operands);
-  if (cost === 0) {
+  if (cost.lte(Decimal.dZero)) {
     badge.text = '';
     badge.alpha = 0;
     return;
   }
   // "fuel ≥ N" — the cell pays by consuming one block whose magnitude
   // meets or exceeds this number (Slice 3.5.7). Overpayment is wasted,
-  // so the player wants matched denominations.
-  badge.text = `fuel ≥ ${cost}`;
+  // so the player wants matched denominations. The Decimal `toString`
+  // emits `eXX` notation for tetration-tier costs — Slice 6.2a will
+  // route this through the magnitude-ladder renderer.
+  badge.text = `fuel ≥ ${cost.toString()}`;
   badge.alpha = 0.65;
 }
 
@@ -202,6 +205,20 @@ export function drawExponentiationCell(x: number, y: number): Container {
   // high and reads thin. Pump the font-size up and push it down so it sits
   // visually centered between the two ports.
   return drawBinaryCell(x, y, { symbol: '^', symbolFontSize: 64, symbolYOffset: 12, hasFuelPort: true });
+}
+
+export function drawTetrationCell(x: number, y: number): Container {
+  // `↑↑` (Knuth's double up-arrow, U+2191 ×2) — the canonical notation for
+  // tetration. Reads narrow but tall at the default glyph size; a small
+  // bump keeps it visually weighty next to the other operator symbols.
+  return drawBinaryCell(x, y, { symbol: '↑↑', symbolFontSize: 44, hasFuelPort: true });
+}
+
+export function drawPentationCell(x: number, y: number): Container {
+  // `↑↑↑` (Knuth's triple up-arrow) — pentation, repeated tetration.
+  // Three arrows side by side spread wide; we drop the font size a notch
+  // versus tetration so the glyph still fits comfortably between ports.
+  return drawBinaryCell(x, y, { symbol: '↑↑↑', symbolFontSize: 36, hasFuelPort: true });
 }
 
 /**

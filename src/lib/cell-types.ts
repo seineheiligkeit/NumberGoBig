@@ -25,10 +25,12 @@ import { UNARY_CELL_WIDTH } from './pixi/unary-cell';
 import { WAREHOUSE_CELL_WIDTH } from './pixi/warehouse-cell';
 import { CULTIVATION_CELL_WIDTH } from './pixi/cultivation-cell';
 import { FILTER_CELL_WIDTH } from './pixi/filter-cell';
+import { VARIADIC_ARROW_CELL_WIDTH, VARIADIC_ARROW_CELL_HEIGHT } from './pixi/variadic-arrow-cell';
 import {
   VALUE_ONE,
   VALUE_ZERO,
   valueAdd,
+  valueArrow,
   valueDiv,
   valueIsNonNegativeInteger,
   valueIsZero,
@@ -37,9 +39,15 @@ import {
   valueMul,
   valueOf,
   valuePow,
+  valuePentate,
   valueSqrt,
   valueSub,
+  valueTetrate,
   valueToSafeNumber,
+  ARROW_COUNT_CAP,
+  arrowHeightCap,
+  PENTATE_HEIGHT_CAP,
+  TETRATE_HEIGHT_CAP,
   type Value,
 } from './value';
 
@@ -50,6 +58,9 @@ export type CellType =
   | 'multiplication'
   | 'division'
   | 'exponentiation'
+  | 'tetration'
+  | 'pentation'
+  | 'variadic-arrow'
   | 'decrement'
   | 'factor'
   | 'square-root'
@@ -186,6 +197,56 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
+  tetration: {
+    // a ↑↑ b. Base on top, height on bottom. Same binary geometry as the
+    // other tier-1+ operators — the fuel port (Slice 3.5.5) becomes
+    // REQUIRED at tier 2+ per DESIGN §6: no global-pool fallback.
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      BINARY_FUEL_INPUT,
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
+  },
+  pentation: {
+    // a ↑↑↑ b — repeated tetration (Slice 6.1b). Same shape as tetration;
+    // tier 8 makes the fuel cost roughly twice as steep per input order.
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      BINARY_FUEL_INPUT,
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
+  },
+  // Variadic Knuth arrow (Slice 6.1c) — `a ↑ⁿ b`. Three operand inputs
+  // (base, arrows, height) stacked on the left of a taller-than-binary cell,
+  // plus the required fuel port below. Geometry mirrors the visual layout
+  // in `pixi/variadic-arrow-cell.ts`: dropzone half-extents 24×16 with
+  // 36-px vertical spacing between rows.
+  'variadic-arrow': (() => {
+    const halfW = VARIADIC_ARROW_CELL_WIDTH / 2;
+    const halfH = VARIADIC_ARROW_CELL_HEIGHT / 2;
+    const portX = -halfW + 32;
+    return {
+      inputs: [
+        // Input 0: base `a` (top row)
+        { offsetX: portX, offsetY: -36, halfWidth: 24, halfHeight: 18 },
+        // Input 1: arrow count `n` (middle row)
+        { offsetX: portX, offsetY: 0, halfWidth: 24, halfHeight: 18 },
+        // Input 2: height `b` (bottom row)
+        { offsetX: portX, offsetY: 36, halfWidth: 24, halfHeight: 18 },
+        // Input 3: fuel (below cell)
+        {
+          offsetX: 0,
+          offsetY: halfH + 18,
+          halfWidth: 22,
+          halfHeight: 14,
+          kind: 'fuel' as const,
+        },
+      ],
+      outputs: [{ offsetX: halfW + 56, offsetY: 0 }],
+    };
+  })(),
   decrement: {
     inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
     // Two outputs: `n-1` straight right, `1` below the cell (the freed unit
@@ -324,6 +385,181 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
     }
     case 'exponentiation':
       return { emits: [{ portIndex: 0, value: valuePow(inputs[0], inputs[1]) }] };
+    case 'tetration': {
+      // `a ↑↑ b` — a tower of `b` copies of `a` (Slice 6.1a). Constraints:
+      //   - the base must be real (complex bases would need polar-form
+      //     tower logic; out of scope until a future polish slice).
+      //   - the height must be a non-negative integer in safe-JS range,
+      //     bounded by TETRATE_HEIGHT_CAP so a player wiring a
+      //     pathological height doesn't lock up the runtime.
+      // Each constraint refuses with a dedicated narrator beat rather than
+      // emitting a wrong answer.
+      const a = inputs[0];
+      const b = inputs[1];
+      if (a.kind === 'complex') {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Tetration of a complex base is beyond this Literature.',
+            key: 'tetration_complex_base',
+          },
+        };
+      }
+      if (!valueIsNonNegativeInteger(b)) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Tetration requires a non-negative integer height. ${valueLabel(b)} declined.`,
+            key: 'tetration_non_integer_height',
+          },
+        };
+      }
+      const heightSafe = valueToSafeNumber(b);
+      if (heightSafe !== null && heightSafe > TETRATE_HEIGHT_CAP) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Tetration height ${valueLabel(b)} exceeds the literature cap of ${TETRATE_HEIGHT_CAP}.`,
+            key: 'tetration_overflow',
+          },
+        };
+      }
+      const result = valueTetrate(a, b);
+      if (result === null) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Tetration declined the configuration. The factory pauses, philosophically.',
+            key: 'tetration_refused',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: result }] };
+    }
+    case 'pentation': {
+      // `a ↑↑↑ b` — repeated tetration. Same constraints as tetration but
+      // with a tighter height cap (`PENTATE_HEIGHT_CAP`): even small
+      // pentation heights produce astronomical towers, and a height of 10
+      // is already absurd. Complex bases refused upstream; non-integer
+      // and out-of-range heights each refuse with a dedicated beat.
+      const a = inputs[0];
+      const b = inputs[1];
+      if (a.kind === 'complex') {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Pentation of a complex base is beyond this Literature.',
+            key: 'pentation_complex_base',
+          },
+        };
+      }
+      if (!valueIsNonNegativeInteger(b)) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Pentation requires a non-negative integer height. ${valueLabel(b)} declined.`,
+            key: 'pentation_non_integer_height',
+          },
+        };
+      }
+      const heightSafe = valueToSafeNumber(b);
+      if (heightSafe !== null && heightSafe > PENTATE_HEIGHT_CAP) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Pentation height ${valueLabel(b)} exceeds the literature cap of ${PENTATE_HEIGHT_CAP}.`,
+            key: 'pentation_overflow',
+          },
+        };
+      }
+      const result = valuePentate(a, b);
+      if (result === null) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Pentation declined the configuration. Buildings collapse, philosophically.',
+            key: 'pentation_refused',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: result }] };
+    }
+    case 'variadic-arrow': {
+      // `a ↑ⁿ b` — arbitrary-arrow hyperoperation. Three inputs:
+      // base (operand 0), arrows-count (operand 1), height (operand 2).
+      // The fuel slot is operand 3 but never reaches operate().
+      const base = inputs[0];
+      const arrows = inputs[1];
+      const height = inputs[2];
+      if (base.kind === 'complex') {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Arrow operations on a complex base are beyond this Literature.',
+            key: 'variadic_arrow_complex_base',
+          },
+        };
+      }
+      if (!valueIsNonNegativeInteger(arrows)) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Arrow count must be a non-negative integer. ${valueLabel(arrows)} declined.`,
+            key: 'variadic_arrow_non_integer_arrows',
+          },
+        };
+      }
+      const arrowsN = valueToSafeNumber(arrows);
+      if (arrowsN === null || arrowsN < 1) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Arrow count must be at least 1. Zero arrows is the identity; one arrow is the exponent.',
+            key: 'variadic_arrow_zero_arrows',
+          },
+        };
+      }
+      if (arrowsN > ARROW_COUNT_CAP) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Arrow count ${valueLabel(arrows)} exceeds the literature cap of ${ARROW_COUNT_CAP}.`,
+            key: 'variadic_arrow_too_many_arrows',
+          },
+        };
+      }
+      if (!valueIsNonNegativeInteger(height)) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `Arrow height must be a non-negative integer. ${valueLabel(height)} declined.`,
+            key: 'variadic_arrow_non_integer_height',
+          },
+        };
+      }
+      const heightN = valueToSafeNumber(height);
+      const cap = arrowHeightCap(arrowsN);
+      if (heightN !== null && heightN > cap) {
+        return {
+          emits: [],
+          marginalia: {
+            text: `${arrowsN}-arrow operation with height ${valueLabel(height)} exceeds the cap of ${cap}.`,
+            key: 'variadic_arrow_height_overflow',
+          },
+        };
+      }
+      const result = valueArrow(base, height, arrows);
+      if (result === null) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'The arrow operator declined this configuration. Architecture has limits.',
+            key: 'variadic_arrow_refused',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: result }] };
+    }
     case 'decrement': {
       const v = inputs[0];
       // Negatives exist as of Slice 4.1 — decrement now works on the whole

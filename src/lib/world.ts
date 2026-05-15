@@ -18,6 +18,7 @@ import {
   type ValueSnapshot,
 } from './value';
 import { getWarehouseRule } from './warehouse-rules';
+import { costTier } from './cost';
 
 /**
  * The world — pure data model of every block and cell the player possesses.
@@ -639,9 +640,9 @@ export function spendMatching(test: (v: Value) => boolean, n: number): boolean {
  *
  * Returns true on success, false if no qualifying block exists.
  */
-export function spendFuel(cost: number): boolean {
-  if (cost <= 0) return true;
-  const costD = new Decimal(cost);
+export function spendFuel(cost: Decimal): boolean {
+  if (cost.lte(Decimal.dZero)) return true;
+  const costD = cost;
 
   // Track the smallest qualifying source across all three pools. For rule
   // warehouses we also track the SPECIFIC value to draw — the warehouse's
@@ -1013,8 +1014,8 @@ export type FuelOutcome = 'paid' | 'awaiting-pipe' | 'too-small' | 'no-fuel';
  * fuel block (manual or pipe-delivered) is consumed exactly once on
  * success; nothing is touched on failure.
  */
-export function consumeFuelOrFail(cell: PlacedCell, cost: number): FuelOutcome {
-  if (cost <= 0) return 'paid';
+export function consumeFuelOrFail(cell: PlacedCell, cost: Decimal): FuelOutcome {
+  if (cost.lte(Decimal.dZero)) return 'paid';
   const fuelIdx = fuelPortIndex(cell);
 
   // Cells without a fuel port — addition, subtraction, future tier-0 ops.
@@ -1025,7 +1026,7 @@ export function consumeFuelOrFail(cell: PlacedCell, cost: number): FuelOutcome {
   const slotValue = cell.pending[fuelIdx];
   if (slotValue !== null && slotValue !== undefined) {
     const fuelMag = valueMagnitude(slotValue);
-    if (fuelMag.lt(new Decimal(cost))) return 'too-small';
+    if (fuelMag.lt(cost)) return 'too-small';
     // Consume the fuel block — visual ghost in the slot is destroyed too.
     cell.pending[fuelIdx] = null;
     const display = cell.pendingDisplays[fuelIdx];
@@ -1037,9 +1038,17 @@ export function consumeFuelOrFail(cell: PlacedCell, cost: number): FuelOutcome {
     return 'paid';
   }
 
-  // Slot empty. A wired pipe means the player has chosen explicit routing
-  // — honour it by waiting rather than silently dipping into the global
-  // pool. Without a pipe, fall through.
+  // Slot empty. Where to fall through depends on tier (Slice 6.1a — DESIGN
+  // §6 promotes tetration and higher to "required fuel port"):
+  //
+  //   - tier 1 (mul / div / exp): optional. Pipe wired → wait for delivery;
+  //     no pipe → fall through to the global spendFuel pool (safety net).
+  //   - tier 2+ (tetration, …):   required. Never dip into the global
+  //     pool. Whether the pipe is wired or not, the only legal supply is
+  //     the slot. Both branches surface as 'awaiting-pipe' so the narrator
+  //     beat ("awaits fuel ≥ N from its dedicated pipe") nudges the
+  //     player toward explicit routing.
+  if (costTier(cell.type) >= 2) return 'awaiting-pipe';
   if (hasFuelPipeAttached(cell)) return 'awaiting-pipe';
   return spendFuel(cost) ? 'paid' : 'no-fuel';
 }

@@ -17,13 +17,23 @@
  *   - successor / addition / subtraction         : 0  (free)
  *   - multiplication / division                  : 1
  *   - exponentiation                             : 2
- *   - (tetration / pentation arrive in Phase 5)
+ *   - tetration                                  : 4  (Slice 6.1a — required fuel port)
+ *   - pentation                                  : 8  (Slice 6.1b — required fuel port)
+ *   - (Knuth arrow arrives in Slice 6.1c)
  *
  * Single-digit multiplications still cost 1; multiplying by 10⁶ costs 6;
  * exponentiation pays double for the same digit count. The "floored at 1
  * for any positive magnitude" rule prevents `× 1` from being free (which
  * would let the player pump output magnitude through a 1-multiplier chain
  * for nothing).
+ *
+ * **Decimal-valued cost (Slice 6.1a).** Pre-6.1a the cost was a plain
+ * `number`, which works through exponentiation (whose costs are bounded
+ * by tier × log10 of the input magnitudes — fits in a double). Once
+ * tetration enters the picture, chained tetrations produce inputs whose
+ * log10 exceeds `Number.MAX_SAFE_INTEGER`, so `cost` is now a `Decimal`
+ * end-to-end. Callers compare against `Decimal.dZero` for free-firing
+ * and use `cost.toString()` for the cost-preview badge.
  *
  * This module lives separately from `cell-types.ts` so the cost-preview
  * badge in `pixi/binary-cell.ts` can import it without creating a
@@ -37,19 +47,37 @@ import {
   VALUE_ONE,
   VALUE_ZERO,
   valueAdd,
+  valueIsNonNegativeInteger,
   valueMagnitude,
   valueMul,
   valueOf,
   valuePow,
+  valueToSafeNumber,
   type Value,
 } from './value';
 
-function costTier(type: CellType): number {
+/**
+ * Tier table for each cell type. Exposed (not module-private) so
+ * `consumeFuelOrFail` can distinguish tier-1 (optional fuel port, falls
+ * back to global pool when unwired) from tier-2+ (required fuel port,
+ * never dips into the global pool).
+ */
+export function costTier(type: CellType): number {
   switch (type) {
     case 'multiplication':
     case 'division':
       return 1;
     case 'exponentiation':
+      return 2;
+    case 'tetration':
+      return 4;
+    case 'pentation':
+      return 8;
+    case 'variadic-arrow':
+      // Variadic arrow's tier depends on the runtime arrows-count input;
+      // this baseline returns the minimum (=2) so `consumeFuelOrFail`
+      // correctly treats it as "required fuel port". The actual cost
+      // is computed below in `computationalCost` with full input context.
       return 2;
     default:
       return 0;
@@ -57,8 +85,8 @@ function costTier(type: CellType): number {
 }
 
 /**
- * Returns the fuel cost in units (still paid in `1`s until Slice 3.5.7
- * generalises this to "one block of magnitude ≥ cost").
+ * Returns the fuel cost as a `Decimal`. Cost is paid by consuming one
+ * block whose magnitude ≥ this number (Slice 3.5.7).
  *
  * `inputs` is the cell's pending-input vector — null slots are ignored, so
  * a partial preview (only one input filled) still produces a meaningful
@@ -73,9 +101,38 @@ function costTier(type: CellType): number {
 export function computationalCost(
   type: CellType,
   inputs: readonly (Value | null)[] = [],
-): number {
+): Decimal {
+  // Variadic arrow's tier is `2 ^ arrows`, where `arrows` is the cell's
+  // SECOND operand input (slot 1, between base and height). The `costTier`
+  // table can't express that without runtime context, so we special-case
+  // here. The base/height inputs contribute to the order calculation; the
+  // arrows input does NOT (it's the operator parameter, not an operand).
+  if (type === 'variadic-arrow') {
+    const arrowsInput = inputs[1];
+    if (!arrowsInput || !valueIsNonNegativeInteger(arrowsInput)) {
+      return Decimal.dZero;
+    }
+    const arrowsN = valueToSafeNumber(arrowsInput);
+    if (arrowsN === null || arrowsN < 1) return Decimal.dZero;
+    const tier = Math.pow(2, arrowsN);
+
+    let maxMag = new Decimal(0);
+    let any = false;
+    for (const idx of [0, 2]) {
+      const v = inputs[idx];
+      if (v === null || v === undefined) continue;
+      any = true;
+      const m = valueMagnitude(v);
+      if (m.gt(maxMag)) maxMag = m;
+    }
+    if (!any || maxMag.lte(Decimal.dZero)) return Decimal.dZero;
+    const logD = maxMag.log10();
+    const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
+    return orderD.mul(tier);
+  }
+
   const tier = costTier(type);
-  if (tier === 0) return 0;
+  if (tier === 0) return Decimal.dZero;
 
   let maxMag = new Decimal(0);
   let any = false;
@@ -85,15 +142,15 @@ export function computationalCost(
     const m = valueMagnitude(v);
     if (m.gt(maxMag)) maxMag = m;
   }
-  if (!any) return 0;
-  if (maxMag.lte(Decimal.dZero)) return 0;
+  if (!any) return Decimal.dZero;
+  if (maxMag.lte(Decimal.dZero)) return Decimal.dZero;
 
-  // ⌈log₁₀(max)⌉, floored at 1. `Decimal.log10()` handles the late-game
-  // astronomic numbers — the result is small (the order of magnitude),
-  // so `toNumber()` is safe.
-  const log = maxMag.log10().toNumber();
-  const order = Math.max(1, Math.ceil(log));
-  return tier * order;
+  // ⌈log₁₀(max)⌉, floored at 1. For tetration outputs the log itself can
+  // exceed `Number.MAX_SAFE_INTEGER`, so we work in `Decimal` throughout —
+  // break_eternity's `log10` returns a Decimal that may itself be huge.
+  const logD = maxMag.log10();
+  const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
+  return orderD.mul(tier);
 }
 
 /**
@@ -107,11 +164,11 @@ export function computationalCost(
  * Geometric cultivation self-throttles naturally — emissions grow,
  * costs grow, and the cell stalls once the player can no longer pay.
  */
-export function cultivationEmissionCost(value: Value): number {
+export function cultivationEmissionCost(value: Value): Decimal {
   const mag = valueMagnitude(value);
-  if (mag.lte(Decimal.dZero)) return 0;
-  const log = mag.log10().toNumber();
-  return Math.max(1, Math.ceil(log));
+  if (mag.lte(Decimal.dZero)) return Decimal.dZero;
+  const logD = mag.log10();
+  return logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
 }
 
 /**

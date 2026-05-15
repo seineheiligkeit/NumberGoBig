@@ -21,6 +21,7 @@ import { tickCultivation } from '../cultivation';
 import { tickBots } from '../bots';
 import { VALUE_ZERO } from '../value';
 import { family } from '../family';
+import { valueLabelTier } from './value-label';
 
 /**
  * Bootstraps the PixiJS canvas inside the given container element and
@@ -90,6 +91,35 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
       showMarginalia(
         'You have constructed √(-1). We extend our condolences, and our admiration.',
         'first_complex',
+      );
+    }
+
+    // Notation-transition beats (Slice 6.2a). DESIGN §17 — each time the
+    // magnitude crosses a rendering tier for the first time, the narrator
+    // notes it. Marginalia dedups by key, so each beat fires exactly once
+    // across the save's lifetime. The `commas` beat is quiet (this is just
+    // "your numbers got bigger"); the `sci` beat is the first true escalation
+    // off conventional notation, so the line carries more weight.
+    const tier = valueLabelTier(block.value);
+    if (tier === 'commas') {
+      showMarginalia(
+        'Comma notation engaged. Your numbers now require punctuation.',
+        'first_commas_tier',
+      );
+    } else if (tier === 'sci') {
+      showMarginalia(
+        'Comma notation discontinued. We have transitioned to scientific notation.',
+        'first_sci_tier',
+      );
+    } else if (tier === 'tower') {
+      showMarginalia(
+        'This number is now a building.',
+        'first_tower_tier',
+      );
+    } else if (tier === 'arrow') {
+      showMarginalia(
+        'We have stopped writing the tower out. Use your imagination.',
+        'first_arrow_tier',
       );
     }
   });

@@ -10,8 +10,11 @@ import {
   drawMultiplicationCell,
   drawDivisionCell,
   drawExponentiationCell,
+  drawTetrationCell,
+  drawPentationCell,
   updateCostBadge,
 } from './pixi/binary-cell';
+import { drawVariadicArrowCell } from './pixi/variadic-arrow-cell';
 import {
   drawDecrementCell,
   drawFactorCell,
@@ -334,7 +337,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
       switch (fuelOutcome) {
         case 'awaiting-pipe':
           showMarginalia(
-            `${cellLabel(cell.type)} awaits fuel (≥ ${cost}) from its dedicated pipe.`,
+            `${cellLabel(cell.type)} awaits fuel (≥ ${cost.toString()}) from its dedicated pipe.`,
             `cell_cost_blocked_${cell.id}`,
           );
           break;
@@ -342,14 +345,14 @@ export function createDragController(app: Application, canvasLayer: Container): 
           const fuelIdx = fuelPortIndex(cell);
           const slot = fuelIdx >= 0 ? cell.pending[fuelIdx] : null;
           showMarginalia(
-            `Fuel block too small: ${slot ? valueLabel(slot) : '—'} cannot pay cost ${cost}. The block stays in the slot until cleared.`,
+            `Fuel block too small: ${slot ? valueLabel(slot) : '—'} cannot pay cost ${cost.toString()}. The block stays in the slot until cleared.`,
             `cell_fuel_too_small_${cell.id}`,
           );
           break;
         }
         case 'no-fuel':
           showMarginalia(
-            `${cellLabel(cell.type)} awaits fuel: one block of magnitude ≥ ${cost}.`,
+            `${cellLabel(cell.type)} awaits fuel: one block of magnitude ≥ ${cost.toString()}.`,
             `cell_cost_blocked_${cell.id}`,
           );
           break;
@@ -620,6 +623,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return 'Division';
       case 'exponentiation':
         return 'Exponentiation';
+      case 'tetration':
+        return 'Tetration';
+      case 'pentation':
+        return 'Pentation';
+      case 'variadic-arrow':
+        return 'Knuth Arrow';
       case 'successor':
         return 'Successor';
       case 'addition':
@@ -668,6 +677,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return drawDivisionCell(0, 0);
       case 'exponentiation':
         return drawExponentiationCell(0, 0);
+      case 'tetration':
+        return drawTetrationCell(0, 0);
+      case 'pentation':
+        return drawPentationCell(0, 0);
+      case 'variadic-arrow':
+        return drawVariadicArrowCell(0, 0);
       case 'decrement':
         return drawDecrementCell(0, 0);
       case 'factor':
@@ -715,6 +730,21 @@ export function createDragController(app: Application, canvasLayer: Container): 
         };
       case 'exponentiation':
         return { text: '^ awaits a base and an exponent.', key: 'first_exponentiation_placed' };
+      case 'tetration':
+        return {
+          text: '↑↑ awaits a base (top) and a height (bottom). Wire fuel — this one does not improvise.',
+          key: 'first_tetration_placed',
+        };
+      case 'pentation':
+        return {
+          text: '↑↑↑ awaits a base and a height. Heights past three become unspeakable. Wire fuel and use small numbers.',
+          key: 'first_pentation_placed',
+        };
+      case 'variadic-arrow':
+        return {
+          text: '↑ⁿ awaits a base (top), an arrow count n (middle), and a height (bottom). Fuel scales as 2ⁿ.',
+          key: 'first_variadic_arrow_placed',
+        };
       case 'decrement':
         return {
           text: 'Decrement: pulls a 1 free from anything it can.',

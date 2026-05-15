@@ -1,4 +1,5 @@
 import type { Container } from 'pixi.js';
+import Decimal from 'break_eternity.js';
 import {
   allCells,
   markDirty,
@@ -57,9 +58,9 @@ export function tickCultivation(dtMs: number, canvasLayer: Container): void {
       continue;
     }
 
-    if (cost > 0 && !spendFuel(cost)) {
+    if (cost.gt(Decimal.dZero) && !spendFuel(cost)) {
       showMarginalia(
-        `Cultivation cell stalls — next emission (${valueLabel(value)}) needs fuel ≥ ${cost}.`,
+        `Cultivation cell stalls — next emission (${valueLabel(value)}) needs fuel ≥ ${cost.toString()}.`,
         `cultivation_starved_${cell.id}`,
       );
       continue;
