@@ -98,9 +98,32 @@ export function costTier(type: CellType): number {
  * empty array short-circuits to 0 (tier 0 anyway, but defends against
  * future tier-bumps that forget to update the call site).
  */
+/**
+ * Applies the cell's level-based fuel discount (Slice 6.7):
+ *   - Mult/Exp lvl 3+: fuel magnitude − 1 (floored at 1)
+ *   - Mult/Exp lvl 5:  fuel magnitude halved (floored at 1)
+ *
+ * Other tiers/types pass through unchanged. The cap on the floor keeps
+ * `× 1` and `× 0` operators from accidentally going below 1 fuel.
+ */
+function applyLevelDiscount(
+  type: CellType,
+  level: number,
+  fuel: Decimal,
+): Decimal {
+  if (fuel.lte(Decimal.dOne)) return fuel;
+  const isDiscountable = type === 'multiplication' || type === 'exponentiation';
+  if (!isDiscountable || level < 3) return fuel;
+  let discounted: Decimal;
+  if (level >= 5) discounted = fuel.div(2).floor();
+  else discounted = fuel.sub(1);
+  return discounted.lt(Decimal.dOne) ? Decimal.dOne : discounted;
+}
+
 export function computationalCost(
   type: CellType,
   inputs: readonly (Value | null)[] = [],
+  level: number = 1,
 ): Decimal {
   // Variadic arrow's tier is `2 ^ arrows`, where `arrows` is the cell's
   // SECOND operand input (slot 1, between base and height). The `costTier`
@@ -128,7 +151,7 @@ export function computationalCost(
     if (!any || maxMag.lte(Decimal.dZero)) return Decimal.dZero;
     const logD = maxMag.log10();
     const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
-    return orderD.mul(tier);
+    return applyLevelDiscount(type, level, orderD.mul(tier));
   }
 
   const tier = costTier(type);
@@ -150,7 +173,7 @@ export function computationalCost(
   // break_eternity's `log10` returns a Decimal that may itself be huge.
   const logD = maxMag.log10();
   const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
-  return orderD.mul(tier);
+  return applyLevelDiscount(type, level, orderD.mul(tier));
 }
 
 /**

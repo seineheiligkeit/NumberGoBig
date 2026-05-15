@@ -19,6 +19,13 @@ import { onCameraChange, setupCamera } from '../camera';
 import { tickEquationCells, tickPipes } from '../pipe';
 import { tickCultivation } from '../cultivation';
 import { tickBots } from '../bots';
+import { tickRiverTapSuccessors } from '../river-tap';
+import {
+  allCells,
+  cellLevel,
+  cellLevels,
+} from '../world';
+import { applyLevelBadge } from './level-badge';
 import { VALUE_ZERO } from '../value';
 import { family } from '../family';
 import { valueLabelTier } from './value-label';
@@ -176,11 +183,32 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // save on tab close so 250ms of debounce doesn't drop work.
   installAutosave();
 
+  // Level badges (Slice 6.7). Levels are stored per cell-type (not
+  // per-instance), so when a Literature upgrade raises a type's level,
+  // every cell of that type needs its badge refreshed. Subscribing to
+  // the levels store handles both initial restore-from-save and
+  // runtime upgrade purchases. The subscription fires with the current
+  // state on first subscribe, so the initial pass covers any cells
+  // restored from a save.
+  //
+  // Pipes don't get a corner badge — their level is reflected in the
+  // Literature panel only (a pencil pipe is a line, not a box; a
+  // floating numeral over it would clutter). Refining the visual is
+  // a future polish task.
+  cellLevels.subscribe(() => {
+    for (const cell of allCells()) {
+      applyLevelBadge(cell.container, cellLevel(cell.type));
+    }
+  });
+
   // Simulation loop: cultivation cells emit on their cadence, pipes carry
   // items between cells. Pinned to Pixi's ticker so it pauses when the tab
   // is hidden — autosave persists state on the way out via beforeunload.
   const advance = (dtMs: number): void => {
     tickCultivation(dtMs, canvasLayer);
+    // River-tap: lvl-3+ Successors emit on their own cadence even
+    // without a pipe attached (Slice 6.7).
+    tickRiverTapSuccessors(dtMs, canvasLayer);
     tickPipes(dtMs, canvasLayer);
     // Equation cells loaded but blocked on computational cost retry here.
     // Cheap when nothing is blocked.

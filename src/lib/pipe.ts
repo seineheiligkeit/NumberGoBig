@@ -3,16 +3,19 @@ import {
   addBlock,
   allCells,
   allPipes,
+  cellLevel,
   consumeFuelOrFail,
   decreaseStack,
   depositToWarehouse,
   findBlockAt,
   findCellById,
   increaseStack,
+  levelMultiplier,
   markDirty,
   operandPending,
   operandsFilled,
   peekRuleWarehouseSmallest,
+  pipeLevel,
   removePipe,
   ruleWarehouseTotal,
   type PipeEndpoint,
@@ -170,7 +173,11 @@ export function redrawPipesForCell(cellId: number): void {
 /** Per-frame driver. `dtMs` is delta time in milliseconds. */
 export function tickPipes(dtMs: number, canvasLayer: Container): void {
   for (const pipe of allPipes()) {
-    pipe.cooldownRemaining -= dtMs;
+    // Pipe level multiplies the effective tick rate (Slice 6.7). A
+    // lvl-2 pipe consumes its cooldown twice as fast as a lvl-1 pipe
+    // of the same magnitude; lvl-5 sixteen times as fast.
+    const speedMult = levelMultiplier(pipeLevel(pipe.magnitude));
+    pipe.cooldownRemaining -= dtMs * speedMult;
     if (pipe.cooldownRemaining > 0) continue;
 
     // Peek source + dest. JS is single-threaded so peek and pull cannot
@@ -364,7 +371,7 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
   // pass through too quickly to matter, and the cell either fires this tick
   // or waits for the cost-retry pass. The block's visual life is the pipe
   // pulse → output emission; no graphite ghost in the input slot.
-  updateCostBadge(cell);
+  updateCostBadge(cell, cellLevel(cell.type));
   if (operandsFilled(cell)) {
     fireCellViaPipe(cell, canvasLayer);
   }
@@ -381,7 +388,7 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
  */
 function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
   const operands = operandPending(cell).map((v) => v as Value);
-  const cost = computationalCost(cell.type, operands);
+  const cost = computationalCost(cell.type, operands, cellLevel(cell.type));
   const result = operate(cell.type, operands);
 
   // Pre-check every output port for capacity (Slice 5.7). If any is
@@ -407,14 +414,16 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
       cell.pendingDisplays[i] = null;
     }
   }
-  updateCostBadge(cell);
+  updateCostBadge(cell, cellLevel(cell.type));
 
   if (result.marginalia) {
     showMarginalia(result.marginalia.text, result.marginalia.key);
   }
 
   // Commit emits — first emit at each port via planSpawnAtPort, rest
-  // within-firing fan anchored to the first emit's spot.
+  // within-firing fan anchored to the first emit's spot. Cell level
+  // multiplies each emit's stack count (Slice 6.7).
+  const emitMultiplier = levelMultiplier(cellLevel(cell.type));
   const emitsPerPort = new Map<number, number>();
   const portAnchors = new Map<number, { x: number; y: number }>();
   for (const ev of result.emits) {
@@ -434,7 +443,7 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
           y: plan.block.container.y,
         });
       }
-      commitSpawn(plan, ev.value, canvasLayer);
+      commitSpawn(plan, ev.value, canvasLayer, emitMultiplier);
     } else {
       const anchor = portAnchors.get(ev.portIndex);
       if (!anchor) continue;
@@ -442,12 +451,13 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
       const y = anchor.y;
       const existing = findBlockAt(x, y, MERGE_EMIT_RADIUS, ev.value);
       if (existing) {
-        increaseStack(existing, 1);
+        increaseStack(existing, emitMultiplier);
         updateStackBadge(existing);
       } else {
         const outBlock = drawBlock(ev.value, x, y);
         canvasLayer.addChild(outBlock);
-        const placed = addBlock(outBlock, ev.value);
+        const placed = addBlock(outBlock, ev.value, emitMultiplier);
+        if (emitMultiplier > 1) updateStackBadge(placed);
         _attachInteraction?.(placed);
       }
     }

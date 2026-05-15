@@ -4,15 +4,19 @@ import {
   dirtyTick,
   resetWorld,
   restoreAchievements,
+  restoreCellLevels,
   restoreDiscoveries,
+  restorePipeLevels,
   restorePurchaseCounts,
   restoreUnlocks,
   setComprehension,
   snapshotAchievements,
   snapshotBlocks,
+  snapshotCellLevels,
   snapshotCells,
   snapshotComprehension,
   snapshotDiscoveries,
+  snapshotPipeLevels,
   snapshotPipes,
   snapshotPurchaseCounts,
   snapshotUnlocks,
@@ -66,10 +70,22 @@ import { valueRestore, type ValueSnapshot } from './value';
  *
  * **v11 — Slice 5.2**: adds optional `filterState` on cell snapshots for
  * the new `filter` cell type. v10 saves have no filters; version-only bump.
+ *
+ * **v12 — Phase 5.6 pacing overhaul**: the comprehension ladder grew from
+ * 3 tiers to 8 (added I/III/V/VI/VIII) and existing entries' costs were
+ * rebalanced. New `pipe_1k` Literature entry. No schema-structural
+ * changes — the migration auto-unlocks lower comprehension tiers that
+ * the player's saved ceiling implicitly covers, so they don't see new
+ * sub-tier entries as "still available" after upgrading.
+ *
+ * **v13 — Slice 6.7 leveling**: adds optional `cellLevels` and
+ * `pipeLevels` arrays storing per-cell-type and per-pipe-magnitude
+ * upgrade levels. Pre-v13 saves have no leveling state; the migration
+ * is version-only — every primitive defaults to level 1.
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 11;
+const SAVE_VERSION = 13;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -89,6 +105,11 @@ export interface SaveData {
   /** Every `valueKey` the player has ever produced (added in v9). Foundation
    *  for the Gallery in Slice 5.1. */
   discoveries?: string[];
+  /** Per-cell-type upgrade levels (added in v13). Only non-default (>1)
+   *  entries are stored. */
+  cellLevels?: [CellType, number][];
+  /** Per-pipe-magnitude upgrade levels (added in v13). */
+  pipeLevels?: [number, number][];
 }
 
 function serialize(): SaveData {
@@ -104,6 +125,8 @@ function serialize(): SaveData {
     comprehension: snapshotComprehension(),
     pipes: snapshotPipes(),
     discoveries: snapshotDiscoveries(),
+    cellLevels: snapshotCellLevels(),
+    pipeLevels: snapshotPipeLevels(),
   };
 }
 
@@ -224,6 +247,22 @@ export function loadFromStorage(): SaveData | null {
     if (parsed.version === 9 || parsed.version === 10) {
       return { ...(parsed as SaveData), version: SAVE_VERSION };
     }
+    // v11 → v12: pacing overhaul. The comprehension ladder grew from 3
+    // tiers (≤100/≤1k/≤1M) to 8 (≤25/≤100/≤250/≤1k/≤10k/≤100k/≤1M/≤1B).
+    // Pre-v12 players paid for exactly the legacy IDs they unlocked; the
+    // new sub-tiers were unreachable at the time. We back-fill `unlocks`
+    // and `purchaseCounts` so the player's ceiling is treated as if they'd
+    // earned every comprehension entry at or below it. This matches the
+    // common-sense reading ("I'm at ≤1M, so I implicitly have ≤25 too")
+    // without retroactively charging them.
+    if (parsed.version === 11) {
+      return migrateComprehensionLadder(parsed as SaveData);
+    }
+    // v12 → v13: leveling system landed. v12 saves have no level state;
+    // every cell/pipe defaults to level 1. Pure version bump.
+    if (parsed.version === 12) {
+      return { ...(parsed as SaveData), version: SAVE_VERSION };
+    }
     console.warn(
       `Save version mismatch: got ${parsed.version}, expected ${SAVE_VERSION}. Ignoring save.`,
     );
@@ -240,6 +279,50 @@ export function clearStorage(): void {
   } catch {
     // ignore
   }
+}
+
+/**
+ * v11 → v12 migration: back-fills the eight-tier comprehension ladder so
+ * pre-overhaul players have lower tiers implicitly granted. A player at
+ * ceiling 1,000 (from the legacy `comprehension_1k`) is treated as having
+ * also earned `comprehension_25`, `comprehension_100`, and
+ * `comprehension_250` — every tier at or below their ceiling. We add to
+ * both `unlocks` and `purchaseCounts` so the UI hides these as "owned"
+ * rather than offering them as still-purchasable.
+ *
+ * Doing this in the migration (rather than at runtime) keeps the
+ * Literature display logic simple — it only ever has to check
+ * `purchaseCount > 0` to know if a once-only entry is done.
+ */
+function migrateComprehensionLadder(data: SaveData): SaveData {
+  const ceilings: Array<[string, number]> = [
+    ['comprehension_25', 25],
+    ['comprehension_100', 100],
+    ['comprehension_250', 250],
+    ['comprehension_1k', 1000],
+    ['comprehension_10k', 10_000],
+    ['comprehension_100k', 100_000],
+    ['comprehension_1m', 1_000_000],
+    ['comprehension_1b', 1_000_000_000],
+  ];
+  const currentCeiling = data.comprehension ?? 10;
+
+  const unlocks = new Set(data.unlocks ?? []);
+  const counts = new Map(data.purchaseCounts ?? []);
+
+  for (const [id, ceiling] of ceilings) {
+    if (ceiling <= currentCeiling) {
+      unlocks.add(id);
+      if ((counts.get(id) ?? 0) === 0) counts.set(id, 1);
+    }
+  }
+
+  return {
+    ...data,
+    version: SAVE_VERSION,
+    unlocks: [...unlocks],
+    purchaseCounts: [...counts],
+  };
 }
 
 function migrateRiverEndpoints(data: SaveData): SaveData {
@@ -401,6 +484,8 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
 
   if (typeof data.comprehension === 'number') setComprehension(data.comprehension);
   if (data.camera) restoreCamera(data.camera);
+  if (data.cellLevels) restoreCellLevels(data.cellLevels);
+  if (data.pipeLevels) restorePipeLevels(data.pipeLevels);
 }
 
 /**

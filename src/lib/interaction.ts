@@ -50,8 +50,10 @@ import {
   addCell,
   addPipe,
   allCells,
+  cellLevel,
   comprehensionLevel,
   consumeFuelOrFail,
+  levelMultiplier,
   decreaseStack,
   depositToWarehouse,
   findBlockAt,
@@ -285,7 +287,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
     cell.pendingDisplays[portIndex] = display;
 
     // Refresh the cost preview now that another input contributes magnitude.
-    updateCostBadge(cell);
+    updateCostBadge(cell, cellLevel(cell.type));
 
     if (operandsFilled(cell)) {
       fireCell(cell);
@@ -310,7 +312,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
     // Operand-only inputs drive cost & operate; the fuel slot (if present)
     // is the payment, not part of the operation (Slice 3.5.5).
     const operands = operandPending(cell).map((v) => v as Value);
-    const cost = computationalCost(cell.type, operands);
+    const cost = computationalCost(cell.type, operands, cellLevel(cell.type));
 
     // operate() is pure — call it now so we can pre-check output port
     // capacity before paying fuel (Slice 5.7). One distinct port-target
@@ -370,7 +372,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         cell.pendingDisplays[i] = null;
       }
     }
-    updateCostBadge(cell);
+    updateCostBadge(cell, cellLevel(cell.type));
 
     if (result.marginalia) {
       showMarginalia(result.marginalia.text, result.marginalia.key);
@@ -381,6 +383,11 @@ export function createDragController(app: Application, canvasLayer: Container): 
     // port within ONE firing keep the 18px within-firing fan, anchored
     // to the first emit's planned anchor so Factor's primes stay
     // clustered when the port shifts due to a prior pile-up.
+    //
+    // Cell level multiplies each emit's stack count (Slice 6.7): a
+    // lvl-2 successor's "one zero in → one one out" becomes "one zero
+    // in → two ones out" without the cell visually firing twice.
+    const emitMultiplier = levelMultiplier(cellLevel(cell.type));
     const emitsPerPort = new Map<number, number>();
     const portAnchors = new Map<number, { x: number; y: number }>();
     for (const ev of result.emits) {
@@ -400,7 +407,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
             y: plan.block.container.y,
           });
         }
-        commitSpawn(plan, ev.value, canvasLayer);
+        commitSpawn(plan, ev.value, canvasLayer, emitMultiplier);
       } else {
         const anchor = portAnchors.get(ev.portIndex);
         if (!anchor) continue;
@@ -408,12 +415,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
         const y = anchor.y;
         const existing = findBlockAt(x, y, MERGE_EMIT_RADIUS, ev.value);
         if (existing) {
-          increaseStack(existing, 1);
+          increaseStack(existing, emitMultiplier);
           updateStackBadge(existing);
         } else {
           const outBlock = drawBlock(ev.value, x, y);
           canvasLayer.addChild(outBlock);
-          const placed = addBlock(outBlock, ev.value);
+          const placed = addBlock(outBlock, ev.value, emitMultiplier);
+          if (emitMultiplier > 1) updateStackBadge(placed);
           attachBlockInteraction(placed);
         }
       }
@@ -969,7 +977,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         placed.pendingDisplays[i] = display;
       }
       // Reflect any restored pending state on the cost-preview badge.
-      updateCostBadge(placed);
+      updateCostBadge(placed, cellLevel(placed.type));
       attachCellInteraction(placed);
     },
 

@@ -153,7 +153,15 @@ export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions)
  * stay hidden. Empty cells (no inputs filled yet) also stay hidden — the
  * preview only appears once the player has begun loading the cell.
  */
-export function updateCostBadge(cell: PlacedCell): void {
+/**
+ * Updates the cost preview badge on a cost-bearing cell. `level` is the
+ * cell-type's current upgrade level (default 1) — used to compute the
+ * effective fuel cost after Mult/Exp discounts. Pulling the level
+ * directly from `world.ts` would create a runtime import cycle
+ * (pixi/binary-cell → world → cell-types → pixi/binary-cell), so the
+ * caller is expected to look it up and pass it in.
+ */
+export function updateCostBadge(cell: PlacedCell, level: number = 1): void {
   const badge = (cell.container as Container & { __costBadge?: Text }).__costBadge;
   if (!badge) return;
   // Only operand magnitudes drive cost — the fuel slot is the PAYMENT,
@@ -164,7 +172,7 @@ export function updateCostBadge(cell: PlacedCell): void {
   const operands = cell.pending.filter(
     (_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel',
   );
-  const cost = computationalCost(cell.type, operands);
+  const cost = computationalCost(cell.type, operands, level);
   if (cost.lte(Decimal.dZero)) {
     badge.text = '';
     badge.alpha = 0;

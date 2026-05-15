@@ -7,8 +7,34 @@ north star is `DESIGN.md`. This file is the execution plan.
 
 ## 1. Where we are
 
-**Phases 1, 2, 3, 3.5, 4, the Phase 4 UX polish pass, and the operator
-+ rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c) are complete.**
+**Phases 1, 2, 3, 3.5, 4, the Phase 4 UX polish pass, the operator
++ rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c), and the
+Phase 5.6 pacing-overhaul data port (Slice 6.6) are complete.**
+
+The pacing overhaul rebalanced every operator, pipe, and comprehension
+cost against a standalone simulator (`sim/`) that models optimal play
+under the planned leveling system. The comprehension ladder grew from
+three tiers (≤100, ≤1k, ≤1M) to eight (≤25, ≤100, ≤250, ≤1k, ≤10k,
+≤100k, ≤1M, ≤1B), each pairing an engineered specific-number puzzle
+(1729, 6174, 65536, ...) with a bulk stockpile. Pipe ≤1000 was added.
+Tetration and Pentation costs were moved into the tens of thousands of
+thousands and millions, sized to require leveled production
+infrastructure. Save schema v12 auto-migrates pre-overhaul players by
+back-filling implied lower-tier comprehensions. **Pacing target:
+~5h speedrun, ~10h casual to Tetration.**
+
+Phase 5.6 also includes **Slice 6.7 — leveling system v1**. Cells and
+pipes now have per-type/per-magnitude upgrade levels (max 5, doubling
+throughput per level). Successor gains river-tap at lvl 3; Mult and
+Exp gain fuel-cost discounts at lvl 3 and lvl 5. The Literature panel
+lists upgrade entries that become visible only when the immediate next
+tier is reachable. A Roman-numeral badge marks every leveled cell.
+
+Still not in game code: warehouses don't yet have levels (Slice 6.9),
+some level *qualities* are documented but not implemented in v1
+(bundle output, variadic addition, batched pipe transfer, jam
+threshold — see Slice 6.8). Pure throughput-multiplier leveling ships
+in 6.7; non-throughput qualities arrive later.
 The factory runs without constant clicking: the canvas pans and zooms;
 warehouses store typed stacks at capacity; magnitude-rated pipes carry
 blocks automatically between cells; three cultivation cells (arithmetic,
@@ -438,6 +464,11 @@ can't be tested without operators that produce values at that scale.
 | **6.1b** | **Pentation cell** (`a↑↑↑b`, tier 8). Mirrors tetration's structure; `valuePentate` via `Decimal.pentate`. `PENTATE_HEIGHT_CAP = 100`. | ✅ done |
 | **6.2c** | **Arrow-notation tier.** For values whose tower height exceeds `TIER_ARROW_LAYER_MIN = 100_000`, the visual stack stops communicating — compact `10↑↑N` notation takes over (sci-formatted N for huge counts, `∞` for break_eternity overflow). Marginalia (*"We have stopped writing the tower out. Use your imagination."*). | ✅ done |
 | **6.1c** | **Variadic Knuth arrow cell** (`a↑ⁿb`). Three operand inputs (base, arrows, height) + fuel; tier scales as `2^n` (computed at firing time from the arrows input). break_eternity has no native `arrow(n)` past pentation, so for `n ≥ 4` we iterate the recursive definition `a↑ⁿb = a↑^(n-1)(a↑ⁿ(b-1))`. Heights cap progressively: 1000 for tetration, 100 for pentation, 50 for higher. Cost preview shows `fuel ≥ N` like the binary cells (the shared `updateCostBadge` is polymorphic). | ✅ done |
+| **6.6** | **Pacing overhaul — data port.** Apply the simulator-validated cost curve to `src/lib/literature.ts`. Eight comprehension tiers (was three) with engineered specific-number puzzles + bulk stockpiles. New `pipe_1k` entry. Rebalanced operator and infrastructure costs sized for the leveling system that lands in 6.7. Save schema bumps to v12; migration back-fills implied lower-tier comprehensions for pre-overhaul saves. **Pacing target locked: ~5h speedrun, ~10h casual to Tetration.** | ✅ done |
+| **6.7** | **Leveling system v1 — full integration.** Per-cell-type levels stored in `world.ts` (`cellLevels: Map<CellType, number>`) and per-pipe-magnitude levels (`pipeLevels: Map<number, number>`). Throughput multiplier `2ⁿ⁻¹` per level — applied to cell output stack count in both fire paths and to pipe cooldown in `tickPipes`. Qualities modeled in code: **Successor lvl 3 river-tap** (new `tickRiverTapSuccessors` driver that emits without a pipe attached) and **Mult/Exp lvl 3 fuel −1 / lvl 5 fuel halved** (in `cost.ts`). 28 level-upgrade Literature entries (4 levels × 5 cells + 4 levels × 3 pipes − pipe_100 capped at IV), each denominated in the currency the primitive helps produce. New `kind: 'level'` purchase branch; `isLevelUpgradeAvailable` gates entry visibility to the immediate next tier. Save schema v13 with cellLevels + pipeLevels snapshots. Pencil Roman-numeral badge (II–V) at the top-right of each leveled cell. | ✅ done |
+| **6.8** | **Leveling polish — deferred qualities.** Currently unmodeled in v1: Successor lvl 5 bundle output (every 5 firings emit a `5`-block instead of 5 ones), Addition lvl 4 variadic (sum 3 inputs per firing), Pipe lvl 3+ lower jam threshold, Pipe lvl 4+ batched transfer (2 items per tick). Pure throughput-multiplier model ships in 6.7; these are non-throughput qualities that need bespoke firing behaviour. | not started |
+| **6.9** | **Leveling — Warehouses.** Capacity ladder (100 → 500 → 2k → 10k → 100k) plus qualities at lvl 3 (dual output), 4 (built-in fuel port), 5 (feeds multiple destinations). Not in 6.7 because warehouses don't fit the "output multiplier" pattern — they're storage. | not started |
+| **6.10** | **Literature tabs UI.** Split the single Literature sidebar into tabs: Operators / Levels / Infrastructure / Discovery / Comprehension / Theorems. Reduces clutter as the catalog now spans 60+ entries. Greyed-out locked entries become visible (the player sees the road ahead). | not started |
 | **6.3** | Prestige system + Ancestral Numbers shelf | not started |
 | **6.4** | Ordinals (ω, ε₀, Γ₀), surreal numbers | not started |
 | **6.5** | Named giant numbers as currency targets (Graham, TREE(3), Loader, Rayo) | not started |
@@ -481,6 +512,24 @@ These touch every phase and ship in parallel rather than as discrete slices.
 
 ### Documentation
 - This file and `DESIGN.md` evolve together. When a design decision shifts, both get updated.
+
+### Pacing simulator (`sim/`)
+- A standalone Node CLI that walks an optimal-play agent through the
+  Literature roadmap and reports time-to-each-unlock. Lives in `sim/`,
+  runs with `node sim/run.ts` (Node 22.6+ native TS support, no
+  install needed).
+- **Single source of truth for pacing numbers.** `sim/catalog.ts`
+  mirrors `src/lib/literature.ts` and `src/lib/cost.ts`. When changing
+  a Literature cost, edit `sim/catalog.ts` first, run the sim to see
+  the curve shift, then port the locked numbers to `src/lib/`.
+- Models leveling, the river-tap quality, and mult/exp fuel-discount
+  qualities. The agent automatically chooses between cloning and
+  upgrading based on ROI.
+- Use `--csv pacing.csv` for spreadsheet analysis, `--verbose` for the
+  per-purchase event trace, `--to <id>` to stop at a specific roadmap
+  entry.
+- See `sim/README.md` for the full usage notes and current model
+  limitations.
 
 ---
 

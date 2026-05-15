@@ -1,10 +1,14 @@
 import type { CellType } from './cell-types';
 import {
+  cellLevel,
   countMatching,
   hasUnlock,
   incrementPurchaseCount,
+  pipeLevel,
   purchaseCountOf,
   raiseComprehension,
+  setCellLevel,
+  setPipeLevel,
   spendMatching,
   spendValue,
   unlock,
@@ -97,7 +101,7 @@ function predicateTest(item: LiteratureCostPredicate): ((v: Value) => boolean) |
   return (v: Value) => rule.test(v) && valueMagnitude(v).gte(minD);
 }
 
-export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe';
+export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe' | 'level';
 
 export interface LiteratureEntry {
   id: string;
@@ -106,7 +110,8 @@ export interface LiteratureEntry {
   glyph: string;
   description: string;
   cost: LiteratureCost;
-  /** Once-only entries cannot be re-purchased. Theorems and comprehension are always once. */
+  /** Once-only entries cannot be re-purchased. Theorems, comprehension,
+   *  and `level` upgrades are always once-only per (type, target level). */
   isOnce?: boolean;
   /** Geometric multiplier per repeat purchase. Default 1.6. Ignored if isOnce. */
   costScale?: number;
@@ -121,24 +126,33 @@ export interface LiteratureEntry {
   placementCellType?: CellType;
   /** For rule-warehouse entries: which predicate to install on the placed cell. */
   ruleId?: string;
+  /** For `level` entries: which cell type's level to raise. Mutually
+   *  exclusive with `levelPipeMagnitude`. */
+  levelCellType?: CellType;
+  /** For `level` entries: which pipe magnitude's level to raise. */
+  levelPipeMagnitude?: number;
+  /** For `level` entries: the target level (2..5). The entry only
+   *  becomes purchasable when the current level for the target is
+   *  exactly `targetLevel - 1`. */
+  targetLevel?: number;
   /** Optional narrator note fired on the *first* purchase only. */
   unlockMessage?: string;
 }
 
-const ALL_TEN: LiteratureCost = Array.from({ length: 10 }, (_, i) => ({
-  value: valueOf(i + 1),
-  count: 1,
-}));
-
 export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
   // -- Operators --------------------------------------------------------
+  // Costs rebalanced in the Phase 5.6 pacing overhaul. Validated via the
+  // standalone simulator in `sim/`. The shape: dense Stage A unlocks,
+  // increasingly aspirational mid-game, hyperoperators gated on real
+  // factory scale. Edit `sim/catalog.ts` and re-run `node sim/run.ts`
+  // before changing numbers here — the sim is the source of truth.
   {
     id: 'successor',
     kind: 'cell',
     name: 'Successor Function',
     glyph: '{ }',
     description: 'Wraps a number. n → n + 1. The first theorem.',
-    cost: [{ value: valueOf(0), count: 10 }],
+    cost: [{ value: valueOf(0), count: 100 }],
     unlockMessage: 'Result added to your literature: the Successor Function.',
   },
   {
@@ -147,7 +161,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Addition Operator',
     glyph: '+',
     description: 'Two summands enter, their sum emerges. a + b.',
-    cost: [{ value: valueOf(1), count: 50 }],
+    cost: [{ value: valueOf(1), count: 900 }],
     unlockMessage: 'Result added to your literature: the Addition Operator.',
   },
   {
@@ -156,7 +170,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Subtraction Operator',
     glyph: '−',
     description: 'a − b. Minuend on top, subtrahend below. Negatives now admissible.',
-    cost: [{ value: valueOf(2), count: 20 }],
+    cost: [{ value: valueOf(2), count: 200 }],
     unlockMessage:
       'Result added to your literature: Subtraction. The number line, henceforth, extends in both directions.',
   },
@@ -167,7 +181,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: '×',
     description:
       'Repeated addition, formalised. a × b. Each firing burns one fuel block of magnitude ≥ the input order.',
-    cost: [{ value: valueOf(2), count: 10 }],
+    cost: [{ value: valueOf(10), count: 200 }],
     unlockMessage:
       'Result added to your literature: the Multiplication Operator. Fuel is paid in magnitude — one block per firing, overpay is wasted. Keep matched denominations.',
   },
@@ -178,7 +192,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: '÷',
     description:
       'a ÷ b. Exact rationals when the division does not divide evenly. Each firing burns one fuel block matched to the input order.',
-    cost: [{ value: valueOf(3), count: 10 }],
+    cost: [{ value: valueOf(3), count: 200 }],
     unlockMessage:
       'Result added to your literature: Division. The rationals are admitted, exact and unreduced where they belong.',
   },
@@ -189,7 +203,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: '^',
     description:
       'Repeated multiplication, formalised. a ^ b. Tier-2 fuel cost — grows twice as fast with input magnitude as multiplication.',
-    cost: [{ value: valueOf(4), count: 5 }],
+    cost: [{ value: valueOf(100), count: 200 }],
     unlockMessage:
       'Result added to your literature: Exponentiation. Tier-2 fuel cost — tetration, when it arrives, will be ruinous.',
   },
@@ -200,7 +214,10 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: '↑↑',
     description:
       'A tower: a ↑↑ b is a stacked b copies of a. Tier-4 fuel cost — the fuel port is REQUIRED, no global fallback. Wire a dedicated supply.',
-    cost: [{ value: valueOf(100), count: 3 }],
+    cost: [
+      { value: valueOf(1000), count: 4000 },
+      { value: valueOf(100), count: 200 },
+    ],
     costScale: 1.8,
     unlockMessage:
       'Result added to your literature: Tetration. We told you it would be ruinous. Wire fuel — this operator will not improvise.',
@@ -212,7 +229,10 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: '↑↑↑',
     description:
       'Repeated tetration. a ↑↑↑ b is a tower whose height is itself a tower. Tier-8 fuel cost — heights past 3 are catastrophic.',
-    cost: [{ value: valueOf(1000), count: 3 }],
+    cost: [
+      { value: valueOf(1000), count: 8500 },
+      { value: valueOf(1_000_000), count: 350 },
+    ],
     costScale: 1.8,
     unlockMessage:
       'Result added to your literature: Pentation. Two arrows were a building; three arrows is the building rebuilding itself.',
@@ -255,7 +275,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Square Root',
     glyph: '√',
     description: 'A non-negative input in, its square root out. Non-squares surface as irrationals.',
-    cost: [{ value: valueOf(4), count: 8 }],
+    cost: [{ value: valueOf(100), count: 50 }],
     unlockMessage:
       'Result added to your literature: the Square Root. The Pythagoreans send their belated apologies.',
   },
@@ -377,7 +397,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Pipe (≤10)',
     glyph: '═',
     description: 'Carries values 0–10. One item per second.',
-    cost: [{ value: valueOf(10), count: 10 }],
+    cost: [{ value: valueOf(10), count: 200 }],
     pipeMagnitude: 10,
     pipeCooldownMs: 900,
     costScale: 1.6,
@@ -389,11 +409,24 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Pipe (≤100)',
     glyph: '≡',
     description: 'Carries values 0–100. One item per second.',
-    cost: [{ value: valueOf(100), count: 100 }],
+    cost: [{ value: valueOf(100), count: 5000 }],
     pipeMagnitude: 100,
     pipeCooldownMs: 800,
     costScale: 1.6,
     unlockMessage: 'A hundred hundreds, well spent.',
+  },
+  {
+    id: 'pipe_1k',
+    kind: 'pipe',
+    name: 'Pipe (≤1000)',
+    glyph: '⫶',
+    description: 'Carries values 0–1000. The fuel route for tetration-class operators.',
+    cost: [{ value: valueOf(1000), count: 1000 }],
+    pipeMagnitude: 1000,
+    pipeCooldownMs: 750,
+    costScale: 1.6,
+    unlockMessage:
+      'A pipe rated for the thousands. Tetration may now be fed from a dedicated reservoir.',
   },
 
   // -- Cultivation cells -------------------------------------------------
@@ -410,7 +443,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     glyph: 'a+n',
     description:
       'Drop a seed; emits a, a+1, a+2, … every 1.8 seconds. Seed is not consumed. Each emission burns one fuel block matched to its magnitude. Requires real warehouse infrastructure to feed and absorb.',
-    cost: [{ value: valueOf(100), count: 50 }],
+    cost: [{ value: valueOf(100), count: 700 }],
     costScale: 1.8,
     unlockMessage:
       'Result added to your literature: Arithmetic Cultivation. Numbers march out at a steady linear pace — each one taxing the fuel pool. Build a sink first.',
@@ -541,41 +574,142 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
       'Result added to your literature: Cleanup Bot. The page will tidy itself, eventually.',
   },
 
-  // -- Comprehension upgrades ------------------------------------------
+  // -- Comprehension ladder -------------------------------------------------
+  // Eight tiers, Phase 5.6 pacing overhaul. Each tier pairs an engineered
+  // specific-number puzzle with a bulk stockpile — the puzzle is the
+  // signature challenge, the bulk is the pacing.
+  //
+  // Tier numbering: I (≤25), II (≤100), III (≤250), IV (≤1k), V (≤10k),
+  // VI (≤100k), VII (≤1M), VIII (≤1B). Note: existing save IDs
+  // `comprehension_100` / `_1k` / `_1m` are preserved — only display
+  // names and costs change. The persistence migration auto-unlocks
+  // implied lower tiers based on the player's existing ceiling.
+  {
+    id: 'comprehension_25',
+    kind: 'comprehension',
+    name: 'Comprehension I',
+    glyph: '≤25',
+    description:
+      'Lift the manual ceiling to 25. The first cohort: one each of 1–9 and one 25.',
+    cost: [
+      ...Array.from({ length: 9 }, (_, i) => ({ value: valueOf(i + 1), count: 1 })),
+      { value: valueOf(25), count: 1 },
+    ],
+    comprehensionLevel: 25,
+    isOnce: true,
+    unlockMessage:
+      'Comprehension I. You may now lift numbers up to 25. The first nine plus a 25 — paid in full.',
+  },
   {
     id: 'comprehension_100',
     kind: 'comprehension',
-    name: 'Comprehension I',
+    name: 'Comprehension II',
     glyph: '≤100',
-    description: 'Lift the manual ceiling to 100. Requires one each of 1 through 10.',
-    cost: ALL_TEN,
+    description: 'Lift the manual ceiling to 100. Cost: one each of 25, 50, and 100.',
+    cost: [
+      { value: valueOf(100), count: 1 },
+      { value: valueOf(50), count: 1 },
+      { value: valueOf(25), count: 1 },
+    ],
     comprehensionLevel: 100,
     isOnce: true,
     unlockMessage:
-      'Comprehension I. You may now lift numbers up to 100. The ones-through-tens were the price.',
+      'Comprehension II. The hundred is admitted. Twenty-five, fifty, and a hundred were the toll.',
+  },
+  {
+    id: 'comprehension_250',
+    kind: 'comprehension',
+    name: 'Comprehension III',
+    glyph: '≤250',
+    description: 'Lift the manual ceiling to 250. Cost: one 250 plus five hundreds.',
+    cost: [
+      { value: valueOf(250), count: 1 },
+      { value: valueOf(100), count: 5 },
+    ],
+    comprehensionLevel: 250,
+    isOnce: true,
+    unlockMessage:
+      'Comprehension III. The mid-hundreds are within reach.',
   },
   {
     id: 'comprehension_1k',
     kind: 'comprehension',
-    name: 'Comprehension II',
+    name: 'Comprehension IV',
     glyph: '≤10³',
-    description: 'Lift the ceiling to 1,000. Cost: ten hundreds.',
-    cost: [{ value: valueOf(100), count: 10 }],
+    description:
+      'Lift the manual ceiling to 1,000. Cost: one Hardy–Ramanujan number (1,729) and ten hundreds.',
+    cost: [
+      { value: valueOf(1729), count: 1 },
+      { value: valueOf(100), count: 10 },
+    ],
     comprehensionLevel: 1000,
     isOnce: true,
-    unlockMessage: 'Comprehension II. The thousand is in reach.',
+    unlockMessage:
+      'Comprehension IV. 1,729 — the smallest number expressible as a sum of two cubes in two distinct ways. The thousand is in reach.',
+  },
+  {
+    id: 'comprehension_10k',
+    kind: 'comprehension',
+    name: 'Comprehension V',
+    glyph: '≤10⁴',
+    description:
+      'Lift the manual ceiling to 10,000. Cost: one Kaprekar constant (6,174), 3,500 ten-thousands, and 350 thousands.',
+    cost: [
+      { value: valueOf(6174), count: 1 },
+      { value: valueOf(10_000), count: 3500 },
+      { value: valueOf(1000), count: 350 },
+    ],
+    comprehensionLevel: 10_000,
+    isOnce: true,
+    unlockMessage:
+      'Comprehension V. 6,174: Kaprekar showed that almost any 4-digit number, iterated, lands here. So have you.',
+  },
+  {
+    id: 'comprehension_100k',
+    kind: 'comprehension',
+    name: 'Comprehension VI',
+    glyph: '≤10⁵',
+    description:
+      'Lift the manual ceiling to 100,000. Cost: one 65,536 (2¹⁶), 1,750 hundred-thousands, and 350 ten-thousands.',
+    cost: [
+      { value: valueOf(65_536), count: 1 },
+      { value: valueOf(100_000), count: 1750 },
+      { value: valueOf(10_000), count: 350 },
+    ],
+    comprehensionLevel: 100_000,
+    isOnce: true,
+    unlockMessage:
+      'Comprehension VI. 2¹⁶ = 65,536. A round number, in the right base.',
   },
   {
     id: 'comprehension_1m',
     kind: 'comprehension',
-    name: 'Comprehension III',
+    name: 'Comprehension VII',
     glyph: '≤10⁶',
-    description: 'Lift the ceiling to one million. Cost: one 9,999.',
-    cost: [{ value: valueOf(9999), count: 1 }],
+    description:
+      'Lift the manual ceiling to one million. Cost: one 9,999, 700 millions, and 175 hundred-thousands.',
+    cost: [
+      { value: valueOf(9999), count: 1 },
+      { value: valueOf(1_000_000), count: 700 },
+      { value: valueOf(100_000), count: 175 },
+    ],
     comprehensionLevel: 1_000_000,
     isOnce: true,
     unlockMessage:
-      'Comprehension III. You can now manually move a million. Whether you should is another question.',
+      'Comprehension VII. You can now manually move a million. Whether you should is another question.',
+  },
+  {
+    id: 'comprehension_1b',
+    kind: 'comprehension',
+    name: 'Comprehension VIII',
+    glyph: '≤10⁹',
+    description:
+      'Lift the manual ceiling to one billion. Cost: 350 billion-class blocks. The 10⁹-scale challenge.',
+    cost: [{ value: valueOf(1_000_000_000), count: 350 }],
+    comprehensionLevel: 1_000_000_000,
+    isOnce: true,
+    unlockMessage:
+      'Comprehension VIII. The billion is held in mind, if not in hand.',
   },
 
   // -- Theorems (milestone inscriptions) --------------------------------
@@ -663,11 +797,394 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     unlockMessage:
       'Twenty composites, displayed plainly. Factor would have something to say about each — but the Theorem is content to enumerate.',
   },
+
+  // -- Level upgrades (Slice 6.7) -------------------------------------------
+  //
+  // Every leveled primitive (cells + pipes) has 4 upgrade entries (levels
+  // 2..5). Throughput multiplier doubles per level. Costs are denominated
+  // in the currency the primitive helps produce — self-amortizing.
+  //
+  // Qualities at specific levels:
+  //   - Successor lvl 3: river-tap (fires without a pipe ≤1)
+  //   - Successor lvl 5: bundle output (deferred behaviour; not modeled in v1)
+  //   - Addition lvl 4: variadic sum (deferred to a later slice)
+  //   - Multiplication / Exponentiation lvl 3: fuel cost −1 (min 1)
+  //   - Multiplication / Exponentiation lvl 5: fuel cost halved
+  //   - Pipe lvl 3+: deferred jam-threshold quality
+  //   - Pipe lvl 4+: deferred batched-transfer quality
+  //
+  // Costs validated via the simulator in `sim/catalog.ts`. When tuning,
+  // edit the sim first and port back here.
+
+  // Successor levels
+  {
+    id: 'successor_lvl2',
+    kind: 'level',
+    name: 'Successor II',
+    glyph: 'Ⅱ',
+    description: 'Levels every Successor cell to II. Each firing emits 2 ones.',
+    cost: [{ value: valueOf(1), count: 200 }],
+    isOnce: true,
+    levelCellType: 'successor',
+    targetLevel: 2,
+    unlockMessage: 'Successor levelled to II. Each firing now emits two ones.',
+  },
+  {
+    id: 'successor_lvl3',
+    kind: 'level',
+    name: 'Successor III — River-Tap',
+    glyph: 'Ⅲ',
+    description:
+      'Levels every Successor to III. 4 ones per firing. Cells now draw zeros directly from the river — pipes ≤1 are optional.',
+    cost: [{ value: valueOf(10), count: 200 }],
+    isOnce: true,
+    levelCellType: 'successor',
+    targetLevel: 3,
+    unlockMessage:
+      'Successor III. The cells reach into the river of their own accord. The pipe is no longer required to feed them — convenient, if still tidy.',
+  },
+  {
+    id: 'successor_lvl4',
+    kind: 'level',
+    name: 'Successor IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every Successor to IV. 8 ones per firing.',
+    cost: [{ value: valueOf(100), count: 300 }],
+    isOnce: true,
+    levelCellType: 'successor',
+    targetLevel: 4,
+    unlockMessage: 'Successor IV. The river feels lighter.',
+  },
+  {
+    id: 'successor_lvl5',
+    kind: 'level',
+    name: 'Successor V',
+    glyph: 'Ⅴ',
+    description: 'Levels every Successor to V — the maximum. 16 ones per firing.',
+    cost: [{ value: valueOf(100), count: 5000 }],
+    isOnce: true,
+    levelCellType: 'successor',
+    targetLevel: 5,
+    unlockMessage: 'Successor V. Peano would barely recognise the production.',
+  },
+
+  // Addition levels
+  {
+    id: 'addition_lvl2',
+    kind: 'level',
+    name: 'Addition II',
+    glyph: 'Ⅱ',
+    description: 'Levels every Addition cell to II. 2 sums per firing.',
+    cost: [{ value: valueOf(10), count: 100 }],
+    isOnce: true,
+    levelCellType: 'addition',
+    targetLevel: 2,
+    unlockMessage: 'Addition II. The sums arrive in pairs.',
+  },
+  {
+    id: 'addition_lvl3',
+    kind: 'level',
+    name: 'Addition III',
+    glyph: 'Ⅲ',
+    description: 'Levels every Addition to III. 4 sums per firing.',
+    cost: [{ value: valueOf(100), count: 200 }],
+    isOnce: true,
+    levelCellType: 'addition',
+    targetLevel: 3,
+    unlockMessage: 'Addition III.',
+  },
+  {
+    id: 'addition_lvl4',
+    kind: 'level',
+    name: 'Addition IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every Addition to IV. 8 sums per firing.',
+    cost: [{ value: valueOf(1000), count: 300 }],
+    isOnce: true,
+    levelCellType: 'addition',
+    targetLevel: 4,
+    unlockMessage: 'Addition IV.',
+  },
+  {
+    id: 'addition_lvl5',
+    kind: 'level',
+    name: 'Addition V',
+    glyph: 'Ⅴ',
+    description: 'Levels every Addition to V — the maximum. 16 sums per firing.',
+    cost: [{ value: valueOf(1000), count: 5000 }],
+    isOnce: true,
+    levelCellType: 'addition',
+    targetLevel: 5,
+    unlockMessage: 'Addition V.',
+  },
+
+  // Multiplication levels
+  {
+    id: 'multiplication_lvl2',
+    kind: 'level',
+    name: 'Multiplication II',
+    glyph: 'Ⅱ',
+    description: 'Levels every Multiplication cell to II. 2 products per firing.',
+    cost: [{ value: valueOf(100), count: 100 }],
+    isOnce: true,
+    levelCellType: 'multiplication',
+    targetLevel: 2,
+    unlockMessage: 'Multiplication II.',
+  },
+  {
+    id: 'multiplication_lvl3',
+    kind: 'level',
+    name: 'Multiplication III — Fuel Saver',
+    glyph: 'Ⅲ',
+    description:
+      'Levels every Multiplication to III. 4 products per firing. Fuel cost reduced by 1 (minimum 1).',
+    cost: [{ value: valueOf(1000), count: 200 }],
+    isOnce: true,
+    levelCellType: 'multiplication',
+    targetLevel: 3,
+    unlockMessage:
+      'Multiplication III. A unit of fuel is shaved from each firing — the cell has learned to economise.',
+  },
+  {
+    id: 'multiplication_lvl4',
+    kind: 'level',
+    name: 'Multiplication IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every Multiplication to IV. 8 products per firing.',
+    cost: [{ value: valueOf(10_000), count: 300 }],
+    isOnce: true,
+    levelCellType: 'multiplication',
+    targetLevel: 4,
+    unlockMessage: 'Multiplication IV.',
+  },
+  {
+    id: 'multiplication_lvl5',
+    kind: 'level',
+    name: 'Multiplication V — Frugal',
+    glyph: 'Ⅴ',
+    description:
+      'Levels every Multiplication to V — the maximum. 16 products per firing. Fuel cost halved.',
+    cost: [{ value: valueOf(10_000), count: 3000 }],
+    isOnce: true,
+    levelCellType: 'multiplication',
+    targetLevel: 5,
+    unlockMessage:
+      'Multiplication V. The fuel cost halves; the player resists every other economic instinct.',
+  },
+
+  // Exponentiation levels
+  {
+    id: 'exponentiation_lvl2',
+    kind: 'level',
+    name: 'Exponentiation II',
+    glyph: 'Ⅱ',
+    description: 'Levels every Exponentiation cell to II. 2 powers per firing.',
+    cost: [{ value: valueOf(1000), count: 100 }],
+    isOnce: true,
+    levelCellType: 'exponentiation',
+    targetLevel: 2,
+    unlockMessage: 'Exponentiation II.',
+  },
+  {
+    id: 'exponentiation_lvl3',
+    kind: 'level',
+    name: 'Exponentiation III — Fuel Saver',
+    glyph: 'Ⅲ',
+    description:
+      'Levels every Exponentiation to III. 4 powers per firing. Fuel cost reduced by 1 (minimum 1).',
+    cost: [{ value: valueOf(10_000), count: 200 }],
+    isOnce: true,
+    levelCellType: 'exponentiation',
+    targetLevel: 3,
+    unlockMessage: 'Exponentiation III.',
+  },
+  {
+    id: 'exponentiation_lvl4',
+    kind: 'level',
+    name: 'Exponentiation IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every Exponentiation to IV. 8 powers per firing.',
+    cost: [{ value: valueOf(100_000), count: 300 }],
+    isOnce: true,
+    levelCellType: 'exponentiation',
+    targetLevel: 4,
+    unlockMessage: 'Exponentiation IV.',
+  },
+  {
+    id: 'exponentiation_lvl5',
+    kind: 'level',
+    name: 'Exponentiation V — Frugal',
+    glyph: 'Ⅴ',
+    description:
+      'Levels every Exponentiation to V — the maximum. 16 powers per firing. Fuel cost halved.',
+    cost: [{ value: valueOf(100_000), count: 3000 }],
+    isOnce: true,
+    levelCellType: 'exponentiation',
+    targetLevel: 5,
+    unlockMessage: 'Exponentiation V.',
+  },
+
+  // Pipe ≤1 levels
+  {
+    id: 'pipe_1_lvl2',
+    kind: 'level',
+    name: 'Pipe ≤1 — II',
+    glyph: 'Ⅱ',
+    description: 'Levels every pipe ≤1 to II. Twice the delivery rate.',
+    cost: [{ value: valueOf(1), count: 200 }],
+    isOnce: true,
+    levelPipeMagnitude: 1,
+    targetLevel: 2,
+    unlockMessage: 'Pipe ≤1 II. The river runs a touch faster.',
+  },
+  {
+    id: 'pipe_1_lvl3',
+    kind: 'level',
+    name: 'Pipe ≤1 — III',
+    glyph: 'Ⅲ',
+    description: 'Levels every pipe ≤1 to III. Four times the delivery rate.',
+    cost: [{ value: valueOf(1), count: 2000 }],
+    isOnce: true,
+    levelPipeMagnitude: 1,
+    targetLevel: 3,
+    unlockMessage: 'Pipe ≤1 III.',
+  },
+  {
+    id: 'pipe_1_lvl4',
+    kind: 'level',
+    name: 'Pipe ≤1 — IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every pipe ≤1 to IV. 8× the delivery rate.',
+    cost: [{ value: valueOf(10), count: 3000 }],
+    isOnce: true,
+    levelPipeMagnitude: 1,
+    targetLevel: 4,
+    unlockMessage: 'Pipe ≤1 IV.',
+  },
+  {
+    id: 'pipe_1_lvl5',
+    kind: 'level',
+    name: 'Pipe ≤1 — V',
+    glyph: 'Ⅴ',
+    description: 'Levels every pipe ≤1 to V — the maximum. 16× the delivery rate.',
+    cost: [{ value: valueOf(100), count: 5000 }],
+    isOnce: true,
+    levelPipeMagnitude: 1,
+    targetLevel: 5,
+    unlockMessage: 'Pipe ≤1 V.',
+  },
+
+  // Pipe ≤10 levels
+  {
+    id: 'pipe_10_lvl2',
+    kind: 'level',
+    name: 'Pipe ≤10 — II',
+    glyph: 'Ⅱ',
+    description: 'Levels every pipe ≤10 to II. Twice the delivery rate.',
+    cost: [{ value: valueOf(10), count: 200 }],
+    isOnce: true,
+    levelPipeMagnitude: 10,
+    targetLevel: 2,
+    unlockMessage: 'Pipe ≤10 II.',
+  },
+  {
+    id: 'pipe_10_lvl3',
+    kind: 'level',
+    name: 'Pipe ≤10 — III',
+    glyph: 'Ⅲ',
+    description: 'Levels every pipe ≤10 to III. 4× delivery rate.',
+    cost: [{ value: valueOf(100), count: 200 }],
+    isOnce: true,
+    levelPipeMagnitude: 10,
+    targetLevel: 3,
+    unlockMessage: 'Pipe ≤10 III.',
+  },
+  {
+    id: 'pipe_10_lvl4',
+    kind: 'level',
+    name: 'Pipe ≤10 — IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every pipe ≤10 to IV. 8× delivery rate.',
+    cost: [{ value: valueOf(1000), count: 300 }],
+    isOnce: true,
+    levelPipeMagnitude: 10,
+    targetLevel: 4,
+    unlockMessage: 'Pipe ≤10 IV.',
+  },
+  {
+    id: 'pipe_10_lvl5',
+    kind: 'level',
+    name: 'Pipe ≤10 — V',
+    glyph: 'Ⅴ',
+    description: 'Levels every pipe ≤10 to V — the maximum. 16× delivery rate.',
+    cost: [{ value: valueOf(1000), count: 3000 }],
+    isOnce: true,
+    levelPipeMagnitude: 10,
+    targetLevel: 5,
+    unlockMessage: 'Pipe ≤10 V.',
+  },
+
+  // Pipe ≤100 levels (cap at IV; lvl V deferred until playtest confirms need)
+  {
+    id: 'pipe_100_lvl2',
+    kind: 'level',
+    name: 'Pipe ≤100 — II',
+    glyph: 'Ⅱ',
+    description: 'Levels every pipe ≤100 to II. Twice the delivery rate.',
+    cost: [{ value: valueOf(100), count: 200 }],
+    isOnce: true,
+    levelPipeMagnitude: 100,
+    targetLevel: 2,
+    unlockMessage: 'Pipe ≤100 II.',
+  },
+  {
+    id: 'pipe_100_lvl3',
+    kind: 'level',
+    name: 'Pipe ≤100 — III',
+    glyph: 'Ⅲ',
+    description: 'Levels every pipe ≤100 to III. 4× delivery rate.',
+    cost: [{ value: valueOf(1000), count: 200 }],
+    isOnce: true,
+    levelPipeMagnitude: 100,
+    targetLevel: 3,
+    unlockMessage: 'Pipe ≤100 III.',
+  },
+  {
+    id: 'pipe_100_lvl4',
+    kind: 'level',
+    name: 'Pipe ≤100 — IV',
+    glyph: 'Ⅳ',
+    description: 'Levels every pipe ≤100 to IV. 8× delivery rate.',
+    cost: [{ value: valueOf(10_000), count: 300 }],
+    isOnce: true,
+    levelPipeMagnitude: 100,
+    targetLevel: 4,
+    unlockMessage: 'Pipe ≤100 IV.',
+  },
 ];
 
 /** Convenient predicate for the UI to route only cell purchases to placement mode. */
 export function isCellEntry(entry: LiteratureEntry): entry is LiteratureEntry & { id: CellType } {
   return entry.kind === 'cell';
+}
+
+/**
+ * Whether a level-upgrade entry is currently visible/purchasable. Returns
+ * true when the target's current level is exactly `targetLevel - 1` — i.e.
+ * this entry is the NEXT step. Lower-tier upgrades that have already been
+ * applied are not "available"; higher-tier ones are not yet reachable.
+ *
+ * Non-level entries always return true (the function is a no-op for them).
+ */
+export function isLevelUpgradeAvailable(entry: LiteratureEntry): boolean {
+  if (entry.kind !== 'level' || entry.targetLevel === undefined) return true;
+  if (entry.levelCellType) {
+    return cellLevel(entry.levelCellType) === entry.targetLevel - 1;
+  }
+  if (entry.levelPipeMagnitude !== undefined) {
+    return pipeLevel(entry.levelPipeMagnitude) === entry.targetLevel - 1;
+  }
+  return false;
 }
 
 /**
@@ -829,6 +1346,14 @@ export function purchase(entry: LiteratureEntry): boolean {
   // Kind-specific side effects.
   if (entry.kind === 'comprehension' && entry.comprehensionLevel) {
     raiseComprehension(entry.comprehensionLevel);
+  }
+
+  if (entry.kind === 'level' && entry.targetLevel) {
+    if (entry.levelCellType) {
+      setCellLevel(entry.levelCellType, entry.targetLevel);
+    } else if (entry.levelPipeMagnitude !== undefined) {
+      setPipeLevel(entry.levelPipeMagnitude, entry.targetLevel);
+    }
   }
 
   if (owned === 0 && entry.unlockMessage) {

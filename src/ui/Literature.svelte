@@ -5,14 +5,33 @@
     currentCost,
     formatCost,
     isCellEntry,
+    isLevelUpgradeAvailable,
     purchase,
     type LiteratureEntry,
   } from '../lib/literature';
-  import { achievements, countByValue, purchaseCounts } from '../lib/world';
+  import {
+    achievements,
+    cellLevels,
+    countByValue,
+    pipeLevels,
+    purchaseCounts,
+  } from '../lib/world';
   import { getController } from '../lib/interaction';
   import type { CellType } from '../lib/cell-types';
 
   $: visible = $achievements.has('play_with_zeros');
+
+  // Re-evaluate the visible entries whenever cell or pipe levels change.
+  // Level upgrades become visible only when their target's current level
+  // is exactly one less than the entry's targetLevel — see
+  // `isLevelUpgradeAvailable`. We touch the stores in the reactive scope
+  // so Svelte re-runs the filter on every level change.
+  $: visibleEntries = (() => {
+    // Touch the stores so reactivity tracks changes (no-op reads).
+    void $cellLevels;
+    void $pipeLevels;
+    return LITERATURE_ENTRIES.filter((e) => isLevelUpgradeAvailable(e));
+  })();
 
   function tryPurchase(entry: LiteratureEntry): void {
     const ok = purchase(entry);
@@ -26,18 +45,22 @@
     } else if (entry.kind === 'pipe' && entry.pipeMagnitude) {
       getController().beginPipePlacement(entry.pipeMagnitude, entry.pipeCooldownMs ?? 1000);
     }
+    // 'level' entries take effect immediately on purchase (the side-effect
+    // ran in `purchase()`); no placement flow.
   }
 
   function buttonLabel(entry: LiteratureEntry, owned: number): string {
     if (entry.kind === 'theorem') return 'inscribe';
     if (entry.kind === 'comprehension') return 'comprehend';
     if (entry.kind === 'pipe') return owned > 0 ? 'lay another' : 'lay pipe';
+    if (entry.kind === 'level') return 'upgrade';
     return owned > 0 ? 'acquire another' : 'acquire';
   }
 
   function terminalLabel(entry: LiteratureEntry): string {
     if (entry.kind === 'theorem') return '✓ inscribed';
     if (entry.kind === 'comprehension') return '✓ comprehended';
+    if (entry.kind === 'level') return '✓ upgraded';
     return '✓ acquired';
   }
 </script>
@@ -49,7 +72,7 @@
   </header>
 
   <ul class="entries">
-    {#each LITERATURE_ENTRIES as entry (entry.id)}
+    {#each visibleEntries as entry (entry.id)}
       {@const owned = $purchaseCounts.get(entry.id) ?? 0}
       {@const cost = currentCost(entry, owned)}
       {@const affordable = canAfford(cost, $countByValue)}
@@ -60,6 +83,7 @@
         class:locked={!affordable && !terminal}
         class:theorem={entry.kind === 'theorem'}
         class:comprehension={entry.kind === 'comprehension'}
+        class:level={entry.kind === 'level'}
       >
         <div class="row">
           <span class="glyph">{entry.glyph}</span>
@@ -177,6 +201,19 @@
   }
   .entry.comprehension .glyph {
     font-size: 22px;
+    opacity: 0.85;
+  }
+
+  /* Level upgrades — subtle differentiation from cells/pipes. The glyph
+     is a Roman numeral, larger than usual so it reads as the upgrade
+     tier at a glance. */
+  .entry.level {
+    border-color: rgba(58, 58, 58, 0.30);
+    background: rgba(245, 240, 220, 0.18);
+  }
+  .entry.level .glyph {
+    font-size: 30px;
+    font-style: italic;
     opacity: 0.85;
   }
 

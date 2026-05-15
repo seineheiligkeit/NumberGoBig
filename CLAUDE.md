@@ -59,12 +59,51 @@ each with a REQUIRED fuel port (no global-pool fallback at tier 2+).
 magnitude-ladder renderer in `pixi/value-label.ts`: digits / commas /
 sci (Unicode superscript exponent) / power tower (stacked `10`s with
 `↕N` height badge for truncation) / arrow notation (`10↑↑N` for
-unrenderable towers). Save schema v11. See `ROADMAP.md` §1 for
-slice-by-slice notes.
+unrenderable towers). And Phase 5.6's pacing overhaul (Slices 6.6 +
+6.7): the eight-tier Comprehension ladder, rebalanced
+operator/pipe/comprehension costs validated against the standalone
+simulator (`sim/`), new `pipe_1k`, save schema v12 with auto-migration
+of pre-overhaul comprehension levels. Plus the leveling system v1:
+per-cell-type and per-pipe-magnitude levels (max 5, doubling
+throughput per level) stored in `world.ts` via reactive
+`cellLevels` / `pipeLevels` stores; cell output count scaled by level
+in both fire paths; pipe cooldown scaled in `tickPipes`; Successor
+lvl 3 river-tap implemented as a new `tickRiverTapSuccessors` driver;
+Mult/Exp lvl 3 fuel −1 and lvl 5 fuel halved in `cost.ts`; 28 level
+upgrade Literature entries that surface only when their immediate
+target tier is next; Roman-numeral badge at the top-right of every
+leveled cell; save schema v13. See `ROADMAP.md` §1 for slice-by-slice
+notes.
 
-**Next:** Phase 5 continued — Prestige + Ancestral Numbers shelf
-(6.3), ordinals + surreals (6.4), named giants like Graham / TREE(3)
-as Literature currency targets (6.5).
+**Pacing target:** ~5h optimal-play speedrun / ~10h casual to
+Tetration. Per the sim, the leveling system makes the climb from
+Pipe ≤100 onward actually reachable; without it the player would
+stall on hundreds-production. Slices 6.8 (deferred level qualities),
+6.9 (warehouse leveling), 6.10 (Literature tabs) are still pending —
+the game is end-to-end playable without them.
+
+**Next:** Slice 6.8 (deferred level qualities) → 6.9 (Warehouse
+leveling) → 6.10 (Literature tabs UI). Then Phase 5's remaining
+slices: Prestige (6.3), ordinals + surreals (6.4), named giants (6.5).
+
+## Pacing simulator
+
+The `sim/` directory holds a standalone Node CLI that walks an
+optimal-play agent through the Literature roadmap and reports
+time-to-each-unlock. **It is the source of truth for pacing numbers.**
+
+- Run with `node sim/run.ts` (Node 22.6+ has native TS; nothing to install)
+- `sim/catalog.ts` mirrors `src/lib/literature.ts` and `src/lib/cost.ts`
+- Models leveling (incl. river-tap on Successor lvl 3, fuel-discount
+  on Mult/Exp lvl 3 and 5)
+- Flags: `--verbose`, `--csv pacing.csv`, `--to <entry>`, `--max-ticks <n>`
+- See `sim/README.md` for usage notes and current model limitations
+
+**When changing Literature costs, edit `sim/catalog.ts` FIRST**, run the
+sim to confirm the curve still hits the pacing target (~5h speedrun /
+~10h casual to Tetration), THEN port the locked numbers to
+`src/lib/literature.ts`. The other direction is how we got into
+pacing trouble before.
 
 ## Tech stack
 

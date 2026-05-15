@@ -276,6 +276,89 @@ export function raiseComprehension(level: number): void {
   if (level > _currentComprehension) _comprehension.set(level);
 }
 
+// ---------------------------------------------------------------------------
+// Cell and pipe levels (Phase 5.6 leveling system)
+// ---------------------------------------------------------------------------
+//
+// Per-type global levels: all cells of a given type share the same level.
+// Same for pipes (per-magnitude). Level 1 is the implicit default; only
+// non-default levels are stored. Throughput multiplier is `2^(level-1)`
+// — applied to cell output count and pipe cooldown speed. Qualities at
+// specific tiers (river-tap on Successor lvl 3, fuel discount on Mult/Exp
+// lvl 3 and 5) are gated by checking the level directly in firing code.
+//
+// Cap is 5. Future iterations may extend.
+
+const MAX_LEVEL = 5;
+
+const _cellLevels = writable<Map<CellType, number>>(new Map());
+export const cellLevels: Readable<Map<CellType, number>> = _cellLevels;
+let _currentCellLevels = new Map<CellType, number>();
+_cellLevels.subscribe((m) => {
+  _currentCellLevels = m;
+});
+
+const _pipeLevels = writable<Map<number, number>>(new Map());
+export const pipeLevels: Readable<Map<number, number>> = _pipeLevels;
+let _currentPipeLevels = new Map<number, number>();
+_pipeLevels.subscribe((m) => {
+  _currentPipeLevels = m;
+});
+
+export function cellLevel(type: CellType): number {
+  return _currentCellLevels.get(type) ?? 1;
+}
+
+export function pipeLevel(magnitude: number): number {
+  return _currentPipeLevels.get(magnitude) ?? 1;
+}
+
+/** Throughput multiplier for a level. Doubling per level. */
+export function levelMultiplier(level: number): number {
+  return Math.pow(2, Math.max(0, level - 1));
+}
+
+/** Sets a cell-type level. Clamped to [1, MAX_LEVEL]. */
+export function setCellLevel(type: CellType, level: number): void {
+  const clamped = Math.max(1, Math.min(MAX_LEVEL, level));
+  _cellLevels.update((m) => {
+    const next = new Map(m);
+    if (clamped === 1) next.delete(type);
+    else next.set(type, clamped);
+    return next;
+  });
+  markDirty();
+}
+
+/** Sets a pipe-magnitude level. Clamped to [1, MAX_LEVEL]. */
+export function setPipeLevel(magnitude: number, level: number): void {
+  const clamped = Math.max(1, Math.min(MAX_LEVEL, level));
+  _pipeLevels.update((m) => {
+    const next = new Map(m);
+    if (clamped === 1) next.delete(magnitude);
+    else next.set(magnitude, clamped);
+    return next;
+  });
+  markDirty();
+}
+
+/** Snapshot for persistence — entries with level > 1 only. */
+export function snapshotCellLevels(): [CellType, number][] {
+  return Array.from(_currentCellLevels.entries());
+}
+
+export function snapshotPipeLevels(): [number, number][] {
+  return Array.from(_currentPipeLevels.entries());
+}
+
+export function restoreCellLevels(entries: [CellType, number][]): void {
+  _cellLevels.set(new Map(entries));
+}
+
+export function restorePipeLevels(entries: [number, number][]): void {
+  _pipeLevels.set(new Map(entries));
+}
+
 const _dirtyTick = writable(0);
 /** Increments after any world mutation. Persistence subscribes (debounced). */
 export const dirtyTick: Readable<number> = _dirtyTick;
@@ -1298,6 +1381,8 @@ export function resetWorld(): void {
   _unlocks.set(new Set());
   _purchaseCounts.set(new Map());
   _comprehension.set(10);
+  _cellLevels.set(new Map());
+  _pipeLevels.set(new Map());
   _discoveredValues.set(new Set());
 
   recompute();

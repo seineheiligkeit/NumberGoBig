@@ -241,14 +241,22 @@ The predicate vocabulary is the same one Filters (§13) uses — Generalized War
 
 The player can manually drag blocks anywhere on the canvas — but only up to their current **Comprehension** level. Early game, Comprehension is small (e.g. 10). Larger blocks visibly exist on the canvas but cannot be picked up by hand.
 
-**Comprehension is upgraded from the Shop**, with each tier requiring a challenging set of numbers in the Gallery. Examples (placeholder):
+**Comprehension is upgraded from the Shop**, and is the spine of the pacing curve — eight tiers from ≤25 to ≤10⁹, each pairing a **specific-number engineering puzzle** (1729, 6174, 65,536, etc.) with a **bulk stockpile** at the tier's magnitude.
 
-- *Comprehend up to 100* — requires the integers 1 through 10
-- *Comprehend up to 10,000* — requires the first 20 primes
-- *Comprehend up to 10⁶* — requires the number 123,456,789 exactly, or the repunit ladder (1, 11, 111, 1111, 11111), or some other deliberate set
-- *Comprehend up to ∞-ish* — requires increasingly absurd collections
+The ladder, as currently tuned (Phase 5.6):
 
-The specific collections are flexible — the design rule is that **each Comprehension tier is its own engineering puzzle**, not just a price tag.
+| Tier | Ceiling | Engineering puzzle | Bulk |
+|------|---------|--------------------|------|
+| I    | 25      | one each of 1–9 + a 25 | — |
+| II   | 100     | one each of 25, 50, 100 | — |
+| III  | 250     | one 250 | 5 hundreds |
+| IV   | 1,000   | one 1,729 (Hardy–Ramanujan) | 10 hundreds |
+| V    | 10,000  | one 6,174 (Kaprekar) | 3,500 ten-thousands + 350 thousands |
+| VI   | 100,000 | one 65,536 (2¹⁶) | 1,750 hundred-thousands + 350 ten-thousands |
+| VII  | 10⁶     | one 9,999 | 700 millions + 175 hundred-thousands |
+| VIII | 10⁹     | — | 350 billions |
+
+The puzzle is the *signature challenge*; the bulk is the *pacing*. A player who knows how to construct 1729 (12³ + 1) spends a moment on it; the 10 hundreds force the factory to run for a while. Together they make each tier feel both intellectual and earned.
 
 This mechanic guarantees that **manual play has a soft ceiling that climbs behind automation**. Automated pipes can transport any-sized block they are rated for; only manual drag is gated. The player can build big numbers but cannot trivially hand-place them — they must first earn the right to understand them.
 
@@ -485,21 +493,96 @@ The opening teaches every core mechanic through play, with one short pencil-marg
 - **0:10** — Player click-drags a `0` from the river. It lifts out; a new `0` slides in to fill the gap behind it. Player drops it on the page with a soft `tap`. Marginalia: *"You picked up a zero. Auspicious."*
 - **0:15** — Player picks more zeros. On dropping a second near the first, they auto-stack with a small `×2` count. Stacking is learned implicitly.
 - **0:25** — A few more zeros stacked. Achievement marginalia draws itself in: *"Play with some zeros."* The **Literature** tab unfolds at the page's edge.
-- **0:30** — Player opens Literature. One item available: *The Successor Function `{ }` — Wraps a zero. Produces a one. Cost: 10 zeros.* Below it, faint placeholders: `?`, `?`, `?`.
-- **0:35** — Player stacks 10 zeros, buys the Successor. A new cell template attaches to the cursor. Player drops it on the page. It draws itself in: a scribbled `{ }` with a drop zone inside, input port on one side, output on the other.
-- **0:45** — Player picks a `0`, drops it into the brace's center. The `0` is briefly visible *inside* the braces, then a `1` slides out the other side. *"Built `1` from nothing. Peano nods approvingly."* The Total Score in the top corner ticks: **1**. A small `+1` floats upward like a red-pencil mark.
-- **0:55** — Player repeats. Score climbs: 2, 3, 4. The page is filling with `1`s. The loop is now taught entirely through play.
+- **0:30** — Player opens Literature. One item available: *The Successor Function `{ }` — Wraps a zero. Produces a one. Cost: 100 zeros.* Below it, faint placeholders: `?`, `?`, `?`.
+- **2:00** — Player has accumulated 100 zeros through manual play and exploration. Buys the Successor. A new cell template attaches to the cursor. Player drops it on the page. It draws itself in: a scribbled `{ }` with a drop zone inside, input port on one side, output on the other.
+- **2:10** — Player picks a `0`, drops it into the brace's center. The `0` is briefly visible *inside* the braces, then a `1` slides out the other side. *"Built `1` from nothing. Peano nods approvingly."* The Total Score in the top corner ticks: **1**. A small `+1` floats upward like a red-pencil mark.
+- **2:30** — Player repeats. Score climbs: 2, 3, 4. The page is filling with `1`s. The loop is now taught entirely through play.
 
-By 60 seconds the player has held a number, stacked numbers, opened the Literature, purchased a function, placed it, used it, and watched their Total Score begin its long climb. From here the path to addition, to pipes, to the first storage, and onward is the same lesson repeated at each scale: *the next obvious thing to do.*
+By 2–3 minutes the player has held a number, stacked numbers, opened the Literature, purchased a function, placed it, used it, and watched their Total Score begin its long climb. From here the path to addition, to pipes, to the first storage, and onward is the same lesson repeated at each scale: *the next obvious thing to do.*
 
 ---
 
-## 19. Open Design Questions
+## 19. Pacing and the Simulator
+
+Pacing is the most playtest-sensitive aspect of the game, and the team
+relies on a standalone simulator (`sim/`) to model the curve rather than
+guessing.
+
+### Pacing targets (Phase 5.6)
+
+| Milestone | Speedrun (optimal play) | Casual |
+|-----------|--------------------------|--------|
+| Tetration | ~5 hours | ~10 hours |
+| Pentation | ~7 hours | ~14 hours |
+
+The shape is **dense early, climbing mid, aspirational late**:
+
+- **Stage A (0–15 min)**: Successor → Subtraction. 5 unlocks at 3–7 min cadence. Teaches mechanics.
+- **Stage B (15–60 min)**: Multiplication and infrastructure. The first real grind appears (500-1000 ones for Addition).
+- **Stage C (1–2 hr)**: Exponentiation, Square Root, Comp_1k. Mid-magnitude production matures.
+- **Stage D (2–3 hr)**: Pipe ≤100 climb. 5,000 hundreds — the signature mid-game gate. Cultivation Arithmetic intermediate.
+- **Stage E (3–4 hr)**: Comp_10k, Comp_100k, Pipe ≤1k, Comp_1m. Real stockpiles at each tier, not waterfall.
+- **Stage F (4–5 hr)**: Tetration. 4,000 thousands.
+- **Stage G (5+ hr)**: Comp_1b, Pentation. The "10⁹ class" payoff.
+
+### Three axes of progression
+
+Every primitive (Successor, Adder, Mult, Exp, Pipe, Warehouse) has three orthogonal growth axes:
+
+1. **Quantity** — build more copies. Geometric repurchase scaling.
+2. **Level** — upgrade existing copies. Doubling per level, with **qualities** at certain tiers:
+   - Successor lvl 3: *river-tap* (fires without a pipe ≤1)
+   - Successor lvl 5: *bundle output* (every 5 firings emit a `5` block)
+   - Addition lvl 4: *variadic* (sums 3 inputs per firing)
+   - Mult/Exp lvl 3: *fuel cost −1* (min 1)
+   - Mult/Exp lvl 5: *fuel cost halved*
+   - Pipe lvl 3: *lower jam threshold*
+   - Pipe lvl 4: *batched transfer* (2 items per tick)
+   - Warehouse lvl 3: *dual output ports*
+   - Warehouse lvl 4: *built-in fuel port*
+   - Warehouse lvl 5: *feeds multiple destinations*
+3. **Type** — entirely new variants (cell types, pipe magnitudes, warehouse rules).
+
+Both Quantity and Level are mathematically equivalent in pure throughput
+(2× for 1 level, 2× for 2 copies), but **leveling adds qualities, takes
+less canvas space, and costs higher-magnitude currency** (self-amortizing —
+you must use a cell to afford its next level). The player makes
+meaningful choices at every step.
+
+Level cap is currently 5; future iterations may extend levels into the
+giant-number tiers themselves.
+
+### The simulator
+
+`sim/` is a standalone Node CLI that walks an optimal-play agent through
+the Literature roadmap and reports time-to-each-unlock. It is the source
+of truth for pacing numbers — `sim/catalog.ts` mirrors
+`src/lib/literature.ts` and `src/lib/cost.ts`, and is the file to edit
+when retuning.
+
+Usage:
+```bash
+node sim/run.ts                # default roadmap, console summary
+node sim/run.ts --verbose      # show every purchase event
+node sim/run.ts --csv pacing.csv   # spreadsheet output
+```
+
+The simulator models the leveling system, river-tap, and fuel-cost
+discount qualities. The agent automatically considers cloning vs.
+upgrading, picking whichever has higher ROI given the bottleneck.
+
+When changing Literature costs in `src/lib/literature.ts`, also update
+`sim/catalog.ts` and re-run the sim to confirm the curve still hits the
+pacing targets above.
+
+---
+
+## 20. Open Design Questions
 
 Deliberately left unsettled, to be resolved by prototyping and playtesting:
 
-- **Pacing curve.** When each unlock fires, how long a first prestige takes, how steep the acceleration curve is. Empirical only.
-- **Specific Shop costs.** All numerical examples in this document are placeholders.
+- **Output-magnitude fuel cost.** Today fuel scales with input magnitude. A future design lever: scale fuel with the magnitude of the *result*, so exp(10, 9) producing a 10⁹ is appropriately expensive. Risks: tetration overflow. Deferred but tracked.
+- **Specific Shop costs.** Tuned via the simulator; future passes refine.
 - **Detailed UI layout.** The conceptual model is clear; the screen design is not.
 - **Polymorphic-equation edge cases.** What does `0^0` do? `0!`? Surprising identities — Easter eggs or surfaced content?
 - **Save/load and autosave cadence.** Standard concerns but not designed.
@@ -508,7 +591,7 @@ Deliberately left unsettled, to be resolved by prototyping and playtesting:
 
 ---
 
-## 20. Non-Goals
+## 21. Non-Goals
 
 Things this game is *not* — guardrails to prevent drift:
 

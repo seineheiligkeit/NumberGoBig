@@ -82,15 +82,25 @@ export function planSpawnAtPort(
  * Materialises a planned spawn. Same-value merge bumps an existing
  * stack; new-spot draws a fresh block at the planned canvas coords and
  * wires it into the interaction layer (so the player can pick it up).
+ *
+ * `amount` is the number of identical blocks this firing emits — used
+ * by the leveling system (Slice 6.7) where a level-N cell produces N
+ * outputs per firing. Defaults to 1 for non-leveled cells.
  */
-export function commitSpawn(target: SpawnTarget, value: Value, canvasLayer: Container): void {
+export function commitSpawn(
+  target: SpawnTarget,
+  value: Value,
+  canvasLayer: Container,
+  amount: number = 1,
+): void {
   if (target.kind === 'merge') {
-    increaseStack(target.block, 1);
+    increaseStack(target.block, amount);
     updateStackBadge(target.block);
     return;
   }
   const block = drawBlock(value, target.x, target.y);
   canvasLayer.addChild(block);
-  const placed = addBlock(block, value);
+  const placed = addBlock(block, value, amount);
+  if (amount > 1) updateStackBadge(placed);
   _attachInteraction?.(placed);
 }
