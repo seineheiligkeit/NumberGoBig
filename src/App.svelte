@@ -12,7 +12,9 @@
     // Apply the idle pencil cursor as the page default. Drag and placement
     // modes will override transiently and restore this on completion.
     document.body.style.cursor = PENCIL_CURSOR_URL;
-    setupPixi(canvasContainer);
+    setupPixi(canvasContainer).catch((e) => {
+      console.error('[setupPixi] failed:', e);
+    });
   });
 </script>
 

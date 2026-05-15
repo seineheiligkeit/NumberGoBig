@@ -119,12 +119,22 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // We fire a marginalia note alongside the achievement so the player gets
   // a single beat of recognition. If the world was restored with blocks
   // already present, both the achievement and the marginalia are already
-  // deduped via their seen-key sets, so the subscriber unsubs silently.
-  const unsubBlockCount = blockCount.subscribe((count) => {
+  // deduped via their seen-key sets.
+  //
+  // The `let … = null; … = subscribe(...)` two-step (rather than a single
+  // `const = subscribe(...)`) sidesteps a TDZ crash when restoreFromSave
+  // brought in loose blocks: Svelte stores fire subscribers synchronously
+  // with the current value, so if `count` is already > 0, the callback
+  // would dereference an as-yet-unassigned const. With `let`, the optional
+  // chain is just a harmless no-op on the initial fire; the next change
+  // fires the callback again (by which time the variable is set) and the
+  // unsub takes effect.
+  let unsubBlockCount: (() => void) | null = null;
+  unsubBlockCount = blockCount.subscribe((count) => {
     if (count > 0) {
       unlockAchievement('play_with_zeros');
       showMarginalia('Play with some zeros.', 'achievement_play_with_zeros');
-      unsubBlockCount();
+      unsubBlockCount?.();
     }
   });
 
@@ -135,15 +145,24 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // Simulation loop: cultivation cells emit on their cadence, pipes carry
   // items between cells. Pinned to Pixi's ticker so it pauses when the tab
   // is hidden — autosave persists state on the way out via beforeunload.
-  app.ticker.add((ticker) => {
-    tickCultivation(ticker.deltaMS, canvasLayer);
-    tickPipes(ticker.deltaMS, canvasLayer);
+  const advance = (dtMs: number): void => {
+    tickCultivation(dtMs, canvasLayer);
+    tickPipes(dtMs, canvasLayer);
     // Equation cells loaded but blocked on computational cost retry here.
     // Cheap when nothing is blocked.
-    tickEquationCells(ticker.deltaMS, canvasLayer);
+    tickEquationCells(dtMs, canvasLayer);
     // Cleanup bots sweep loose blocks into nearby matching warehouses.
-    tickBots(ticker.deltaMS, canvasLayer);
-  });
+    tickBots(dtMs, canvasLayer);
+  };
+  app.ticker.add((ticker) => advance(ticker.deltaMS));
+
+  // Dev-only: expose a manual driver so headless preview tooling (where
+  // requestAnimationFrame doesn't fire) can advance the simulation. Has
+  // no effect in production builds — Vite tree-shakes the dead branch.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __nbgAdvance: (dt: number) => void }).__nbgAdvance =
+      advance;
+  }
 
   // (Unlock marginalia is fired by literature.ts inside purchase().)
 

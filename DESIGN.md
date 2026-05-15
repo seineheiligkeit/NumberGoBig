@@ -45,6 +45,8 @@ A single number, prominently displayed at the top of the page in pencil-notebook
 - **Negatives** contribute their absolute value (a `-5` adds 5).
 - **Complex numbers** contribute their modulus (`3 + 4i` adds 5).
 - **Ordinals and surreals** become a late-game concern — when the time comes, the score itself becomes ordinal-valued.
+- **Storage counts.** Anything in a warehouse contributes its `count × magnitude`. A `wh-ones` at 99/100 contributes 99; a `wh-million` at 5/100 contributes 5,000,000. Storage isn't a sink — it's accumulated wealth made visible.
+- **In-transit counts.** A block currently traveling through a pipe is still yours; it contributes too.
 
 **Why this metric works:**
 
@@ -133,28 +135,52 @@ Cultivation respects the "one source" pillar by requiring a seed: every cultivat
 
 ### Computational Cost
 
-High-tier operators have a **computational cost** in addition to their operand inputs: each firing consumes a quantity of small numbers (typically `1`s, though specific operators may demand specific currencies). The cost scales with the hyperoperation tier:
+Operators (and cultivators) have a **computational cost** in addition to their operand inputs: each firing consumes fuel. The cost is **proportional to the order of magnitude** of what the operator is working with — which mirrors how much information the operator is actually generating.
 
-| Operator | Computational cost per firing |
-|---|---|
-| Successor | 0 |
-| Addition | 0 |
-| Multiplication | small |
-| Exponentiation | medium |
-| Tetration | large |
-| Pentation and higher | enormous |
+#### The cost rule
 
-**The framing is mathematically honest.** Tetration represents far more *computation* than multiplication, and the game makes that literal. Narrator: *"Tetration is computationally expensive. You will need to feed it accordingly."*
+For binary operators, **cost ≈ tier · ⌈log₁₀(max(|a|, |b|) + 1)⌉**, where `tier` is:
+
+| Operator | Tier | Cost per firing |
+|---|---|---|
+| Successor | 0 | 0 (free) |
+| Addition / Subtraction | 0 | 0 (free) |
+| Multiplication / Division | 1 | `⌈log₁₀(max + 1)⌉` |
+| Exponentiation | 2 | `2 · ⌈log₁₀(max + 1)⌉` |
+| Tetration | 4 | `4 · ⌈log₁₀(max + 1)⌉` |
+| Pentation and higher | 8, 16, … | escalating per tier |
+
+Successor on a `0` is free; multiplication of two single-digit numbers costs `1`; multiplication by a `10⁶` costs `6`; exponentiation `2^10` costs `2`; tetration `2↑↑3` costs ~4. The framing is mathematically honest: the operator pays in proportion to the work it represents.
+
+For **cultivators** (which emit a sequence on a timer), each emission's cost is **⌈log₁₀(emission + 1)⌉**. A geometric cultivator with seed `2` emits 2, 4, 8, 16, … and costs 1, 1, 1, 2, 2, 2, 3, … as the values grow — the chain naturally throttles itself. Player removes the seed when fuel runs short.
+
+**Decomposition** (Decrement, Factor) is **free and refunds magnitude**: factoring a 144 returns three 2s and a 3 (small, useful fuel), at the cost of Total Score. Decomposition is the game's mid-game pressure release.
+
+#### Fuel currency: magnitude, not denomination
+
+Fuel is **paid in magnitude**, not in "ones". One block per firing, whose value is at least the cost — over-payment is wasted (the player learns to keep matched denominations: small change in `wh<10`, bigger units in `wh<1000`). A multiplication of cost 5 can pay with one `5` block, one `7` block (over-pays 2), or one `50` block (over-pays 45).
+
+This is what makes **rule-based warehouses** (§8) load-bearing — the player designs warehouses as fuel reservoirs at different denominations and wires them to operators that need them.
+
+#### Tiered fuel ports
+
+Where the fuel comes from depends on the operator's tier:
+
+- **Tier 0** (Successor, Addition, Subtraction): no fuel port. Free, no wiring.
+- **Tier 1** (Multiplication, Division, Exponentiation): **optional fuel port**. If a pipe is wired to it, the operator pulls exclusively from that warehouse. If no pipe is wired, the operator falls back to scanning loose blocks and warehoused contents globally — a safety net that keeps early factories simple.
+- **Tier 2+** (Tetration, Pentation, Knuth arrow, …): **required fuel port**. Won't fire without explicit wiring. Late-game becomes a real fuel-pipeline logistics puzzle, with each high-tier operator demanding its own dedicated fuel route.
+
+The optional/required boundary is the player's onboarding ramp into resource management. Mid-game teaches the pattern; late-game requires it.
 
 **Consequences:**
 
-- High-tier operators have **infrastructure requirements**. Unlocking tetration is not enough — the player must build the fuel supply to feed it. Factories develop fuel pipelines feeding into power-user cells.
-- The **small-number warehouse stays critical forever**. Without computational cost, the economy of ones would fade once multiplication is unlocked; with it, ones remain valuable through the entire game.
-- **Decomposition gains sharp purpose.** Harvesting a 144 into smaller numbers loses Total Score (144 → 14), but those 14 small numbers are *useful fuel*. The score-decrease has a clear strategic payoff.
-- **Cultivation cells become essential.** A dedicated cultivation zone produces fuel at scale; pipes route it to high-tier operators.
-- The high-tier operator's **net contribution to Total Score is always positive** — the output vastly exceeds the fuel consumed. But the fuel must be earned and routed. Infrastructure depth without reward erosion.
+- **Cultivators self-throttle.** A geometric chain producing `2^30` costs `9` per emission — sustainable only with serious fuel infrastructure.
+- **The small-number warehouse stays critical forever.** Cheap operations need cheap fuel; players hoard small denominations as small change.
+- **Decomposition gains sharp purpose.** Factoring a 10⁶ reclaims real fuel (six 1-magnitude units), not narrator commentary.
+- **Fuel routing is layout work.** Where you put your `wh<100` matters. The factory grows a circulatory system.
+- The high-tier operator's **net contribution to Total Score remains positive** — the output dwarfs the fuel — but the fuel must be earned, stored, and routed. Infrastructure depth without reward erosion.
 
-**This is not the rejected "Operator Fuel" pattern.** That earlier idea gave every operator its own fuel pool — pure bookkeeping. Here, *only high-tier operators* have costs, and they all draw from a **shared small-number pool** the player manages as one resource. One fuel system, one warehouse, one strategic concern.
+**This replaces the rejected "Operator Fuel" pattern.** That earlier idea gave every operator its own fuel pool — pure bookkeeping. Here, fuel is one currency (magnitude), drawn from one kind of container (warehouses), with cost that scales naturally with what the operator is doing.
 
 ### Equation Properties
 
@@ -182,11 +208,32 @@ This creates a **recursive bootstrap**: you must first produce a magnitude befor
 
 ## 8. Storage
 
-Storages (warehouses) hold blocks of a single type up to a capacity. They are unlocked once the player accumulates a meaningful stack on the canvas — clutter triggers the unlock organically.
+Storages (warehouses) hold blocks up to a capacity. They are unlocked once the player accumulates a meaningful stack on the canvas — clutter triggers the unlock organically.
 
-Larger storages and more storage types are purchased from the Shop.
+Larger storages, more storages, and richer storage rules are purchased from the Shop.
 
-Storage is what allows the player to **hoard small numbers** to fuel later operations. Late-game, warehouses of small numbers are the backbone of the economy.
+Storage is what allows the player to **hoard numbers** to fuel later operations. Late-game, warehouses are the backbone of the economy — fuel reservoirs, currency vaults, and the visible expression of the player's accumulated work (per §3, warehouse contents count toward Total Score).
+
+### Typed warehouses (early game)
+
+The basic warehouse holds blocks of a **single value type**, locked by the first deposit (drop a `1` and the warehouse stores `1`s; further deposits of any other value are refused). Capacity is fixed (default 100). Drag-drop on the deposit zone to add; click the output port to withdraw one.
+
+### Generalized warehouses (mid-game and beyond)
+
+Mid-game introduces **rule-based warehouses** — warehouses defined by a *predicate* rather than a single locked value. Examples:
+
+- `wh: value < 10` — accepts any 0..9
+- `wh: value < 100` — small-change wallet
+- `wh: prime` — currency vault for Literature entries that demand primes
+- `wh: composite`, `wh: divisible by 6`, `wh: family = irrational`, …
+
+The predicate vocabulary is the same one Filters (§13) uses — Generalized Warehouses are essentially "Filter + Storage" fused into one cell. They reuse the predicate language so introducing standalone Filters later is a small step rather than a new concept.
+
+**As fuel sources.** Wired to a tier-1 or tier-2+ operator's fuel port, a generalized warehouse provides fuel: the operator pulls one matching block per firing and pays its value (§6 Computational Cost). The player designs warehouses by intended denomination — `wh<10` for cheap operations, `wh<1000` for tetration's appetite — and wires them to the operators they're meant to feed.
+
+**As currency reservoirs.** Wired to a Literature entry's demand (when that mechanism arrives in Phase 4), a generalized warehouse can satisfy multi-unit costs ("400 primes ≥ 10⁶") by drawing from its own rule-matching contents.
+
+**Composite rules** ("prime AND > 10⁶") arrive alongside Filters in Phase 4 and use the same predicate combinator UI.
 
 ---
 

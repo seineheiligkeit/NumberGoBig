@@ -343,6 +343,29 @@ Five phases, roughly in dependency order. Each phase is a series of small slices
 - **Symbolic algebra is out of scope.** Irrationals collapse to `approx` on arithmetic. A Computer Algebra System is its own decade.
 - **`break_eternity.js`** is wired in 4.0 — `Decimal` becomes the numeric primitive inside every `real`, every `rational` numerator/denominator, every irrational `approx`, and every complex `re`/`im`.
 
+### Phase 3.5: The Fuel Economy
+**Goal:** Pivot the cost model from "flat per-tier" to "magnitude-scaled". Make warehouses full participants in the economy — fuel reservoirs, currency vaults, score contributors. Mid-game becomes a real resource-management problem, not a math demo.
+
+This phase lands BEFORE Phase 4 because Phase 4's Filters and special-currency Literature entries lean heavily on warehouses-as-resources. Doing the fuel economy first means Filters become "filters but for routing" rather than introducing the concept fresh.
+
+| Slice | Content |
+|---|---|
+| **3.5.1** | `computationalCost(type, inputs)` returns `tier · ⌈log₁₀(max(\|a\|, \|b\|) + 1)⌉`. Tier table: successor/addition 0; mul/div 1; exp 2; tetration 4; pentation 8. Cost preview badge on every cost-bearing cell, recomputed when inputs change. |
+| **3.5.2** | Total Score includes warehouse contents and in-transit pipe items. `recompute()` scans warehouses + pipes; per-block contribution is `count × magnitude`. |
+| **3.5.3** | `spendValue` extends to scan warehouse contents (smallest-block-first within rule). Loose-blocks-only is no longer special — one fuel pool, one search order. |
+| **3.5.4** | Generalized Warehouse cell (`warehouse-rule`). One predicate per warehouse from a starter catalog: `<10`, `<100`, `<1000`, `prime`, `composite`. Predicate picked on placement via a small dropdown. The classic typed warehouse stays — generalised warehouses unlock as a Literature upgrade. |
+| **3.5.5** | Tier-1 operators (mul, div, exp) gain an **optional fuel input port**. If a pipe is wired to it, the cell pulls fuel exclusively from that source (warehouse or loose). If not, fall back to the global scan from 3.5.3 — preserves existing factories. |
+| **3.5.6** | Cultivation cost: each emission costs `⌈log₁₀(emission + 1)⌉` magnitude. Cell visual shows the *next* emission's cost. Cultivators stall when fuel runs out, exactly like cost-blocked equation cells. |
+| **3.5.7** | Fuel paid in **magnitude per block, not split across blocks**. The cell consumes one block whose value ≥ cost; over-payment is wasted. Players learn to keep matched denominations. |
+
+**Deliverable:** The mid-game becomes a real resource economy. Players can't run cultivators 24/7 — they have to choose which to fuel. Warehouses are storage AND currency AND fuel tanks. Decomposition (Decrement, Factor) is no longer narrator-only — the fuel returned has real strategic value. Total Score reflects everything the player owns, not just the loose pile.
+
+**Architectural notes:**
+- **`computationalCost` becomes input-aware.** Existing call sites pass cell type only; they'll need the cell's pending input values. The fire path already has those; the retry path (`tickEquationCells`) needs to recompute on each retry.
+- **Fuel resolution becomes a single function.** `resolveFuel(cell, cost): { source: WarehouseRef | LoosePool, block: PlacedBlock } | null`. Tier-1 with a wired fuel pipe restricts to that warehouse; tier-1 without falls back to global; tier-2+ requires the fuel pipe (returns null otherwise).
+- **Save schema bumps to v10** to accommodate the new warehouse-rule cell type and the per-cell fuel-port wiring state.
+- **Cost preview is a tiny Text child** on each cost-bearing cell, updated whenever inputs change or — for cultivators — at every emission. Cheap.
+
 ### Phase 4: Discovery and Engineering
 **Goal:** deep strategy. The game is genuinely a math-engineering puzzle.
 
