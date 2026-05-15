@@ -13,11 +13,11 @@ import {
   valueIsZero,
   valueKey,
   valueMagnitude,
-  valueOf,
   valueSnapshot,
   type Value,
   type ValueSnapshot,
 } from './value';
+import { getWarehouseRule } from './warehouse-rules';
 
 /**
  * The world — pure data model of every block and cell the player possesses.
@@ -85,6 +85,13 @@ export interface PlacedCell {
   capacity?: number;
   /** Renderer-provided callback to refresh the warehouse's badge after writes. */
   refreshBadge?: () => void;
+
+  // --- Rule-warehouse-specific state (Slice 3.5.4) --------------------
+  /** Predicate identifier (e.g. 'lt10', 'prime'). Set on placement. */
+  ruleId?: string;
+  /** Mixed-value contents. A rule warehouse may hold many distinct values
+   *  matching its predicate; `capacity` caps the total count across items. */
+  ruleItems?: { value: Value; count: number }[];
 
   // --- Cultivation-specific state -------------------------------------
   /** Captured seed value; `null` until the player drops a seed on the input. */
@@ -297,10 +304,52 @@ function recompute(): void {
     counts.set(key, (counts.get(key) ?? 0) + b.count);
   }
 
+  // Slices 3.5.2 + 3.5.3: warehouse contents contribute to Total Score AND
+  // to countByValue — they're "accumulated wealth made visible" (DESIGN §3)
+  // AND a real currency reservoir for Literature purchases. With both
+  // counted here, `canAfford` lights up entries the player can pay for
+  // from stored currency, and `spendValue` (below) drains warehouses
+  // alongside loose blocks.
+  //
+  // In-transit pipe items aren't summed because the simulation transfers
+  // them atomically inside a single tick — there's no persistent
+  // "block currently in the pipe" state to scan. If a future slice adds
+  // a visible transit delay, the same loop can be extended over `pipes`.
+  for (const c of cells) {
+    if (c.type === 'warehouse') {
+      const v = c.storedValue;
+      if (v === null || v === undefined) continue;
+      const n = c.storedCount ?? 0;
+      if (n <= 0) continue;
+      score = score.add(valueMagnitude(v).mul(n));
+      const key = valueKey(v);
+      counts.set(key, (counts.get(key) ?? 0) + n);
+    } else if (c.type === 'warehouse-rule') {
+      // Mixed contents: sum each (value, count) pair.
+      for (const item of c.ruleItems ?? []) {
+        if (item.count <= 0) continue;
+        score = score.add(valueMagnitude(item.value).mul(item.count));
+        const key = valueKey(item.value);
+        counts.set(key, (counts.get(key) ?? 0) + item.count);
+      }
+    }
+  }
+
   _totalScore.set(score);
   _zeroCount.set(zeros);
   _blockCount.set(blocks.length);
   _countByValue.set(counts);
+}
+
+/**
+ * Public-facing trigger to recompute aggregates after a mutation that
+ * doesn't already flow through the block path. Warehouse deposits /
+ * withdrawals call this so Total Score reflects stored wealth in real
+ * time. Same shape as the internal `recompute`, but callable from outside
+ * the module without exporting that name.
+ */
+export function refreshTotals(): void {
+  recompute();
 }
 
 // ---------------------------------------------------------------------------
@@ -391,14 +440,43 @@ export function allBlocks(): readonly PlacedBlock[] {
 }
 
 /**
- * Consumes `n` blocks of `value` from the player's stacks. Returns true on
- * success, false if there weren't enough. Notifies listeners; removes empty
- * stacks from the world.
+ * Consumes `n` blocks of `value` from the player's stacks AND from any
+ * warehouses storing that value (Slice 3.5.3). Returns true on success,
+ * false if there weren't enough across both pools.
+ *
+ * Spend order: loose blocks first, then warehoused. Loose blocks read as
+ * "small change" to the player; the warehouse is "savings" — draining
+ * loose first matches the mental model. Within each pool the draw order
+ * doesn't matter (all matched blocks share the same value).
+ *
+ * Notifies block listeners after recompute, and refreshes any warehouse
+ * badge that was touched.
  */
 export function spendValue(value: Value, n: number): boolean {
   let available = 0;
   for (const b of blocks) {
     if (valueEq(b.value, value)) available += b.count;
+  }
+  const typedWarehouses: PlacedCell[] = [];
+  const ruleSources: { cell: PlacedCell; itemIndex: number }[] = [];
+  for (const c of cells) {
+    if (c.type === 'warehouse') {
+      const sv = c.storedValue;
+      if (sv === null || sv === undefined) continue;
+      if (!valueEq(sv, value)) continue;
+      const stored = c.storedCount ?? 0;
+      if (stored <= 0) continue;
+      available += stored;
+      typedWarehouses.push(c);
+    } else if (c.type === 'warehouse-rule') {
+      const items = c.ruleItems ?? [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].count <= 0) continue;
+        if (!valueEq(items[i].value, value)) continue;
+        available += items[i].count;
+        ruleSources.push({ cell: c, itemIndex: i });
+      }
+    }
   }
   if (available < n) return false;
 
@@ -423,6 +501,33 @@ export function spendValue(value: Value, n: number): boolean {
       blocks.splice(i, 1);
     }
   }
+
+  // Loose pool exhausted; drain typed warehouses next, then rule ones.
+  for (const c of typedWarehouses) {
+    if (remaining <= 0) break;
+    const stored = c.storedCount ?? 0;
+    const take = Math.min(stored, remaining);
+    c.storedCount = stored - take;
+    if (c.storedCount === 0) c.storedValue = null;
+    c.refreshBadge?.();
+    remaining -= take;
+  }
+  for (const src of ruleSources) {
+    if (remaining <= 0) break;
+    const items = src.cell.ruleItems ?? [];
+    const item = items[src.itemIndex];
+    if (!item) continue;
+    const take = Math.min(item.count, remaining);
+    item.count -= take;
+    remaining -= take;
+    src.cell.refreshBadge?.();
+  }
+  // Compact each touched rule warehouse to drop emptied entries — cheaper
+  // than splicing during the spend loop (which would invalidate indices).
+  for (const src of ruleSources) {
+    src.cell.ruleItems = (src.cell.ruleItems ?? []).filter((it) => it.count > 0);
+  }
+
   recompute();
   for (const b of partiallySpent) notifyChange(b);
   return true;
@@ -433,12 +538,187 @@ export function spendZeros(n: number): boolean {
   return spendValue(VALUE_ZERO, n);
 }
 
-// Cached `valueOf(1)` for the very common cost-of-one spend. Computational
-// cost (multiplication, exponentiation) hits this every firing.
-const _VALUE_ONE_CACHE = valueOf(1);
-/** Spends `n` ones in one call — the hot path for computational cost. */
-export function spendOnes(n: number): boolean {
-  return spendValue(_VALUE_ONE_CACHE, n);
+/**
+ * Counts every block-or-warehouse-item whose value satisfies `test`,
+ * across loose stacks, typed warehouses, and rule warehouses. Drives
+ * predicate-based Literature affordability (Slice 5.3 — "10 primes",
+ * "5 primes ≥ 100").
+ */
+export function countMatching(test: (v: Value) => boolean): number {
+  let total = 0;
+  for (const b of blocks) {
+    if (b.count > 0 && test(b.value)) total += b.count;
+  }
+  for (const c of cells) {
+    if (c.type === 'warehouse') {
+      const v = c.storedValue;
+      if (v && test(v)) total += c.storedCount ?? 0;
+    } else if (c.type === 'warehouse-rule') {
+      for (const it of c.ruleItems ?? []) {
+        if (it.count > 0 && test(it.value)) total += it.count;
+      }
+    }
+  }
+  return total;
+}
+
+/**
+ * Consumes `n` blocks satisfying `test`, drawing from loose blocks
+ * first, then typed warehouses, then rule warehouses. Returns true on
+ * success, false (without spending) if not enough qualifying blocks
+ * exist.
+ */
+export function spendMatching(test: (v: Value) => boolean, n: number): boolean {
+  if (n <= 0) return true;
+  if (countMatching(test) < n) return false;
+
+  const partiallySpent: PlacedBlock[] = [];
+  let remaining = n;
+
+  for (let i = blocks.length - 1; i >= 0 && remaining > 0; i--) {
+    const b = blocks[i];
+    if (!test(b.value)) continue;
+    if (b.count > remaining) {
+      b.count -= remaining;
+      remaining = 0;
+      partiallySpent.push(b);
+    } else {
+      remaining -= b.count;
+      b.count = 0;
+      b.container.parent?.removeChild(b.container);
+      b.container.destroy({ children: true });
+      blocks.splice(i, 1);
+    }
+  }
+
+  for (const c of cells) {
+    if (remaining <= 0) break;
+    if (c.type !== 'warehouse') continue;
+    const v = c.storedValue;
+    if (!v || !test(v)) continue;
+    const stored = c.storedCount ?? 0;
+    const take = Math.min(stored, remaining);
+    c.storedCount = stored - take;
+    if (c.storedCount === 0) c.storedValue = null;
+    c.refreshBadge?.();
+    remaining -= take;
+  }
+
+  for (const c of cells) {
+    if (remaining <= 0) break;
+    if (c.type !== 'warehouse-rule') continue;
+    const items = c.ruleItems ?? [];
+    for (let i = 0; i < items.length && remaining > 0; i++) {
+      const it = items[i];
+      if (!test(it.value)) continue;
+      const take = Math.min(it.count, remaining);
+      it.count -= take;
+      remaining -= take;
+    }
+    c.ruleItems = items.filter((it) => it.count > 0);
+    c.refreshBadge?.();
+  }
+
+  recompute();
+  for (const b of partiallySpent) notifyChange(b);
+  return true;
+}
+
+/**
+ * Pays `cost` fuel by consuming a single block whose magnitude ≥ cost
+ * (DESIGN §6, Slice 3.5.7). Searches both loose blocks AND warehouse
+ * contents in one pool (Slice 3.5.3); picks the smallest qualifying
+ * block to minimise over-payment.
+ *
+ * Why one block instead of N small ones: the design wants fuel paid in
+ * magnitude, not denomination — a multiplication of cost 3 happily eats
+ * a single `5` (and wastes 2), but it can NOT pay with three `1`s. This
+ * is what makes warehouse choice load-bearing: a `wh<10` of fives feeds
+ * cheap operations efficiently, a `wh<1000` of nines wastes magnitude on
+ * tier-0 operators it shouldn't have been wired to.
+ *
+ * Returns true on success, false if no qualifying block exists.
+ */
+export function spendFuel(cost: number): boolean {
+  if (cost <= 0) return true;
+  const costD = new Decimal(cost);
+
+  // Track the smallest qualifying source across all three pools. For rule
+  // warehouses we also track the SPECIFIC value to draw — the warehouse's
+  // overall smallest item may be below cost, so we can't just polymorph
+  // through `withdrawFromWarehouse` for those.
+  type Source =
+    | { kind: 'loose'; block: PlacedBlock }
+    | { kind: 'warehouse-typed'; cell: PlacedCell }
+    | { kind: 'warehouse-rule'; cell: PlacedCell; value: Value };
+  let bestSource: Source | null = null;
+  let bestMag: Decimal | null = null;
+
+  const consider = (mag: Decimal, src: Source): void => {
+    if (bestMag === null || mag.lt(bestMag)) {
+      bestSource = src;
+      bestMag = mag;
+    }
+  };
+
+  for (const b of blocks) {
+    if (b.count <= 0) continue;
+    const mag = valueMagnitude(b.value);
+    if (mag.lt(costD)) continue;
+    consider(mag, { kind: 'loose', block: b });
+  }
+
+  for (const c of cells) {
+    if (c.type === 'warehouse') {
+      const v = c.storedValue;
+      if (v === null || v === undefined) continue;
+      if ((c.storedCount ?? 0) <= 0) continue;
+      const mag = valueMagnitude(v);
+      if (mag.lt(costD)) continue;
+      consider(mag, { kind: 'warehouse-typed', cell: c });
+    } else if (c.type === 'warehouse-rule') {
+      for (const item of c.ruleItems ?? []) {
+        if (item.count <= 0) continue;
+        const mag = valueMagnitude(item.value);
+        if (mag.lt(costD)) continue;
+        consider(mag, { kind: 'warehouse-rule', cell: c, value: item.value });
+      }
+    }
+  }
+
+  if (!bestSource) return false;
+  const src = bestSource as Source;
+  switch (src.kind) {
+    case 'loose':
+      decreaseStack(src.block, 1);
+      return true;
+    case 'warehouse-typed':
+      withdrawFromWarehouse(src.cell);
+      return true;
+    case 'warehouse-rule':
+      return withdrawSpecificFromRuleWarehouse(src.cell, src.value);
+  }
+}
+
+/**
+ * Removes one of the named value from a rule-based warehouse. Used by the
+ * fuel-spend path to consume the specific qualifying block its search
+ * found, rather than the smallest item the warehouse happens to hold.
+ */
+export function withdrawSpecificFromRuleWarehouse(
+  cell: PlacedCell,
+  value: Value,
+): boolean {
+  if (cell.type !== 'warehouse-rule') return false;
+  const items = cell.ruleItems ?? [];
+  const idx = items.findIndex((it) => it.count > 0 && valueEq(it.value, value));
+  if (idx < 0) return false;
+  items[idx].count -= 1;
+  if (items[idx].count <= 0) items.splice(idx, 1);
+  recompute();
+  cell.refreshBadge?.();
+  markDirty();
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -466,6 +746,13 @@ export function addCell(type: CellType, container: Container): PlacedCell {
   if (type === 'warehouse') {
     placed.storedValue = null;
     placed.storedCount = 0;
+    placed.capacity = WAREHOUSE_DEFAULT_CAPACITY;
+  }
+  if (type === 'warehouse-rule') {
+    // ruleId is installed by the caller (placement / rehydrate) once the
+    // chosen predicate is known; defaults below keep the cell safe in the
+    // interval between addCell and the caller's assignment.
+    placed.ruleItems = [];
     placed.capacity = WAREHOUSE_DEFAULT_CAPACITY;
   }
   if (
@@ -540,7 +827,15 @@ export function findCellOutputPortAt(
  * success, false on type mismatch or full capacity. The first deposit locks
  * the warehouse's type.
  */
+/** Total items currently held in a rule-based warehouse. */
+export function ruleWarehouseTotal(cell: PlacedCell): number {
+  let total = 0;
+  for (const item of cell.ruleItems ?? []) total += item.count;
+  return total;
+}
+
 export function depositToWarehouse(cell: PlacedCell, value: Value): boolean {
+  if (cell.type === 'warehouse-rule') return depositToRuleWarehouse(cell, value);
   if (cell.type !== 'warehouse') return false;
   const cap = cell.capacity ?? WAREHOUSE_DEFAULT_CAPACITY;
   if ((cell.storedCount ?? 0) >= cap) return false;
@@ -550,6 +845,32 @@ export function depositToWarehouse(cell: PlacedCell, value: Value): boolean {
     return false;
   }
   cell.storedCount = (cell.storedCount ?? 0) + 1;
+  // Total Score scans warehouses since Slice 3.5.2 — refresh before
+  // notifying autosave so the header readout updates this same frame.
+  recompute();
+  cell.refreshBadge?.();
+  markDirty();
+  return true;
+}
+
+/**
+ * Deposits one block into a rule-based warehouse. Refused if the predicate
+ * rejects the value, the cell has no ruleId set, or the total count is at
+ * capacity. Same-value items stack within `ruleItems`; new values append.
+ */
+export function depositToRuleWarehouse(cell: PlacedCell, value: Value): boolean {
+  if (cell.type !== 'warehouse-rule') return false;
+  const rule = getWarehouseRule(cell.ruleId);
+  if (!rule || !rule.test(value)) return false;
+  const cap = cell.capacity ?? WAREHOUSE_DEFAULT_CAPACITY;
+  if (ruleWarehouseTotal(cell) >= cap) return false;
+
+  cell.ruleItems = cell.ruleItems ?? [];
+  const existing = cell.ruleItems.find((it) => valueEq(it.value, value));
+  if (existing) existing.count += 1;
+  else cell.ruleItems.push({ value, count: 1 });
+
+  recompute();
   cell.refreshBadge?.();
   markDirty();
   return true;
@@ -560,6 +881,7 @@ export function depositToWarehouse(cell: PlacedCell, value: Value): boolean {
  * the warehouse is empty.
  */
 export function withdrawFromWarehouse(cell: PlacedCell): Value | null {
+  if (cell.type === 'warehouse-rule') return withdrawFromRuleWarehouse(cell);
   if (cell.type !== 'warehouse') return null;
   if ((cell.storedCount ?? 0) <= 0) return null;
   const value = cell.storedValue!;
@@ -567,6 +889,62 @@ export function withdrawFromWarehouse(cell: PlacedCell): Value | null {
   // Withdrawal that empties the warehouse unlocks the type so the player
   // (or a pipe) can repurpose it.
   if (cell.storedCount === 0) cell.storedValue = null;
+  recompute();
+  cell.refreshBadge?.();
+  markDirty();
+  return value;
+}
+
+/**
+ * Peeks at the value that `withdrawFromRuleWarehouse` would return next
+ * — the smallest-magnitude item present. Used by pipes (peekSource) so
+ * the magnitude check happens BEFORE the destructive pull.
+ */
+export function peekRuleWarehouseSmallest(cell: PlacedCell): Value | null {
+  if (cell.type !== 'warehouse-rule') return null;
+  let best: Value | null = null;
+  let bestMag: Decimal | null = null;
+  for (const item of cell.ruleItems ?? []) {
+    if (item.count <= 0) continue;
+    const mag = valueMagnitude(item.value);
+    if (bestMag === null || mag.lt(bestMag)) {
+      best = item.value;
+      bestMag = mag;
+    }
+  }
+  return best;
+}
+
+/**
+ * Withdraws one block from a rule-based warehouse — the smallest-magnitude
+ * item present. Smallest-first matches both the fuel-spend rule (minimise
+ * over-payment downstream) and the player's intuition that a mixed bin
+ * empties from "small change" first.
+ */
+export function withdrawFromRuleWarehouse(cell: PlacedCell): Value | null {
+  if (cell.type !== 'warehouse-rule') return null;
+  const items = cell.ruleItems ?? [];
+  if (items.length === 0) return null;
+
+  let bestIdx = -1;
+  let bestMag: Decimal | null = null;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (it.count <= 0) continue;
+    const mag = valueMagnitude(it.value);
+    if (bestMag === null || mag.lt(bestMag)) {
+      bestIdx = i;
+      bestMag = mag;
+    }
+  }
+  if (bestIdx < 0) return null;
+
+  const item = items[bestIdx];
+  const value = item.value;
+  item.count -= 1;
+  if (item.count <= 0) items.splice(bestIdx, 1);
+
+  recompute();
   cell.refreshBadge?.();
   markDirty();
   return value;
@@ -574,6 +952,96 @@ export function withdrawFromWarehouse(cell: PlacedCell): Value | null {
 
 export function allCells(): readonly PlacedCell[] {
   return cells;
+}
+
+// ---------------------------------------------------------------------------
+// Fuel-port plumbing (Slice 3.5.5)
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the cell's operand inputs only — fuel-port slots are filtered
+ * out. Callers of `operate()` and `computationalCost()` use this so the
+ * fuel block isn't mistaken for an operand.
+ */
+export function operandPending(cell: PlacedCell): (Value | null)[] {
+  return cell.pending.filter((_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel');
+}
+
+/** True when every operand port has a value — fuel port is allowed empty. */
+export function operandsFilled(cell: PlacedCell): boolean {
+  return cell.inputs.every(
+    (p, i) => (p.kind ?? 'operand') === 'fuel' || cell.pending[i] !== null,
+  );
+}
+
+/** Index of the cell's fuel port, or -1 if it has none. */
+export function fuelPortIndex(cell: PlacedCell): number {
+  return cell.inputs.findIndex((p) => p.kind === 'fuel');
+}
+
+/** True when at least one pipe terminates at this cell's fuel port. */
+export function hasFuelPipeAttached(cell: PlacedCell): boolean {
+  const idx = fuelPortIndex(cell);
+  if (idx < 0) return false;
+  for (const pipe of pipes) {
+    const d = pipe.dest;
+    if (d.kind === 'cell-input' && d.cellId === cell.id && d.portIndex === idx) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export type FuelOutcome = 'paid' | 'awaiting-pipe' | 'too-small' | 'no-fuel';
+
+/**
+ * Pays the cost for one firing, in priority order:
+ *
+ *   1. Manual fuel sitting in the fuel slot — consume it if large enough,
+ *      reject as 'too-small' otherwise (block stays parked so the player
+ *      can intervene; the design's "over-payment is wasted, under-payment
+ *      is rejected" symmetry).
+ *   2. Fuel pipe wired but slot empty — return 'awaiting-pipe' so the
+ *      fire path stalls without falling through to the global pool. This
+ *      is what DESIGN §6 means by "the operator pulls EXCLUSIVELY from
+ *      that warehouse" — explicit fuel routing turns off the safety net.
+ *   3. No fuel port at all, OR no pipe and slot empty — fall through to
+ *      `spendFuel` (Slice 3.5.3) which scans loose blocks and warehouses
+ *      for the smallest qualifying source.
+ *
+ * Returns `'paid'` on success; one of the failure tags otherwise. The
+ * fuel block (manual or pipe-delivered) is consumed exactly once on
+ * success; nothing is touched on failure.
+ */
+export function consumeFuelOrFail(cell: PlacedCell, cost: number): FuelOutcome {
+  if (cost <= 0) return 'paid';
+  const fuelIdx = fuelPortIndex(cell);
+
+  // Cells without a fuel port — addition, subtraction, future tier-0 ops.
+  if (fuelIdx < 0) {
+    return spendFuel(cost) ? 'paid' : 'no-fuel';
+  }
+
+  const slotValue = cell.pending[fuelIdx];
+  if (slotValue !== null && slotValue !== undefined) {
+    const fuelMag = valueMagnitude(slotValue);
+    if (fuelMag.lt(new Decimal(cost))) return 'too-small';
+    // Consume the fuel block — visual ghost in the slot is destroyed too.
+    cell.pending[fuelIdx] = null;
+    const display = cell.pendingDisplays[fuelIdx];
+    if (display) {
+      display.parent?.removeChild(display);
+      display.destroy({ children: true });
+      cell.pendingDisplays[fuelIdx] = null;
+    }
+    return 'paid';
+  }
+
+  // Slot empty. A wired pipe means the player has chosen explicit routing
+  // — honour it by waiting rather than silently dipping into the global
+  // pool. Without a pipe, fall through.
+  if (hasFuelPipeAttached(cell)) return 'awaiting-pipe';
+  return spendFuel(cost) ? 'paid' : 'no-fuel';
 }
 
 // ---------------------------------------------------------------------------
@@ -657,6 +1125,16 @@ export interface CellSnapshot {
     storedCount: number;
     capacity: number;
   };
+  /** Rule-warehouse cells only (Slice 3.5.4) — mixed-value storage. */
+  ruleWarehouseState?: {
+    ruleId: string;
+    items: { value: ValueSnapshot; count: number }[];
+    capacity: number;
+  };
+  /** Filter cells only (Slice 5.2) — predicate id only; no stored values. */
+  filterState?: {
+    ruleId: string;
+  };
   /** Cultivation cells only — seed, step, and remaining cooldown. */
   cultivationState?: {
     seed: ValueSnapshot | null;
@@ -704,6 +1182,19 @@ export function snapshotCells(): CellSnapshot[] {
         storedCount: c.storedCount ?? 0,
         capacity: c.capacity ?? WAREHOUSE_DEFAULT_CAPACITY,
       };
+    }
+    if (c.type === 'warehouse-rule') {
+      snap.ruleWarehouseState = {
+        ruleId: c.ruleId ?? '',
+        items: (c.ruleItems ?? []).map((it) => ({
+          value: valueSnapshot(it.value),
+          count: it.count,
+        })),
+        capacity: c.capacity ?? WAREHOUSE_DEFAULT_CAPACITY,
+      };
+    }
+    if (c.type === 'filter') {
+      snap.filterState = { ruleId: c.ruleId ?? '' };
     }
     if (
       c.type === 'cultivation-arithmetic' ||

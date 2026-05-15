@@ -3,25 +3,33 @@ import {
   addBlock,
   allCells,
   allPipes,
+  consumeFuelOrFail,
   decreaseStack,
   depositToWarehouse,
   findBlockAt,
   findCellById,
   increaseStack,
   markDirty,
+  operandPending,
+  operandsFilled,
+  peekRuleWarehouseSmallest,
   removePipe,
-  spendOnes,
+  ruleWarehouseTotal,
   type PipeEndpoint,
   type PlacedBlock,
   type PlacedCell,
   type PlacedPipe,
   withdrawFromWarehouse,
 } from './world';
+import { getWarehouseRule } from './warehouse-rules';
 import type { Container } from 'pixi.js';
 import { drawBlock, updateStackBadge } from './pixi/block';
+import { updateCostBadge } from './pixi/binary-cell';
 import { computationalCost, isCultivationType, operate } from './cell-types';
 import { captureSeed } from './cultivation';
+import { routeViaFilter } from './filter';
 import { showMarginalia } from './marginalia';
+import { commitSpawn, planSpawnAtPort } from './spawn';
 import { onCameraChange, screenToCanvas } from './camera';
 import {
   VALUE_ZERO,
@@ -138,6 +146,27 @@ function ensureCameraHook(): void {
   onCameraChange(syncRiverPipesToCamera);
 }
 
+/**
+ * Redraws every pipe with an endpoint at `cellId` — used while the
+ * player drags a cell around the canvas (Slice 5.6) so the connections
+ * follow in real time. Cheap O(pipes) scan; the lookup is the same one
+ * the camera-sync path uses for river endpoints.
+ */
+export function redrawPipesForCell(cellId: number): void {
+  for (const pipe of allPipes()) {
+    let touches = false;
+    if (pipe.source.kind === 'cell-output' && pipe.source.cellId === cellId) touches = true;
+    else if (pipe.dest.kind === 'cell-input' && pipe.dest.cellId === cellId) touches = true;
+    if (!touches) continue;
+    const rt = runtimes.get(pipe.id);
+    if (!rt) continue;
+    const src = pipeEndpointPosition(pipe.source);
+    const dst = pipeEndpointPosition(pipe.dest);
+    if (!src || !dst) continue;
+    rt.redraw(src, dst);
+  }
+}
+
 /** Per-frame driver. `dtMs` is delta time in milliseconds. */
 export function tickPipes(dtMs: number, canvasLayer: Container): void {
   for (const pipe of allPipes()) {
@@ -247,6 +276,12 @@ function peekSource(pipe: PlacedPipe): Value | null {
   if (cell.type === 'warehouse') {
     return (cell.storedCount ?? 0) > 0 ? (cell.storedValue ?? null) : null;
   }
+  if (cell.type === 'warehouse-rule') {
+    // Outputs the smallest-magnitude item — the pipe's magnitude check
+    // then decides if it qualifies (overflow = stall, jamming after a
+    // few seconds as usual).
+    return peekRuleWarehouseSmallest(cell);
+  }
   // Equation cell: peek any block sitting at the output port position.
   const port = cell.outputs[ep.portIndex];
   if (!port) return null;
@@ -264,7 +299,9 @@ function pullSource(pipe: PlacedPipe): Value | null {
   if (ep.kind !== 'cell-output') return null;
   const cell = findCellById(ep.cellId);
   if (!cell) return null;
-  if (cell.type === 'warehouse') return withdrawFromWarehouse(cell);
+  if (cell.type === 'warehouse' || cell.type === 'warehouse-rule') {
+    return withdrawFromWarehouse(cell);
+  }
   const port = cell.outputs[ep.portIndex];
   if (!port) return null;
   const block = findBlockAt(
@@ -291,6 +328,16 @@ function destAccepts(ep: PipeEndpoint, value: Value): boolean {
     }
     return true;
   }
+  if (cell.type === 'warehouse-rule') {
+    const cap = cell.capacity ?? 0;
+    if (ruleWarehouseTotal(cell) >= cap) return false;
+    const rule = getWarehouseRule(cell.ruleId);
+    return !!rule && rule.test(value);
+  }
+  if (cell.type === 'filter') {
+    // Filters always accept — routing happens on delivery.
+    return true;
+  }
   if (isCultivationType(cell.type)) {
     // Cultivation cells accept exactly one seed in their lifetime.
     return cell.seed === null || cell.seed === undefined;
@@ -304,6 +351,8 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
   const cell = findCellById(ep.cellId);
   if (!cell) return false;
   if (cell.type === 'warehouse') return depositToWarehouse(cell, value);
+  if (cell.type === 'warehouse-rule') return depositToWarehouse(cell, value);
+  if (cell.type === 'filter') return routeViaFilter(cell, value, canvasLayer);
   // Cultivation cells capture the value as a seed; they don't use `pending`.
   // Without this branch a pipe would silently consume seeds and emit nothing.
   if (isCultivationType(cell.type)) return captureSeed(cell, value);
@@ -315,7 +364,8 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
   // pass through too quickly to matter, and the cell either fires this tick
   // or waits for the cost-retry pass. The block's visual life is the pipe
   // pulse → output emission; no graphite ghost in the input slot.
-  if (cell.pending.every((v) => v !== null)) {
+  updateCostBadge(cell);
+  if (operandsFilled(cell)) {
     fireCellViaPipe(cell, canvasLayer);
   }
   return true;
@@ -330,13 +380,21 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
  * Returns false if the cell couldn't fire (insufficient computational cost).
  */
 function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
-  const cost = computationalCost(cell.type);
-  if (cost > 0 && !spendOnes(cost)) {
-    return false;
+  const operands = operandPending(cell).map((v) => v as Value);
+  const cost = computationalCost(cell.type, operands);
+  const result = operate(cell.type, operands);
+
+  // Pre-check every output port for capacity (Slice 5.7). If any is
+  // clogged, refuse to fire — don't burn fuel, don't consume inputs.
+  // The retry pass next frame will try again once the player drains it.
+  const portsChecked = new Set<number>();
+  for (const ev of result.emits) {
+    if (portsChecked.has(ev.portIndex)) continue;
+    portsChecked.add(ev.portIndex);
+    if (planSpawnAtPort(cell, ev.portIndex, ev.value) === 'clogged') return false;
   }
 
-  const inputs = cell.pending.map((v) => v as Value);
-  const result = operate(cell.type, inputs);
+  if (consumeFuelOrFail(cell, cost) !== 'paid') return false;
 
   // Clear pending values AND any pending displays (the manual path may have
   // installed them before the cell switched to cost-blocked-then-retry state).
@@ -349,32 +407,50 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
       cell.pendingDisplays[i] = null;
     }
   }
+  updateCostBadge(cell);
 
   if (result.marginalia) {
     showMarginalia(result.marginalia.text, result.marginalia.key);
   }
 
+  // Commit emits — first emit at each port via planSpawnAtPort, rest
+  // within-firing fan anchored to the first emit's spot.
   const emitsPerPort = new Map<number, number>();
+  const portAnchors = new Map<number, { x: number; y: number }>();
   for (const ev of result.emits) {
     const port = cell.outputs[ev.portIndex];
     if (!port) continue;
     const fanIndex = emitsPerPort.get(ev.portIndex) ?? 0;
     emitsPerPort.set(ev.portIndex, fanIndex + 1);
-    const fanDx = fanIndex * 18;
-    const outX = cell.container.x + port.offsetX + fanDx;
-    const outY = cell.container.y + port.offsetY;
 
-    // Stack into an existing same-value block at the output position if any.
-    const existing = findBlockAt(outX, outY, MERGE_EMIT_RADIUS, ev.value);
-    if (existing) {
-      increaseStack(existing, 1);
-      updateStackBadge(existing);
-      continue;
+    if (fanIndex === 0) {
+      const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
+      if (plan === 'clogged') continue;
+      if (plan.kind === 'new') {
+        portAnchors.set(ev.portIndex, { x: plan.x, y: plan.y });
+      } else {
+        portAnchors.set(ev.portIndex, {
+          x: plan.block.container.x,
+          y: plan.block.container.y,
+        });
+      }
+      commitSpawn(plan, ev.value, canvasLayer);
+    } else {
+      const anchor = portAnchors.get(ev.portIndex);
+      if (!anchor) continue;
+      const x = anchor.x + fanIndex * 18;
+      const y = anchor.y;
+      const existing = findBlockAt(x, y, MERGE_EMIT_RADIUS, ev.value);
+      if (existing) {
+        increaseStack(existing, 1);
+        updateStackBadge(existing);
+      } else {
+        const outBlock = drawBlock(ev.value, x, y);
+        canvasLayer.addChild(outBlock);
+        const placed = addBlock(outBlock, ev.value);
+        _attachInteraction?.(placed);
+      }
     }
-    const outBlock = drawBlock(ev.value, outX, outY);
-    canvasLayer.addChild(outBlock);
-    const placed = addBlock(outBlock, ev.value);
-    _attachInteraction?.(placed);
   }
   return true;
 }
@@ -388,10 +464,12 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
 export function tickEquationCells(_dtMs: number, canvasLayer: Container): void {
   for (const cell of allCells()) {
     if (cell.type === 'warehouse') continue;
+    if (cell.type === 'warehouse-rule') continue;
     if (isCultivationType(cell.type)) continue;
-    if (cell.pending.length === 0) continue;
-    if (!cell.pending.every((v) => v !== null)) continue;
-    // All inputs ready. Try to fire (cost check inside).
+    if (cell.inputs.length === 0) continue;
+    // Operand ports filled — fuel slot may still be empty (the retry pass
+    // exists precisely to thaw cost-blocked cells once fuel materialises).
+    if (!operandsFilled(cell)) continue;
     fireCellViaPipe(cell, canvasLayer);
   }
 }

@@ -1,5 +1,5 @@
 import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
-import { Text, TextStyle } from 'pixi.js';
+import { Graphics, Text, TextStyle } from 'pixi.js';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import {
   drawSuccessorCell,
@@ -10,6 +10,7 @@ import {
   drawMultiplicationCell,
   drawDivisionCell,
   drawExponentiationCell,
+  updateCostBadge,
 } from './pixi/binary-cell';
 import {
   drawDecrementCell,
@@ -28,27 +29,44 @@ import {
 } from './pixi/cultivation-cell';
 import { captureSeed, setCultivationBlockInteractionAttach } from './cultivation';
 import { drawCleanupBot } from './pixi/cleanup-bot';
+import { drawFilterCell } from './pixi/filter-cell';
+import { routeViaFilter, setFilterBlockInteractionAttach } from './filter';
+import {
+  createBlueprint,
+  findBlueprint,
+} from './blueprints';
+import {
+  commitSpawn,
+  planSpawnAtPort,
+  setSpawnBlockInteractionAttach,
+} from './spawn';
 import {
   MERGE_DROP_RADIUS,
   MERGE_EMIT_RADIUS,
   addBlock,
   addCell,
   addPipe,
+  allCells,
   comprehensionLevel,
+  consumeFuelOrFail,
   decreaseStack,
   depositToWarehouse,
   findBlockAt,
   findCellOutputPortAt,
   findCellPortAt,
+  fuelPortIndex,
   increaseStack,
   markDirty,
-  spendOnes,
+  operandPending,
+  operandsFilled,
+  refreshTotals,
   withdrawFromWarehouse,
   type PipeEndpoint,
   type PlacedBlock,
   type PlacedCell,
 } from './world';
 import { computationalCost, isCultivationType, operate, type CellType } from './cell-types';
+import { getWarehouseRule } from './warehouse-rules';
 import { PENCIL_ACTIVE_CURSOR_URL, PENCIL_CURSOR_URL } from './cursors';
 import { showMarginalia } from './marginalia';
 import { onCameraChange, screenToCanvas } from './camera';
@@ -58,6 +76,7 @@ import {
   deletePipe,
   findPipeAt,
   pipeEndpointPosition,
+  redrawPipesForCell,
   registerPipeRuntime,
   setPipeBlockInteractionAttach,
 } from './pipe';
@@ -88,13 +107,25 @@ import { valueColor } from './family';
  * A module-level mode flag prevents concurrent flows.
  */
 
-type InteractionMode = 'idle' | 'dragging' | 'placing' | 'placing-pipe';
+type InteractionMode =
+  | 'idle'
+  | 'dragging'
+  | 'placing'
+  | 'placing-pipe'
+  | 'blueprint-select'
+  | 'blueprint-stamp'
+  | 'moving-cell';
 
 export interface DragController {
   beginDragFromRiver(event: FederatedPointerEvent, value: Value): void;
-  beginCellPlacement(type: CellType): void;
+  beginCellPlacement(type: CellType, options?: { ruleId?: string }): void;
   /** Two-click pipe placement: source then destination. */
   beginPipePlacement(magnitude: number, cooldownMs?: number): void;
+  /** Rect-drag a region; on release, prompt for a name and save as
+   *  Blueprint (Slice 5.4). ESC cancels. */
+  beginBlueprintSelection(): void;
+  /** Click on canvas to stamp a copy of the Blueprint at that position. */
+  beginBlueprintPlacement(blueprintId: string): void;
   /** Restores a placed block at the given canvas coordinates. */
   rehydrateBlock(value: Value, count: number, x: number, y: number): void;
   /** Restores a placed cell with optional pending input + per-type state. */
@@ -119,6 +150,12 @@ export interface DragController {
       botCooldownMs: number;
       botCooldownRemaining: number;
     },
+    ruleWarehouseState?: {
+      ruleId: string;
+      items: { value: Value; count: number }[];
+      capacity: number;
+    },
+    filterState?: { ruleId: string },
   ): void;
   /** Restores a placed pipe. `cooldownRemaining` defaults to `cooldownMs`. */
   rehydratePipe(
@@ -192,6 +229,36 @@ export function createDragController(app: Application, canvasLayer: Container): 
       return true;
     }
 
+    if (cell.type === 'warehouse-rule') {
+      if (!depositToWarehouse(cell, value)) {
+        // Two failure cases for rule warehouses: predicate-fail or full.
+        const rule = getWarehouseRule(cell.ruleId);
+        const cap = cell.capacity ?? 0;
+        const total = (cell.ruleItems ?? []).reduce((s, it) => s + it.count, 0);
+        if (total >= cap) {
+          showMarginalia('Generalized warehouse is full.', 'warehouse_rule_full');
+        } else if (rule && !rule.test(value)) {
+          showMarginalia(
+            `${valueLabel(value)} does not satisfy ${rule.label}. The warehouse declines.`,
+            `warehouse_rule_reject_${cell.id}`,
+          );
+        }
+        return false;
+      }
+      return true;
+    }
+
+    if (cell.type === 'filter') {
+      const ok = routeViaFilter(cell, value, canvasLayer);
+      if (!ok) {
+        showMarginalia(
+          'Filter has no rule installed — drop refused.',
+          `filter_no_rule_${cell.id}`,
+        );
+      }
+      return ok;
+    }
+
     if (isCultivationType(cell.type)) {
       if (cell.seed !== null && cell.seed !== undefined) {
         showMarginalia(
@@ -214,7 +281,10 @@ export function createDragController(app: Application, canvasLayer: Container): 
     cell.container.addChild(display);
     cell.pendingDisplays[portIndex] = display;
 
-    if (cell.pending.every((v) => v !== null)) {
+    // Refresh the cost preview now that another input contributes magnitude.
+    updateCostBadge(cell);
+
+    if (operandsFilled(cell)) {
       fireCell(cell);
     } else {
       // Partial-fill: recompute didn't run, but state changed. Notify autosave.
@@ -234,20 +304,58 @@ export function createDragController(app: Application, canvasLayer: Container): 
    * loaded; the simulation tick will retry once a one becomes available.
    */
   function fireCell(cell: PlacedCell): void {
-    const cost = computationalCost(cell.type);
-    if (cost > 0 && !spendOnes(cost)) {
-      // Per-cell-id so each freshly-placed cell can earn its one "I'm
-      // waiting" beat. Type-only keying meant only the very first cell of
-      // each type ever surfaced the message.
-      showMarginalia(
-        `${cellLabel(cell.type)} requires ${cost} ${cost === 1 ? 'one' : 'ones'} to fire. It will wait.`,
-        `cell_cost_blocked_${cell.id}`,
-      );
-      return;
+    // Operand-only inputs drive cost & operate; the fuel slot (if present)
+    // is the payment, not part of the operation (Slice 3.5.5).
+    const operands = operandPending(cell).map((v) => v as Value);
+    const cost = computationalCost(cell.type, operands);
+
+    // operate() is pure — call it now so we can pre-check output port
+    // capacity before paying fuel (Slice 5.7). One distinct port-target
+    // is checked per port; multi-emit at the same port fans within-firing
+    // and reuses the first emit's planned anchor.
+    const result = operate(cell.type, operands);
+
+    const portsChecked = new Set<number>();
+    for (const ev of result.emits) {
+      if (portsChecked.has(ev.portIndex)) continue;
+      portsChecked.add(ev.portIndex);
+      const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
+      if (plan === 'clogged') {
+        showMarginalia(
+          `${cellLabel(cell.type)} output is clogged — clear the port before this cell can fire again.`,
+          `cell_output_clogged_${cell.id}`,
+        );
+        return;
+      }
     }
 
-    const inputs = cell.pending.map((v) => v as Value);
-    const result = operate(cell.type, inputs);
+    const fuelOutcome = consumeFuelOrFail(cell, cost);
+    if (fuelOutcome !== 'paid') {
+      switch (fuelOutcome) {
+        case 'awaiting-pipe':
+          showMarginalia(
+            `${cellLabel(cell.type)} awaits fuel (≥ ${cost}) from its dedicated pipe.`,
+            `cell_cost_blocked_${cell.id}`,
+          );
+          break;
+        case 'too-small': {
+          const fuelIdx = fuelPortIndex(cell);
+          const slot = fuelIdx >= 0 ? cell.pending[fuelIdx] : null;
+          showMarginalia(
+            `Fuel block too small: ${slot ? valueLabel(slot) : '—'} cannot pay cost ${cost}. The block stays in the slot until cleared.`,
+            `cell_fuel_too_small_${cell.id}`,
+          );
+          break;
+        }
+        case 'no-fuel':
+          showMarginalia(
+            `${cellLabel(cell.type)} awaits fuel: one block of magnitude ≥ ${cost}.`,
+            `cell_cost_blocked_${cell.id}`,
+          );
+          break;
+      }
+      return;
+    }
 
     // Clear pending state.
     for (let i = 0; i < cell.pending.length; i++) {
@@ -259,43 +367,54 @@ export function createDragController(app: Application, canvasLayer: Container): 
         cell.pendingDisplays[i] = null;
       }
     }
+    updateCostBadge(cell);
 
     if (result.marginalia) {
       showMarginalia(result.marginalia.text, result.marginalia.key);
     }
 
-    // Track how many times each port has emitted this firing, so we can
-    // fan multi-emits at one port (e.g. Factor's prime factors) rather
-    // than stacking them at a single pixel.
+    // Commit emits. First emit at each port goes through planSpawnAtPort
+    // (back-pressure + smart fan slot). Subsequent emits at the same
+    // port within ONE firing keep the 18px within-firing fan, anchored
+    // to the first emit's planned anchor so Factor's primes stay
+    // clustered when the port shifts due to a prior pile-up.
     const emitsPerPort = new Map<number, number>();
-
+    const portAnchors = new Map<number, { x: number; y: number }>();
     for (const ev of result.emits) {
       const port = cell.outputs[ev.portIndex];
       if (!port) continue;
-
       const fanIndex = emitsPerPort.get(ev.portIndex) ?? 0;
       emitsPerPort.set(ev.portIndex, fanIndex + 1);
 
-      // Fan layout: progressive offset to the right of each subsequent emit.
-      // Same-value emits will still merge via the stack-radius check below.
-      const fanDx = fanIndex * 18;
-      const outX = cell.container.x + port.offsetX + fanDx;
-      const outY = cell.container.y + port.offsetY;
-
-      const existing = findBlockAt(outX, outY, MERGE_EMIT_RADIUS, ev.value);
-      if (existing) {
-        increaseStack(existing, 1);
-        updateStackBadge(existing);
-        continue;
+      if (fanIndex === 0) {
+        const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
+        if (plan === 'clogged') continue; // pre-check should have caught this
+        if (plan.kind === 'new') {
+          portAnchors.set(ev.portIndex, { x: plan.x, y: plan.y });
+        } else {
+          portAnchors.set(ev.portIndex, {
+            x: plan.block.container.x,
+            y: plan.block.container.y,
+          });
+        }
+        commitSpawn(plan, ev.value, canvasLayer);
+      } else {
+        const anchor = portAnchors.get(ev.portIndex);
+        if (!anchor) continue;
+        const x = anchor.x + fanIndex * 18;
+        const y = anchor.y;
+        const existing = findBlockAt(x, y, MERGE_EMIT_RADIUS, ev.value);
+        if (existing) {
+          increaseStack(existing, 1);
+          updateStackBadge(existing);
+        } else {
+          const outBlock = drawBlock(ev.value, x, y);
+          canvasLayer.addChild(outBlock);
+          const placed = addBlock(outBlock, ev.value);
+          attachBlockInteraction(placed);
+        }
       }
 
-      const outBlock = drawBlock(ev.value, outX, outY);
-      canvasLayer.addChild(outBlock);
-      const placed = addBlock(outBlock, ev.value);
-      attachBlockInteraction(placed);
-
-      // The narrator beat genuinely is about going from zero to one. The
-      // earlier `> 0` check fired on `2` from `1+1` too — wrong moment.
       if (valueIsOne(ev.value)) {
         showMarginalia('Built 1 from nothing. Peano nods approvingly.', 'first_one');
       }
@@ -397,6 +516,99 @@ export function createDragController(app: Application, canvasLayer: Container): 
     });
   }
 
+  /**
+   * Hit-test for a point against a single cell's input or output ports.
+   * Used to decide whether a click should start a cell-move drag (Slice
+   * 5.6) — clicks ON a port keep their existing semantics (drop targets,
+   * warehouse output withdraw) and don't initiate a body-drag.
+   */
+  function clickIsOnPort(cell: PlacedCell, x: number, y: number): boolean {
+    for (const p of cell.inputs) {
+      const px = cell.container.x + p.offsetX;
+      const py = cell.container.y + p.offsetY;
+      if (Math.abs(x - px) <= p.halfWidth && Math.abs(y - py) <= p.halfHeight) return true;
+    }
+    // Output port hit-radius mirrors `findCellOutputPortAt`'s 22 px.
+    for (const p of cell.outputs) {
+      const px = cell.container.x + p.offsetX;
+      const py = cell.container.y + p.offsetY;
+      if (Math.hypot(x - px, y - py) <= 22) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Makes a placed cell respond to pointerdown by starting a cell-drag —
+   * the body of the cell moves with the cursor, and every pipe whose
+   * endpoint references this cell redraws each frame. Drops on input
+   * ports (the warehouse deposit zone, the binary cell's two operand
+   * ports, the fuel port) keep their existing meaning and short-circuit
+   * the body-drag.
+   */
+  function attachCellInteraction(cell: PlacedCell): void {
+    cell.container.eventMode = 'static';
+    cell.container.on('pointerdown', (event: FederatedPointerEvent) => {
+      if (event.button !== 0) return;
+      if (mode !== 'idle') return;
+      const c = screenToCanvas(event.global.x, event.global.y);
+      if (clickIsOnPort(cell, c.x, c.y)) return;
+      // Past the gate — this is a body-drag. Stop propagation so the
+      // window-level `onOutputClick` listener (warehouse withdraw,
+      // shift-click pipe delete) doesn't double-fire on the same press.
+      event.stopPropagation();
+      beginCellMove(cell, c);
+    });
+  }
+
+  /**
+   * Drags `cell` with the cursor until pointerup. Pipes connected to
+   * this cell redraw each move tick. ESC cancels and snaps the cell back
+   * to its starting position.
+   */
+  function beginCellMove(cell: PlacedCell, startCanvasPt: { x: number; y: number }): void {
+    mode = 'moving-cell';
+    const startX = cell.container.x;
+    const startY = cell.container.y;
+    const grabOffsetX = startCanvasPt.x - startX;
+    const grabOffsetY = startCanvasPt.y - startY;
+    const rect = rectOf();
+    document.body.style.cursor = 'grabbing';
+
+    const onMove = (e: PointerEvent): void => {
+      const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+      cell.container.x = c.x - grabOffsetX;
+      cell.container.y = c.y - grabOffsetY;
+      redrawPipesForCell(cell.id);
+    };
+
+    const onUp = (e: PointerEvent): void => {
+      if (e.button !== 0) return;
+      finalize();
+    };
+
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return;
+      cell.container.x = startX;
+      cell.container.y = startY;
+      redrawPipesForCell(cell.id);
+      finalize();
+    };
+
+    function finalize(): void {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKey);
+      document.body.style.cursor = PENCIL_CURSOR_URL;
+      mode = 'idle';
+      // Position changed — autosave needs to pick it up.
+      markDirty();
+    }
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKey);
+  }
+
   function cellLabel(type: CellType): string {
     // Currently only the cost-bearing operators need a friendly label, but
     // we keep this exhaustive so adding a new cost-bearing CellType later
@@ -422,6 +634,10 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return 'Square Root';
       case 'warehouse':
         return 'Warehouse';
+      case 'warehouse-rule':
+        return 'Generalized Warehouse';
+      case 'filter':
+        return 'Filter';
       case 'cultivation-arithmetic':
         return 'Arithmetic cultivation';
       case 'cultivation-geometric':
@@ -438,7 +654,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
     cell.refreshBadge();
   }
 
-  function drawCellByType(type: CellType): Container {
+  function drawCellByType(type: CellType, ruleId?: string): Container {
     switch (type) {
       case 'successor':
         return drawSuccessorCell(0, 0);
@@ -460,6 +676,14 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return drawSquareRootCell(0, 0);
       case 'warehouse':
         return drawWarehouseCell(0, 0);
+      case 'warehouse-rule': {
+        const rule = getWarehouseRule(ruleId);
+        return drawWarehouseCell(0, 0, rule?.label ?? '?');
+      }
+      case 'filter': {
+        const rule = getWarehouseRule(ruleId);
+        return drawFilterCell(0, 0, rule?.label ?? '?');
+      }
       case 'cultivation-arithmetic':
         return drawArithmeticCell(0, 0);
       case 'cultivation-geometric':
@@ -511,6 +735,16 @@ export function createDragController(app: Application, canvasLayer: Container): 
           text: 'Warehouse: deposits on the left, withdrawals on the right. Untyped until the first drop.',
           key: 'first_warehouse_placed',
         };
+      case 'warehouse-rule':
+        return {
+          text: 'Generalized warehouse: accepts any block matching its rule, in mixed company.',
+          key: 'first_warehouse_rule_placed',
+        };
+      case 'filter':
+        return {
+          text: 'Filter cell: matches go out the top, the rest fall through the bottom.',
+          key: 'first_filter_placed',
+        };
       case 'cultivation-arithmetic':
         return {
           text: 'Arithmetic cultivation: drop a seed, watch the linear march.',
@@ -531,6 +765,61 @@ export function createDragController(app: Application, canvasLayer: Container): 
           text: 'A cleanup bot. It sweeps loose blocks within reach into a nearby warehouse of matching type.',
           key: 'first_cleanup_bot',
         };
+    }
+  }
+
+  /**
+   * Stamps a Blueprint onto the canvas at the given offset (Slice 5.4).
+   * Cells go down first in declaration order, so the captured pipe
+   * indices map cleanly to the new cell ids. Pipes use rehydratePipe so
+   * their visuals + simulation runtime are registered the same way as
+   * a save-restore.
+   */
+  function stampBlueprint(bp: import('./blueprints').BlueprintDef, offsetX: number, offsetY: number): void {
+    const newCellIds: number[] = [];
+    for (const snap of bp.cells) {
+      const ruleId =
+        snap.type === 'warehouse-rule'
+          ? snap.ruleWarehouseState?.ruleId
+          : snap.type === 'filter'
+            ? snap.filterState?.ruleId
+            : undefined;
+      const container = drawCellByType(snap.type as CellType, ruleId);
+      container.x = offsetX + snap.x;
+      container.y = offsetY + snap.y;
+      canvasLayer.addChild(container);
+      const placed = addCell(snap.type as CellType, container);
+
+      if (snap.type === 'warehouse') {
+        installWarehouseRefresh(placed);
+      }
+      if (snap.type === 'warehouse-rule') {
+        placed.ruleId = snap.ruleWarehouseState?.ruleId;
+        placed.capacity = snap.ruleWarehouseState?.capacity ?? placed.capacity;
+        installWarehouseRefresh(placed);
+      }
+      if (snap.type === 'filter') {
+        placed.ruleId = snap.filterState?.ruleId;
+      }
+      attachCellInteraction(placed);
+      newCellIds.push(placed.id);
+    }
+
+    for (const pipeDef of bp.pipes) {
+      const srcCellId = newCellIds[pipeDef.sourceCellIdx];
+      const dstCellId = newCellIds[pipeDef.destCellIdx];
+      if (srcCellId === undefined || dstCellId === undefined) continue;
+      const source: PipeEndpoint = {
+        kind: 'cell-output',
+        cellId: srcCellId,
+        portIndex: pipeDef.sourcePortIdx,
+      };
+      const dest: PipeEndpoint = {
+        kind: 'cell-input',
+        cellId: dstCellId,
+        portIndex: pipeDef.destPortIdx,
+      };
+      controller.rehydratePipe(source, dest, pipeDef.magnitude, pipeDef.cooldownMs);
     }
   }
 
@@ -571,8 +860,23 @@ export function createDragController(app: Application, canvasLayer: Container): 
         botCooldownMs: number;
         botCooldownRemaining: number;
       },
+      ruleWarehouseState?: {
+        ruleId: string;
+        items: { value: Value; count: number }[];
+        capacity: number;
+      },
+      filterState?: { ruleId: string },
     ): void {
-      const container = drawCellByType(type);
+      // Rule warehouses AND filters need their predicate id at draw time
+      // (it picks the centre glyph/label), so peek the state before
+      // calling drawCellByType.
+      const ruleId =
+        type === 'warehouse-rule'
+          ? ruleWarehouseState?.ruleId
+          : type === 'filter'
+            ? filterState?.ruleId
+            : undefined;
+      const container = drawCellByType(type, ruleId);
       container.x = x;
       container.y = y;
       canvasLayer.addChild(container);
@@ -584,7 +888,27 @@ export function createDragController(app: Application, canvasLayer: Container): 
           placed.storedCount = warehouseState.storedCount;
           placed.capacity = warehouseState.capacity;
           placed.refreshBadge?.();
+          // Slice 3.5.2: rehydrated warehouse contents feed Total Score —
+          // refresh so a save with warehouses but no loose blocks still
+          // shows the correct headline number.
+          refreshTotals();
         }
+      }
+      if (type === 'warehouse-rule') {
+        installWarehouseRefresh(placed);
+        if (ruleWarehouseState) {
+          placed.ruleId = ruleWarehouseState.ruleId;
+          placed.ruleItems = ruleWarehouseState.items.map((it) => ({
+            value: it.value,
+            count: it.count,
+          }));
+          placed.capacity = ruleWarehouseState.capacity;
+          placed.refreshBadge?.();
+          refreshTotals();
+        }
+      }
+      if (type === 'filter' && filterState) {
+        placed.ruleId = filterState.ruleId;
       }
       if (isCultivationType(type) && cultivationState) {
         placed.seed = cultivationState.seed;
@@ -614,6 +938,9 @@ export function createDragController(app: Application, canvasLayer: Container): 
         placed.container.addChild(display);
         placed.pendingDisplays[i] = display;
       }
+      // Reflect any restored pending state on the cost-preview badge.
+      updateCostBadge(placed);
+      attachCellInteraction(placed);
     },
 
     beginPipePlacement(magnitude: number, cooldownMs = 1000): void {
@@ -755,12 +1082,183 @@ export function createDragController(app: Application, canvasLayer: Container): 
       });
     },
 
-    beginCellPlacement(type: CellType): void {
+    beginBlueprintSelection(): void {
+      if (mode !== 'idle') return;
+      mode = 'blueprint-select';
+      const rect = rectOf();
+
+      showMarginalia(
+        'Drag a rectangle around the cells you want to bundle. Release to name and save.',
+        'blueprint_select_hint',
+      );
+
+      document.body.style.cursor = 'crosshair';
+
+      const ghost = new Graphics();
+      ghost.alpha = 0.85;
+      canvasLayer.addChild(ghost);
+
+      let start: { x: number; y: number } | null = null;
+      let lastCursor: { x: number; y: number } | null = null;
+
+      const drawGhost = (a: { x: number; y: number }, b: { x: number; y: number }): void => {
+        ghost.clear();
+        const x = Math.min(a.x, b.x);
+        const y = Math.min(a.y, b.y);
+        const w = Math.abs(b.x - a.x);
+        const h = Math.abs(b.y - a.y);
+        ghost.rect(x, y, w, h);
+        ghost.stroke({ color: 0xc9aa30, width: 2, alpha: 0.85 });
+        ghost.fill({ color: 0xf4e68a, alpha: 0.18 });
+      };
+
+      const cellsInsideBox = (a: { x: number; y: number }, b: { x: number; y: number }): PlacedCell[] => {
+        const x0 = Math.min(a.x, b.x);
+        const x1 = Math.max(a.x, b.x);
+        const y0 = Math.min(a.y, b.y);
+        const y1 = Math.max(a.y, b.y);
+        const out: PlacedCell[] = [];
+        for (const c of allCells()) {
+          const cx = c.container.x;
+          const cy = c.container.y;
+          if (cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1) out.push(c);
+        }
+        return out;
+      };
+
+      const onDown = (e: PointerEvent): void => {
+        if (e.button !== 0) return;
+        const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+        start = c;
+        lastCursor = c;
+        drawGhost(start, lastCursor);
+      };
+
+      const onMove = (e: PointerEvent): void => {
+        const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+        lastCursor = c;
+        if (start) drawGhost(start, c);
+      };
+
+      const onUp = (e: PointerEvent): void => {
+        if (e.button !== 0) return;
+        if (!start || !lastCursor) return;
+        const picked = cellsInsideBox(start, lastCursor);
+        if (picked.length === 0) {
+          showMarginalia('No cells captured. Try again.', 'blueprint_select_empty');
+          // Reset for another rect; don't exit mode.
+          start = null;
+          lastCursor = null;
+          ghost.clear();
+          return;
+        }
+        const name = window.prompt(
+          `Name this blueprint (${picked.length} cell${picked.length === 1 ? '' : 's'}):`,
+          '',
+        );
+        if (name && name.trim().length > 0) {
+          const bp = createBlueprint(name.trim(), picked);
+          if (bp) {
+            showMarginalia(
+              `Blueprint "${bp.name}" saved. ${bp.cells.length} cells, ${bp.pipes.length} pipes.`,
+              `blueprint_saved_${bp.id}`,
+            );
+          }
+        } else {
+          showMarginalia('Blueprint capture cancelled.', 'blueprint_cancelled');
+        }
+        cleanup();
+      };
+
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key !== 'Escape') return;
+        showMarginalia('Blueprint capture cancelled.', 'blueprint_cancelled');
+        cleanup();
+      };
+
+      const cleanup = (): void => {
+        canvasLayer.removeChild(ghost);
+        ghost.destroy({ children: true });
+        window.removeEventListener('pointerdown', onDown);
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerup', onUp);
+        window.removeEventListener('keydown', onKey);
+        document.body.style.cursor = PENCIL_CURSOR_URL;
+        mode = 'idle';
+      };
+
+      window.addEventListener('pointerdown', onDown);
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerup', onUp);
+      window.addEventListener('keydown', onKey);
+    },
+
+    beginBlueprintPlacement(blueprintId: string): void {
+      if (mode !== 'idle') return;
+      const bp = findBlueprint(blueprintId);
+      if (!bp) return;
+      mode = 'blueprint-stamp';
+      const rect = rectOf();
+
+      showMarginalia(
+        `Stamp "${bp.name}" — click to place, ESC to cancel.`,
+        'blueprint_stamp_hint',
+      );
+
+      document.body.style.cursor = 'crosshair';
+
+      // Ghost: a faint dashed rectangle showing the blueprint's footprint.
+      const ghost = new Graphics();
+      ghost.alpha = 0.7;
+      canvasLayer.addChild(ghost);
+
+      const drawGhost = (cx: number, cy: number): void => {
+        ghost.clear();
+        ghost.rect(cx, cy, bp.width, bp.height);
+        ghost.stroke({ color: 0x3a3a3a, width: 1.5, alpha: 0.7 });
+        ghost.fill({ color: 0xf4e68a, alpha: 0.12 });
+      };
+
+      const onMove = (e: PointerEvent): void => {
+        const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+        drawGhost(c.x, c.y);
+      };
+
+      const onClick = (e: PointerEvent): void => {
+        if (e.button !== 0) return;
+        const { x, y } = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+        stampBlueprint(bp, x, y);
+        cleanup();
+      };
+
+      const onKey = (e: KeyboardEvent): void => {
+        if (e.key !== 'Escape') return;
+        showMarginalia('Stamp cancelled.', 'blueprint_stamp_cancelled');
+        cleanup();
+      };
+
+      const cleanup = (): void => {
+        canvasLayer.removeChild(ghost);
+        ghost.destroy({ children: true });
+        window.removeEventListener('pointermove', onMove);
+        window.removeEventListener('pointerdown', onClick);
+        window.removeEventListener('keydown', onKey);
+        document.body.style.cursor = PENCIL_CURSOR_URL;
+        mode = 'idle';
+      };
+
+      window.addEventListener('pointermove', onMove);
+      window.addEventListener('pointerdown', onClick);
+      window.addEventListener('keydown', onKey);
+    },
+
+    beginCellPlacement(type: CellType, options?: { ruleId?: string }): void {
       if (mode !== 'idle') return;
       mode = 'placing';
 
+      const ruleId = options?.ruleId;
       const rect = rectOf();
-      const ghost = drawCellByType(type);
+      const ghost = drawCellByType(type, ruleId);
       ghost.alpha = 0.7;
       canvasLayer.addChild(ghost);
 
@@ -783,6 +1281,14 @@ export function createDragController(app: Application, canvasLayer: Container): 
 
         const placed = addCell(type, ghost);
         if (type === 'warehouse') installWarehouseRefresh(placed);
+        if (type === 'warehouse-rule') {
+          placed.ruleId = ruleId;
+          installWarehouseRefresh(placed);
+        }
+        if (type === 'filter') {
+          placed.ruleId = ruleId;
+        }
+        attachCellInteraction(placed);
 
         const note = placementMarginalia(type);
         if (note) showMarginalia(note.text, note.key);
@@ -894,12 +1400,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
     if (!hit) return;
     const cell = hit.cell;
 
-    if (cell.type === 'warehouse') {
-      if ((cell.storedCount ?? 0) <= 0) {
-        showMarginalia(
-          'Warehouse is empty.',
-          `warehouse_empty_${cell.id}`,
-        );
+    if (cell.type === 'warehouse' || cell.type === 'warehouse-rule') {
+      const empty =
+        cell.type === 'warehouse'
+          ? (cell.storedCount ?? 0) <= 0
+          : (cell.ruleItems ?? []).every((it) => it.count <= 0);
+      if (empty) {
+        showMarginalia('Warehouse is empty.', `warehouse_empty_${cell.id}`);
         return;
       }
       const value = withdrawFromWarehouse(cell);
@@ -910,9 +1417,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
   window.addEventListener('pointerdown', onOutputClick);
 
   // Hook blocks fired by automation back into the pickup path so the player
-  // can still grab them by hand (when within Comprehension).
+  // can still grab them by hand (when within Comprehension). The shared
+  // spawn module owns the singleton (Slice 5.7); the older per-module
+  // setters are now no-ops kept for back-compat.
+  setSpawnBlockInteractionAttach(attachBlockInteraction);
   setPipeBlockInteractionAttach(attachBlockInteraction);
   setCultivationBlockInteractionAttach(attachBlockInteraction);
+  setFilterBlockInteractionAttach(attachBlockInteraction);
 
   _controller = controller;
   return controller;

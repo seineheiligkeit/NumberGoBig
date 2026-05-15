@@ -18,9 +18,11 @@ import type { Application, Container } from 'pixi.js';
  * since the world stores cells in canvas-local space.
  */
 
-const MIN_SCALE = 0.25;
+const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
-const ZOOM_STEP = 1.1;
+// 5% per wheel notch — finer than the original 10% so the player can
+// settle on a comfortable zoom rather than overshooting (Slice 5.9).
+const ZOOM_STEP = 1.05;
 
 interface CameraState {
   x: number;
@@ -97,6 +99,9 @@ export function setupCamera(app: Application, canvasLayer: Container): void {
     return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
   };
 
+  // Track the cursor outside the pan loop so we can restore it on release.
+  let _priorCursor: string | null = null;
+
   const onPointerDown = (e: PointerEvent): void => {
     if (e.button !== 1 && e.button !== 2) return;
     if (!insideCanvas(e)) return;
@@ -104,6 +109,9 @@ export function setupCamera(app: Application, canvasLayer: Container): void {
     panning = true;
     lastX = e.clientX;
     lastY = e.clientY;
+    // Show a grabbing cursor for the duration of the pan (Slice 5.9 polish).
+    _priorCursor = document.body.style.cursor;
+    document.body.style.cursor = 'grabbing';
     e.preventDefault();
   };
 
@@ -119,7 +127,12 @@ export function setupCamera(app: Application, canvasLayer: Container): void {
   };
 
   const onPointerUp = (): void => {
+    if (!panning) return;
     panning = false;
+    if (_priorCursor !== null) {
+      document.body.style.cursor = _priorCursor;
+      _priorCursor = null;
+    }
   };
 
   // Suppress browser context menu on right-click inside the canvas so

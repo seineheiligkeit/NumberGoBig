@@ -18,7 +18,11 @@
     const ok = purchase(entry);
     if (!ok) return;
     if (isCellEntry(entry)) {
-      getController().beginCellPlacement(entry.id as CellType);
+      // Rule-warehouse entries (`placementCellType` set) carry both the
+      // CellType and the `ruleId` to install; ordinary cell entries use
+      // their id directly as the CellType.
+      const type = (entry.placementCellType ?? entry.id) as CellType;
+      getController().beginCellPlacement(type, { ruleId: entry.ruleId });
     } else if (entry.kind === 'pipe' && entry.pipeMagnitude) {
       getController().beginPipePlacement(entry.pipeMagnitude, entry.pipeCooldownMs ?? 1000);
     }

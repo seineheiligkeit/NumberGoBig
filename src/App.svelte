@@ -4,6 +4,8 @@
   import { PENCIL_CURSOR_URL } from './lib/cursors';
   import ScoreHeader from './ui/ScoreHeader.svelte';
   import Literature from './ui/Literature.svelte';
+  import Gallery from './ui/Gallery.svelte';
+  import Blueprints from './ui/Blueprints.svelte';
   import Marginalia from './ui/Marginalia.svelte';
 
   let canvasContainer: HTMLDivElement;
@@ -22,6 +24,8 @@
   <div class="canvas-container" bind:this={canvasContainer}></div>
   <ScoreHeader />
   <Literature />
+  <Gallery />
+  <Blueprints />
   <Marginalia />
 </main>
 

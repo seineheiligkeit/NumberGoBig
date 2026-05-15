@@ -1,18 +1,16 @@
 import type { Container } from 'pixi.js';
 import {
-  MERGE_EMIT_RADIUS,
-  addBlock,
   allCells,
-  findBlockAt,
-  increaseStack,
   markDirty,
-  type PlacedBlock,
+  spendFuel,
   type PlacedCell,
 } from './world';
 import { cultivationEmit, isCultivationType } from './cell-types';
-import { drawBlock, updateStackBadge } from './pixi/block';
+import { cultivationEmissionCost } from './cost';
 import { updateCultivationBadge } from './pixi/cultivation-cell';
+import { showMarginalia } from './marginalia';
 import { valueLabel, type Value } from './value';
+import { commitSpawn, planSpawnAtPort } from './spawn';
 
 /**
  * Cultivation tick — for each cultivation cell with a seed installed, advance
@@ -24,9 +22,11 @@ import { valueLabel, type Value } from './value';
  * collect into a warehouse).
  */
 
-let _attachInteraction: ((b: PlacedBlock) => void) | null = null;
-export function setCultivationBlockInteractionAttach(fn: (b: PlacedBlock) => void): void {
-  _attachInteraction = fn;
+// The shared spawn-block-interaction-attach hook lives in `./spawn`
+// (Slice 5.7). Kept this exported no-op so older callers still wire
+// through one place; effective attach happens via setSpawnBlockInteractionAttach.
+export function setCultivationBlockInteractionAttach(_fn: (b: import('./world').PlacedBlock) => void): void {
+  // intentionally empty — interaction.ts now wires setSpawnBlockInteractionAttach.
 }
 
 export function tickCultivation(dtMs: number, canvasLayer: Container): void {
@@ -36,33 +36,41 @@ export function tickCultivation(dtMs: number, canvasLayer: Container): void {
     const cooldown = cell.cultivationCooldownMs ?? 2000;
     cell.cultivationCooldownRemaining = (cell.cultivationCooldownRemaining ?? cooldown) - dtMs;
     if ((cell.cultivationCooldownRemaining ?? 0) > 0) continue;
+
+    // Slice 3.5.6: each emission costs one fuel block ≥ the magnitude
+    // order of what's about to come out. We compute the value first so
+    // both the cost check AND the eventual emit see the same step.
+    const step = cell.cultivationStep ?? 0;
+    const value = cultivationEmit(cell.type, cell.seed, step);
+    const cost = cultivationEmissionCost(value);
+
+    // Plan where the block goes WITHOUT mutating world state yet — both
+    // back-pressure (no free port slot) and fuel-starvation must stall
+    // the cell idempotently: don't spawn, don't burn fuel, don't advance
+    // step, don't reset cooldown. Each retry next frame is cheap.
+    const target = planSpawnAtPort(cell, 0, value);
+    if (target === 'clogged') {
+      showMarginalia(
+        'Cultivation output is clogged — clear the port before this cell can emit again.',
+        `cultivation_clogged_${cell.id}`,
+      );
+      continue;
+    }
+
+    if (cost > 0 && !spendFuel(cost)) {
+      showMarginalia(
+        `Cultivation cell stalls — next emission (${valueLabel(value)}) needs fuel ≥ ${cost}.`,
+        `cultivation_starved_${cell.id}`,
+      );
+      continue;
+    }
+
+    cell.cultivationStep = step + 1;
     cell.cultivationCooldownRemaining = cooldown;
-    emitCultivation(cell, canvasLayer);
+    commitSpawn(target, value, canvasLayer);
+    updateCultivationBadge(cell);
     markDirty();
   }
-}
-
-function emitCultivation(cell: PlacedCell, canvasLayer: Container): void {
-  const seed = cell.seed!;
-  const step = cell.cultivationStep ?? 0;
-  const value = cultivationEmit(cell.type, seed, step);
-  cell.cultivationStep = step + 1;
-
-  const port = cell.outputs[0];
-  if (!port) return;
-  const outX = cell.container.x + port.offsetX;
-  const outY = cell.container.y + port.offsetY;
-
-  const existing = findBlockAt(outX, outY, MERGE_EMIT_RADIUS, value);
-  if (existing) {
-    increaseStack(existing, 1);
-    updateStackBadge(existing);
-    return;
-  }
-  const block = drawBlock(value, outX, outY);
-  canvasLayer.addChild(block);
-  const placed = addBlock(block, value);
-  _attachInteraction?.(placed);
 }
 
 /**

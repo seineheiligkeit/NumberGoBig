@@ -1,6 +1,8 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
+import { computationalCost } from '../cost';
+import type { PlacedCell } from '../world';
 
 /**
  * Shared rendering for binary equation cells: Addition, Multiplication, and
@@ -23,10 +25,17 @@ export interface BinaryCellOptions {
   symbolFontSize?: number;
   /** Optional vertical offset for the glyph (some symbols read better raised). */
   symbolYOffset?: number;
+  /**
+   * When true (multiplication, division, exponentiation in Slice 3.5.5),
+   * a small fuel intake is drawn hanging off the cell's bottom-centre.
+   * Operand-only cells (addition, subtraction) keep the cell rectangle
+   * clean by leaving this off.
+   */
+  hasFuelPort?: boolean;
 }
 
 export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions): Container {
-  const { symbol, symbolFontSize = 56, symbolYOffset = 0 } = options;
+  const { symbol, symbolFontSize = 56, symbolYOffset = 0, hasFuelPort = false } = options;
 
   const container = new Container();
   container.x = x;
@@ -89,10 +98,82 @@ export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions)
   arrow.rotation = (Math.random() - 0.5) * 0.04;
   container.addChild(arrow);
 
+  // Fuel intake socket (Slice 3.5.5) — sits below the cell with a small
+  // italic "fuel" hint, so a pipe coming up from a warehouse below docks
+  // naturally. The port's hit-area is registered in `cell-types.ts` at
+  // the same offsets.
+  if (hasFuelPort) {
+    drawDashedRect(container, 0, halfH + 18, 22, 14);
+    const fuelHintStyle = new TextStyle({
+      fontFamily: PENCIL_FONT_FAMILY,
+      fontSize: 11,
+      fontStyle: 'italic',
+      fontWeight: '400',
+      fill: GRAPHITE,
+    });
+    const fuelHint = new Text({ text: 'fuel', style: fuelHintStyle });
+    fuelHint.anchor.set(0.5);
+    fuelHint.x = 0;
+    fuelHint.y = halfH + 38;
+    fuelHint.alpha = 0.55;
+    fuelHint.rotation = (Math.random() - 0.5) * 0.05;
+    container.addChild(fuelHint);
+  }
+
+  // Cost-preview badge (Slice 3.5.1). Hidden until the cell has at least
+  // one input that contributes a non-zero magnitude; tier-0 cells (addition,
+  // subtraction) keep it hidden permanently. The interaction layer calls
+  // `updateCostBadge` whenever pending state mutates.
+  const costStyle = new TextStyle({
+    fontFamily: PENCIL_FONT_FAMILY,
+    fontSize: 13,
+    fontStyle: 'italic',
+    fontWeight: '400',
+    fill: GRAPHITE,
+  });
+  const costBadge = new Text({ text: '', style: costStyle });
+  costBadge.anchor.set(0.5);
+  costBadge.x = 0;
+  costBadge.y = halfH - 12;
+  costBadge.alpha = 0;
+  costBadge.rotation = (Math.random() - 0.5) * 0.04;
+  container.addChild(costBadge);
+  (container as Container & { __costBadge?: Text }).__costBadge = costBadge;
+
   // Slight whole-cell rotation so it sits on the page like a hand-placed object.
   container.rotation = (Math.random() - 0.5) * 0.03;
 
   return container;
+}
+
+/**
+ * Refreshes the cost-preview badge on a cell. Reads `cell.pending` and
+ * shows the cost the next firing would pay. Tier-0 cells (no fuel cost)
+ * stay hidden. Empty cells (no inputs filled yet) also stay hidden — the
+ * preview only appears once the player has begun loading the cell.
+ */
+export function updateCostBadge(cell: PlacedCell): void {
+  const badge = (cell.container as Container & { __costBadge?: Text }).__costBadge;
+  if (!badge) return;
+  // Only operand magnitudes drive cost — the fuel slot is the PAYMENT,
+  // not part of the operation (Slice 3.5.5). Inlined here (rather than
+  // calling world.ts's `operandPending`) to avoid a runtime import cycle:
+  // pixi/binary-cell → world → cell-types → pixi/binary-cell, which would
+  // try to read `BINARY_CELL_WIDTH` mid-init.
+  const operands = cell.pending.filter(
+    (_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel',
+  );
+  const cost = computationalCost(cell.type, operands);
+  if (cost === 0) {
+    badge.text = '';
+    badge.alpha = 0;
+    return;
+  }
+  // "fuel ≥ N" — the cell pays by consuming one block whose magnitude
+  // meets or exceeds this number (Slice 3.5.7). Overpayment is wasted,
+  // so the player wants matched denominations.
+  badge.text = `fuel ≥ ${cost}`;
+  badge.alpha = 0.65;
 }
 
 export function drawAdditionCell(x: number, y: number): Container {
@@ -108,19 +189,19 @@ export function drawSubtractionCell(x: number, y: number): Container {
 export function drawMultiplicationCell(x: number, y: number): Container {
   // `×` reads slightly larger than `+` at the same font-size; trim a few px
   // so the visual weight matches across the catalog.
-  return drawBinaryCell(x, y, { symbol: '×', symbolFontSize: 50 });
+  return drawBinaryCell(x, y, { symbol: '×', symbolFontSize: 50, hasFuelPort: true });
 }
 
 export function drawDivisionCell(x: number, y: number): Container {
   // `÷` (U+00F7) — the obelus reads at the same visual weight as `×` and `+`.
-  return drawBinaryCell(x, y, { symbol: '÷', symbolFontSize: 52 });
+  return drawBinaryCell(x, y, { symbol: '÷', symbolFontSize: 52, hasFuelPort: true });
 }
 
 export function drawExponentiationCell(x: number, y: number): Container {
   // `^` is rendered as a small superscript caret in most fonts — it floats
   // high and reads thin. Pump the font-size up and push it down so it sits
   // visually centered between the two ports.
-  return drawBinaryCell(x, y, { symbol: '^', symbolFontSize: 64, symbolYOffset: 12 });
+  return drawBinaryCell(x, y, { symbol: '^', symbolFontSize: 64, symbolYOffset: 12, hasFuelPort: true });
 }
 
 /**

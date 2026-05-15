@@ -24,6 +24,7 @@ import { BINARY_CELL_WIDTH } from './pixi/binary-cell';
 import { UNARY_CELL_WIDTH } from './pixi/unary-cell';
 import { WAREHOUSE_CELL_WIDTH } from './pixi/warehouse-cell';
 import { CULTIVATION_CELL_WIDTH } from './pixi/cultivation-cell';
+import { FILTER_CELL_WIDTH } from './pixi/filter-cell';
 import {
   VALUE_ONE,
   VALUE_ZERO,
@@ -53,6 +54,8 @@ export type CellType =
   | 'factor'
   | 'square-root'
   | 'warehouse'
+  | 'warehouse-rule'
+  | 'filter'
   | 'cultivation-arithmetic'
   | 'cultivation-geometric'
   | 'cultivation-fibonacci'
@@ -73,6 +76,14 @@ export interface CellInputPort {
   /** Half-extents of the port's axis-aligned hit-area. */
   halfWidth: number;
   halfHeight: number;
+  /**
+   * Operand by default; `'fuel'` for the optional fuel intake on tier-1+
+   * operators (Slice 3.5.5). Operands feed `operate()`; the fuel value is
+   * deliberately excluded from the operate input vector and from
+   * `computationalCost`, because the fuel block's magnitude is what's
+   * being PAID, not what the operator is computing on.
+   */
+  kind?: 'operand' | 'fuel';
 }
 
 export interface CellOutputPort {
@@ -105,6 +116,25 @@ const BINARY_PORT_HALF_W = 26;
 const BINARY_PORT_HALF_H = 20;
 const BINARY_OUTPUT_X = BINARY_CELL_WIDTH / 2 + 56;
 
+// Fuel port (Slice 3.5.5) — tier-1 cells get an extra small input socket
+// hanging off the bottom-centre. Sitting outside the main cell rect makes
+// it visually distinct from the operand ports and gives pipes from below
+// a natural docking line.
+const BINARY_HALF_H = 54; // = BINARY_CELL_HEIGHT / 2 (hand-rolled to keep
+// this expression a literal — importing the constant would bind it through
+// a runtime cycle).
+const BINARY_FUEL_PORT_OFFSET_Y = BINARY_HALF_H + 18;
+const BINARY_FUEL_PORT_HALF_W = 22;
+const BINARY_FUEL_PORT_HALF_H = 14;
+
+const BINARY_FUEL_INPUT = {
+  offsetX: 0,
+  offsetY: BINARY_FUEL_PORT_OFFSET_Y,
+  halfWidth: BINARY_FUEL_PORT_HALF_W,
+  halfHeight: BINARY_FUEL_PORT_HALF_H,
+  kind: 'fuel' as const,
+};
+
 // Unary cells (Decrement, Factor) — single drop-zone on the left.
 const UNARY_INPUT_X = -UNARY_CELL_WIDTH / 2 + 32;
 const UNARY_INPUT_HALF_W = 26;
@@ -135,6 +165,7 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
@@ -143,6 +174,7 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
@@ -150,6 +182,7 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
@@ -183,6 +216,39 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     ],
     // Output port: right side. Click here to withdraw a single block.
     // Pipes (Slice 3.2) will source from this position automatically.
+    outputs: [{ offsetX: WAREHOUSE_CELL_WIDTH / 2 + 32, offsetY: 0 }],
+  },
+  // Filter cell (Slice 5.2). One input on the left, two outputs on the
+  // right — top is "match", bottom is "no-match". The predicate label
+  // (set from the cell's ruleId) lives in the middle of the visual.
+  filter: {
+    inputs: [
+      {
+        offsetX: -FILTER_CELL_WIDTH / 2 + 32,
+        offsetY: 0,
+        halfWidth: 26,
+        halfHeight: 22,
+      },
+    ],
+    outputs: [
+      { offsetX: FILTER_CELL_WIDTH / 2 + 32, offsetY: -34 },
+      { offsetX: FILTER_CELL_WIDTH / 2 + 32, offsetY: 34 },
+    ],
+  },
+  // Rule-based warehouse (Slice 3.5.4). Same geometry as the typed warehouse
+  // — the player's interaction (deposit zone left, withdraw port right)
+  // doesn't change. The difference is internal: instead of locking to a
+  // single value on first deposit, the cell carries a predicate and
+  // accepts any block matching it (mixed contents).
+  'warehouse-rule': {
+    inputs: [
+      {
+        offsetX: -WAREHOUSE_CELL_WIDTH / 4,
+        offsetY: 0,
+        halfWidth: WAREHOUSE_CELL_WIDTH / 4 - 4,
+        halfHeight: 44,
+      },
+    ],
     outputs: [{ offsetX: WAREHOUSE_CELL_WIDTH / 2 + 32, offsetY: 0 }],
   },
   // Cultivation cells: single seed input, single emit output. The seed
@@ -339,9 +405,11 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
       return { emits: [{ portIndex: 0, value: valueSqrt(inputs[0]) }] };
     }
     case 'warehouse':
-      // Warehouses don't fire through operate(). Deposits and withdrawals
-      // are handled directly by the interaction layer; this branch exists
-      // only for exhaustiveness.
+    case 'warehouse-rule':
+    case 'filter':
+      // Warehouses and filters don't fire through operate(). Deposits,
+      // withdrawals, and predicate-routing are handled directly by the
+      // interaction layer; this branch exists only for exhaustiveness.
       return { emits: [] };
     case 'cultivation-arithmetic':
     case 'cultivation-geometric':
@@ -356,71 +424,13 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
   }
 }
 
-/**
- * Number of `1`s a cell consumes per firing — the **computational cost** of
- * the operation. Higher operators are honestly expensive: tetration alone
- * (Phase 5) will eat tens of ones every firing. For now the values follow
- * the DESIGN §6 ladder (small / medium / large / enormous):
- *
- *   - successor, addition  : 0
- *   - multiplication       : 1
- *   - exponentiation       : 3
- *   - decrement, factor    : 0 (decompose for free)
- *   - cultivation          : 0 (slow on purpose; cost would feel punitive)
- *   - warehouse            : 0 (no firing)
- *
- * Increase these in later phases when tetration arrives.
- */
-export function computationalCost(type: CellType): number {
-  switch (type) {
-    case 'multiplication':
-      return 1;
-    case 'division':
-      return 1;
-    case 'exponentiation':
-      return 3;
-    default:
-      return 0;
-  }
-}
+// Computational cost moved to `./cost.ts` in Slice 3.5.1 — see that module
+// for the magnitude-scaled formula. Re-exported from here so the existing
+// `import { computationalCost } from './cell-types'` call sites keep working.
+export { computationalCost } from './cost';
 
-/**
- * Returns the next value a cultivation cell should emit, given its seed and
- * how many times it has already emitted (`stepIndex`, 0-based). Pure.
- *
- *  - arithmetic:  s, s+1, s+2, s+3, …
- *  - geometric:   s, 2s, 4s, 8s, …
- *  - fibonacci:   s·F₁, s·F₂, s·F₃, … = s, s, 2s, 3s, 5s, 8s, …
- *
- * All arithmetic is Decimal-backed via the Value module, so geometric and
- * Fibonacci cultivation can climb past `Number.MAX_SAFE_INTEGER` without
- * overflow — a critical fix for the 4.0 break_eternity wiring.
- */
-export function cultivationEmit(
-  type: CellType,
-  seed: Value,
-  stepIndex: number,
-): Value {
-  switch (type) {
-    case 'cultivation-arithmetic':
-      return valueAdd(seed, valueOf(stepIndex));
-    case 'cultivation-geometric':
-      return valueMul(seed, valuePow(valueOf(2), valueOf(stepIndex)));
-    case 'cultivation-fibonacci': {
-      // Compute F_(stepIndex+1) iteratively in Decimal space. Cheap; the
-      // step count is bounded by however many times the cell has emitted.
-      let a: Value = VALUE_ONE;
-      let b: Value = VALUE_ONE;
-      for (let i = 0; i < stepIndex; i++) {
-        const c = valueAdd(a, b);
-        a = b;
-        b = c;
-      }
-      return valueMul(seed, a);
-    }
-    default:
-      // Non-cultivation types shouldn't reach here, but a zero result is
-      // the least-surprising fallback.
-      return VALUE_ZERO;
-  }
-}
+// `cultivationEmit` moved to `./cost.ts` in Slice 3.5.6 so the renderer's
+// next-emission preview can import it without threading a runtime cycle
+// (pixi/cultivation-cell → cell-types → pixi/cultivation-cell). Re-exported
+// from here so existing imports stay valid.
+export { cultivationEmit } from './cost';

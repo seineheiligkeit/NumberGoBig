@@ -79,26 +79,72 @@ export function drawPipe(
   let _mag = magnitude;
   let _jammed = false;
   let _destroyed = false;
+  // The current curve sampling — rebuilt on every render, reused by
+  // pulse animation and hit-tests so they trace the same path the
+  // player sees on screen.
+  let _waypoints: { x: number; y: number }[] = [];
+
+  /**
+   * Builds a cubic bezier from src to dst with orientation-aware control
+   * points (Slice 5.8). When the endpoints are mostly aligned horizontally
+   * the curve flows like a horizontal flow-chart connector; vertically-
+   * aligned pipes (notably tier-1 fuel ports) bow up-or-down naturally.
+   * Samples into a polyline so `pencilStrokeDouble` can wobble it like
+   * the straight pipes used to.
+   */
+  function buildWaypoints(): { x: number; y: number }[] {
+    const dx = _dst.x - _src.x;
+    const dy = _dst.y - _src.y;
+    const len = Math.hypot(dx, dy);
+    if (len === 0) return [{ ..._src }];
+
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    let c1: { x: number; y: number };
+    let c2: { x: number; y: number };
+    if (horizontal) {
+      const k = Math.sign(dx) * Math.max(40, Math.abs(dx) * 0.45);
+      c1 = { x: _src.x + k, y: _src.y };
+      c2 = { x: _dst.x - k, y: _dst.y };
+    } else {
+      const k = Math.sign(dy) * Math.max(40, Math.abs(dy) * 0.45);
+      c1 = { x: _src.x, y: _src.y + k };
+      c2 = { x: _dst.x, y: _dst.y - k };
+    }
+    const samples = Math.max(10, Math.min(40, Math.floor(len / 22)));
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= samples; i++) {
+      const t = i / samples;
+      const u = 1 - t;
+      const x =
+        u * u * u * _src.x +
+        3 * u * u * t * c1.x +
+        3 * u * t * t * c2.x +
+        t * t * t * _dst.x;
+      const y =
+        u * u * u * _src.y +
+        3 * u * u * t * c1.y +
+        3 * u * t * t * c2.y +
+        t * t * t * _dst.y;
+      pts.push({ x, y });
+    }
+    return pts;
+  }
 
   function render(): void {
     lineLayer.clear();
     decorLayer.clear();
-
-    const dx = _dst.x - _src.x;
-    const dy = _dst.y - _src.y;
-    const len = Math.hypot(dx, dy);
-    if (len === 0) {
+    _waypoints = buildWaypoints();
+    if (_waypoints.length < 2) {
       label.visible = false;
       return;
     }
-    const px = -dy / len;
-    const py = dx / len;
 
     const color = _jammed ? JAM_TINT : GRAPHITE;
     const w = Math.min(6, 1.4 + Math.log10(Math.max(1, _mag)) * 1.0);
     const alpha = _jammed ? 0.7 : 0.85;
 
-    // Endpoint dots into decorLayer's instruction buffer (no children).
+    // Endpoint dots — drawn at the actual curve endpoints (which equal
+    // src/dst by bezier definition).
     decorLayer
       .circle(_src.x, _src.y, 4 + w * 0.4)
       .fill({ color, alpha: 0.75 });
@@ -106,45 +152,61 @@ export function drawPipe(
       .circle(_dst.x, _dst.y, 4 + w * 0.4)
       .stroke({ color, width: 1.2, alpha: 0.8 });
 
-    // Primary pencil-wobbled line. For a jammed pipe we draw it dashed so
-    // the stall reads as "something's wrong" rather than a normal pause.
     if (_jammed) {
-      drawDashedPencil(lineLayer, _src, _dst, len, w, color, alpha);
+      drawDashedAlongWaypoints(lineLayer, _waypoints, w, color, alpha);
     } else {
-      pencilStrokeDouble(
-        lineLayer,
-        [{ x: _src.x, y: _src.y }, { x: _dst.x, y: _dst.y }],
-        { color, width: w, alpha, jitter: 0.9, segmentsPerUnit: 0.16 },
-      );
+      pencilStrokeDouble(lineLayer, _waypoints, {
+        color,
+        width: w,
+        alpha,
+        jitter: 0.9,
+        segmentsPerUnit: 0.16,
+      });
     }
 
-    // Cross-hatch ticks for higher magnitudes — draw straight into decorLayer.
+    // Cross-hatch ticks at evenly-spaced points along the CURVE. Each
+    // tick is perpendicular to the local tangent at its sample point.
     if (_mag >= 10) {
       const tickEvery = Math.max(18, 40 - Math.log10(_mag) * 6);
       const tickLen = 4 + Math.log10(_mag);
-      const tickCount = Math.floor(len / tickEvery);
+      const lengths = waypointArcLengths(_waypoints);
+      const total = lengths[lengths.length - 1];
+      const tickCount = Math.floor(total / tickEvery);
       for (let i = 1; i < tickCount; i++) {
-        const t = i / tickCount;
-        const cx = _src.x + dx * t;
-        const cy = _src.y + dy * t;
+        const target = (i / tickCount) * total;
+        const seg = sampleAtArcLength(_waypoints, lengths, target);
+        const dx = seg.tangent.x;
+        const dy = seg.tangent.y;
+        const tLen = Math.hypot(dx, dy);
+        if (tLen === 0) continue;
+        const px = -dy / tLen;
+        const py = dx / tLen;
         pencilStroke(
           decorLayer,
           [
-            { x: cx - px * tickLen, y: cy - py * tickLen },
-            { x: cx + px * tickLen, y: cy + py * tickLen },
+            { x: seg.x - px * tickLen, y: seg.y - py * tickLen },
+            { x: seg.x + px * tickLen, y: seg.y + py * tickLen },
           ],
           { color, width: 0.9, alpha: 0.55, jitter: 0.3, segmentsPerUnit: 0.2 },
         );
       }
     }
 
-    // Reposition magnitude label near the midpoint. The label stays graphite
-    // regardless of jam state — the dashed line is the jam signal.
+    // Magnitude label at the curve's midpoint, offset perpendicular to
+    // the local tangent so it sits cleanly above the line.
+    const lengths = waypointArcLengths(_waypoints);
+    const total = lengths[lengths.length - 1];
+    const mid = sampleAtArcLength(_waypoints, lengths, total * 0.5);
+    const tx = mid.tangent.x;
+    const ty = mid.tangent.y;
+    const tLen = Math.hypot(tx, ty);
+    const px = tLen === 0 ? 0 : -ty / tLen;
+    const py = tLen === 0 ? -1 : tx / tLen;
     label.visible = true;
     label.text = `≤${_mag}`;
-    label.x = _src.x + dx * 0.5 + px * 10;
-    label.y = _src.y + dy * 0.5 + py * 10;
-    let rot = Math.atan2(dy, dx);
+    label.x = mid.x + px * 10;
+    label.y = mid.y + py * 10;
+    let rot = Math.atan2(ty, tx);
     if (rot > Math.PI / 2 || rot < -Math.PI / 2) rot += Math.PI;
     label.rotation = rot;
   }
@@ -176,8 +238,13 @@ export function drawPipe(
       }
       const elapsed = performance.now() - start;
       const t = Math.min(1, elapsed / durationMs);
-      pulseText.x = _src.x + (_dst.x - _src.x) * t;
-      pulseText.y = _src.y + (_dst.y - _src.y) * t;
+      // Walk along the curve by arc length so the pulse moves at a
+      // visually-constant speed rather than skipping through the bends.
+      const lengths = waypointArcLengths(_waypoints);
+      const total = lengths[lengths.length - 1] || 1;
+      const pt = sampleAtArcLength(_waypoints, lengths, total * t);
+      pulseText.x = pt.x;
+      pulseText.y = pt.y;
       pulseText.alpha = Math.sin(t * Math.PI) * 0.9;
       if (t < 1) {
         requestAnimationFrame(step);
@@ -190,15 +257,22 @@ export function drawPipe(
   }
 
   function hitTest(px2: number, py2: number, tolerance = 8): boolean {
-    // Distance from point to the pipe segment in container-local coords.
-    const dx = _dst.x - _src.x;
-    const dy = _dst.y - _src.y;
-    const len2 = dx * dx + dy * dy;
-    if (len2 === 0) return Math.hypot(px2 - _src.x, py2 - _src.y) <= tolerance;
-    const t = Math.max(0, Math.min(1, ((px2 - _src.x) * dx + (py2 - _src.y) * dy) / len2));
-    const cx = _src.x + dx * t;
-    const cy = _src.y + dy * t;
-    return Math.hypot(px2 - cx, py2 - cy) <= tolerance;
+    // Distance from point to the polyline. Cheapest correct test for a
+    // sampled curve — segment-distance per pair.
+    if (_waypoints.length < 2) return false;
+    for (let i = 0; i < _waypoints.length - 1; i++) {
+      const a = _waypoints[i];
+      const b = _waypoints[i + 1];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy;
+      if (len2 === 0) continue;
+      const t = Math.max(0, Math.min(1, ((px2 - a.x) * dx + (py2 - a.y) * dy) / len2));
+      const cx = a.x + dx * t;
+      const cy = a.y + dy * t;
+      if (Math.hypot(px2 - cx, py2 - cy) <= tolerance) return true;
+    }
+    return false;
   }
 
   return {
@@ -222,34 +296,91 @@ export function drawPipe(
 }
 
 /**
- * Draws a dashed pencil line — used for jammed pipes. The dash pattern is
- * jittered like a real pencil's broken strokes; cheaper than calling
- * pencilStroke per dash because we draw straight into the target Graphics.
+ * Cumulative arc-length at each waypoint. `out[i]` is the total length
+ * from `waypoints[0]` through `waypoints[i]`, so `out[last]` is the
+ * pipe's total drawn length.
  */
-function drawDashedPencil(
+function waypointArcLengths(waypoints: { x: number; y: number }[]): number[] {
+  const out: number[] = [0];
+  for (let i = 1; i < waypoints.length; i++) {
+    const a = waypoints[i - 1];
+    const b = waypoints[i];
+    out.push(out[i - 1] + Math.hypot(b.x - a.x, b.y - a.y));
+  }
+  return out;
+}
+
+/**
+ * Returns the (x, y) at the given arc-length along the polyline, plus
+ * the local tangent (b - a for the segment that contains it). Used for
+ * positioning the magnitude label and the transit pulse.
+ */
+function sampleAtArcLength(
+  waypoints: { x: number; y: number }[],
+  lengths: number[],
+  s: number,
+): { x: number; y: number; tangent: { x: number; y: number } } {
+  if (waypoints.length === 0) return { x: 0, y: 0, tangent: { x: 1, y: 0 } };
+  if (waypoints.length === 1) return { ...waypoints[0], tangent: { x: 1, y: 0 } };
+  const total = lengths[lengths.length - 1];
+  if (s <= 0) {
+    const a = waypoints[0];
+    const b = waypoints[1];
+    return { x: a.x, y: a.y, tangent: { x: b.x - a.x, y: b.y - a.y } };
+  }
+  if (s >= total) {
+    const a = waypoints[waypoints.length - 2];
+    const b = waypoints[waypoints.length - 1];
+    return { x: b.x, y: b.y, tangent: { x: b.x - a.x, y: b.y - a.y } };
+  }
+  for (let i = 1; i < lengths.length; i++) {
+    if (lengths[i] >= s) {
+      const a = waypoints[i - 1];
+      const b = waypoints[i];
+      const segLen = lengths[i] - lengths[i - 1];
+      const t = segLen === 0 ? 0 : (s - lengths[i - 1]) / segLen;
+      return {
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        tangent: { x: b.x - a.x, y: b.y - a.y },
+      };
+    }
+  }
+  const a = waypoints[waypoints.length - 2];
+  const b = waypoints[waypoints.length - 1];
+  return { x: b.x, y: b.y, tangent: { x: b.x - a.x, y: b.y - a.y } };
+}
+
+/**
+ * Walks the polyline emitting pencil-wobbled dashes by arc-length —
+ * used for jammed pipes. Generalises the old straight-line dash logic
+ * to curves so a stalled pipe still reads "broken" along its bends.
+ */
+function drawDashedAlongWaypoints(
   g: Graphics,
-  src: { x: number; y: number },
-  dst: { x: number; y: number },
-  len: number,
+  waypoints: { x: number; y: number }[],
   width: number,
   color: number,
   alpha: number,
 ): void {
+  if (waypoints.length < 2) return;
   const dashLen = 9;
   const gapLen = 6;
-  const ux = (dst.x - src.x) / len;
-  const uy = (dst.y - src.y) / len;
-  let traversed = 0;
-  while (traversed < len) {
-    const segEnd = Math.min(traversed + dashLen, len);
+  const lengths = waypointArcLengths(waypoints);
+  const total = lengths[lengths.length - 1];
+  let s = 0;
+  while (s < total) {
+    const e = Math.min(s + dashLen, total);
+    const a = sampleAtArcLength(waypoints, lengths, s);
+    const b = sampleAtArcLength(waypoints, lengths, e);
     pencilStroke(
       g,
       [
-        { x: src.x + ux * traversed, y: src.y + uy * traversed },
-        { x: src.x + ux * segEnd, y: src.y + uy * segEnd },
+        { x: a.x, y: a.y },
+        { x: b.x, y: b.y },
       ],
       { color, width, alpha, jitter: 0.6, segmentsPerUnit: 0.18 },
     );
-    traversed = segEnd + gapLen;
+    s = e + gapLen;
   }
 }

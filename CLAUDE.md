@@ -17,23 +17,43 @@ changes.
 
 ## Current state
 
-**Phases 1 and 2 are complete.** Phase 1: manual construction of any
-natural number via Successor / Addition / Multiplication / Exponentiation
-plus decomposition (Decrement, Factor); Theorem milestones; repeatable
-Literature with scaling costs; localStorage autosave. Phase 2: the factory.
-Pan-and-zoom canvas; typed warehouses with capacity; magnitude-rated
-pipes with a tick-driven simulation; three cultivation cells
-(arithmetic / geometric / Fibonacci) for seed-driven streams;
-computational cost on multiplication (1 one) and exponentiation (3 ones);
-cleanup bots that sweep loose blocks into matching warehouses;
-Comprehension cap (default 10, upgradeable via Literature) gating manual
-lifts on large numbers. Save schema v2. See `ROADMAP.md` §1 for
-slice-by-slice notes.
+**Phases 1, 2, 3, 3.5, and 4 are complete.** Phase 1: manual construction of
+any natural number via Successor / Addition / Multiplication /
+Exponentiation plus decomposition (Decrement, Factor); Theorem
+milestones; repeatable Literature with scaling costs; localStorage
+autosave. Phase 2: the factory — pan/zoom canvas, typed warehouses,
+magnitude-rated pipes, three cultivation cells, computational cost,
+cleanup bots, Comprehension cap. Phase 3: number families — negatives,
+rationals (`{num, den}`), irrationals (`{symbol, approx}`), complex
+(`{re, im}`); the `Value` discriminated union backed by
+`break_eternity.js` `Decimal`; family colour polish. Phase 3.5: the fuel economy — magnitude-scaled cost
+(`tier · max(1, ⌈log₁₀(max)⌉)`), warehouse contents fold into Total
+Score AND the Literature affordability pool, fuel paid as one block
+≥ cost (over-payment wasted, under-payment rejected), generalized
+warehouses with predicates (`<10`, `<100`, `<1000`, `prime`,
+`composite`), tier-1 operators (×, ÷, ^) gain an optional fuel input
+port with global fallback when unwired, and cultivation cells pay per
+emission so geometric chains self-throttle. Phase 4:
+discovery & engineering — Number Gallery (Integers grid / Primes /
+Perfects / Famous tabs, driven by the `discoveredValues` store);
+predicate-based Filter cells (one input, two outputs, sharing the
+predicate catalog with `warehouse-rule`); predicate-cost Literature
+entries (e.g. "10 primes", "5 primes ≥ 100"); and Blueprints v1 —
+named layouts that capture a subgraph by rectangle-drag and stamp
+copies wholesale (no packed-cell semantics yet; copies appear as raw
+cells, persisted to their own `numbers-go-big.blueprints` localStorage
+key so they survive `clearStorage()`). Plus the Phase 4 UX polish pass
+(most recent): cells are draggable (click on the body to move, pipes
+follow); all output spawn sites share a `spawn.ts` `planSpawnAtPort`
+helper that back-pressures cells when their fan is full (12 unique
+slots of 40 px each); pipes render as orientation-aware cubic bezier
+curves with arc-length-driven label/pulse/hit-test; pan/zoom polished
+(5% wheel step, grab cursor while panning). Save schema v11. See
+`ROADMAP.md` §1 for slice-by-slice notes.
 
-**Next:** Phase 3 — number families (subtraction → negatives, division →
-rationals, roots → irrationals, complex). Plus the cross-cutting
-`break_eternity.js` integration once outputs cross `Number.MAX_SAFE_INTEGER`
-through stacked geometric cultivation or exponentiation chains.
+**Next:** Phase 5 — The Long Arc. Tetration / pentation / arrow
+notation, magnitude-ladder rendering tiers, prestige + Ancestral
+Numbers shelf, ordinals + surreals, named giants (Graham, TREE(3), …).
 
 ## Tech stack
 
@@ -54,23 +74,53 @@ src/
 │   ├── world.ts               Pure data model — PlacedBlock, PlacedCell, PlacedPipe
 │   │                          registries; reactive Svelte stores (totalScore,
 │   │                          zeroCount, countByValue, achievements, unlocks,
-│   │                          purchaseCounts, comprehension, dirtyTick);
-│   │                          snapshot/reset/restore mutators for persistence
-│   ├── cell-types.ts          CellType union, CELL_SHAPES (multi-port outputs),
-│   │                          operate() → { emits, marginalia? }, cultivationEmit(),
-│   │                          computationalCost()
+│   │                          purchaseCounts, comprehension, dirtyTick).
+│   │                          spendValue / spendFuel scan loose + warehouses +
+│   │                          warehouse-rule items (Slice 3.5.3/7); recompute
+│   │                          folds warehouse contents into both Total Score and
+│   │                          countByValue. Fuel helpers (operandPending,
+│   │                          operandsFilled, fuelPortIndex, hasFuelPipeAttached,
+│   │                          consumeFuelOrFail) used by the two fire paths.
+│   │                          Snapshot/reset/restore mutators for persistence
+│   ├── cell-types.ts          CellType union, CELL_SHAPES (multi-port outputs,
+│   │                          with `kind: 'operand'|'fuel'` on inputs since 3.5.5),
+│   │                          operate() → { emits, marginalia? }. Cost &
+│   │                          cultivation math re-exported from `./cost`.
+│   ├── cost.ts                Pure math: magnitude-scaled computationalCost,
+│   │                          cultivationEmit, cultivationEmissionCost. Lives
+│   │                          outside cell-types so renderers (binary-cell,
+│   │                          cultivation-cell) can import the formulas without
+│   │                          threading a runtime cycle back through cell-types
+│   ├── warehouse-rules.ts     WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
+│   │                          `prime`, `composite`) + getWarehouseRule. Same
+│   │                          predicate vocabulary Filters and predicate-cost
+│   │                          Literature entries use.
+│   ├── classify.ts            Gallery-side classifiers — isPrime, isPerfect,
+│   │                          FAMOUS_NUMBERS catalog, integerFromKey.
+│   ├── filter.ts              routeViaFilter — Filter cells' route path,
+│   │                          mirroring the warehouse polymorphism pattern.
+│   ├── blueprints.ts          Blueprint data model + reactive store. Captures
+│   │                          a subgraph (cells + interior pipes) into a
+│   │                          BlueprintDef. Persists in its own localStorage
+│   │                          key (`numbers-go-big.blueprints`).
+│   ├── spawn.ts               Shared output-spawn helpers. `planSpawnAtPort`
+│   │                          decides where an emission lands (merge / new
+│   │                          / 'clogged'); `commitSpawn` materialises it.
+│   │                          Every fire path uses these — cultivation,
+│   │                          operators, filters — so back-pressure is
+│   │                          uniform across the canvas.
 │   ├── literature.ts          Shop catalog (cell / theorem / comprehension / pipe
 │   │                          kinds) + purchase() + multi-item cost + currentCost
 │   │                          geometric scaling + canAfford
 │   ├── marginalia.ts          Narrator-note store + showMarginalia (key-dedup);
 │   │                          snapshot/restoreSeenMarginalia for persistence
-│   ├── persistence.ts         Versioned SaveData (v4) — blocks, cells (with
-│   │                          warehouse/cultivation/bot state), pipes (with
-│   │                          cooldownRemaining), achievements, unlocks,
-│   │                          purchaseCounts, seenMarginalia, camera,
-│   │                          comprehension. Debounced autosave +
+│   ├── persistence.ts         Versioned SaveData (v10) — blocks, cells (with
+│   │                          warehouse/rule-warehouse/cultivation/bot state),
+│   │                          pipes (with cooldownRemaining), achievements,
+│   │                          unlocks, purchaseCounts, seenMarginalia, camera,
+│   │                          comprehension, discoveries. Debounced autosave +
 │   │                          beforeunload. Structural typeguard on load.
-│   │                          v1→v4 migration chain
+│   │                          v1→v10 migration chain
 │   ├── camera.ts              Pan (mid-mouse / right-mouse drag) + zoom (wheel to
 │   │                          cursor). screenToCanvas helper drives every
 │   │                          hit-test in the interaction layer
@@ -97,16 +147,24 @@ src/
 │       ├── block.ts           drawBlock + updateStackBadge + applyComprehensionStyle
 │       ├── river.ts           500-zero parallax flow, interactive
 │       ├── successor-cell.ts  Unary { } visual
-│       ├── binary-cell.ts     Shared visual for +, ×, ^ cells
+│       ├── binary-cell.ts     Shared visual for +, −, ×, ÷, ^ cells. Mul/div/exp
+│       │                      get a fuel-port socket below; cost-preview badge
+│       │                      `fuel ≥ N` updates on every pending change.
 │       ├── unary-cell.ts      Shared visual for Decrement / Factor cells
-│       ├── warehouse-cell.ts  Warehouse visual + updateWarehouseBadge
-│       ├── cultivation-cell.ts Cultivation cell visual + updateCultivationBadge
+│       ├── warehouse-cell.ts  Warehouse visual (typed + rule-based) +
+│       │                      updateWarehouseBadge. Rule label baked into the
+│       │                      centre glyph at construction.
+│       ├── cultivation-cell.ts Cultivation cell visual + updateCultivationBadge.
+│       │                      Badge shows `seed: V` and `next ≥ N` (next-emission
+│       │                      cost, Slice 3.5.6).
 │       ├── cleanup-bot.ts     Bot visual + sweep pulse helper
 │       └── pipe-visual.ts     Magnitude-weighted pencil pipe + transit pulse +
 │                              setJammed dashed-red state + destroy hook
 └── ui/
     ├── ScoreHeader.svelte     Σ counter (top-right)
-    ├── Literature.svelte      Slide-in shop sidebar
+    ├── Literature.svelte      Slide-in shop sidebar (right)
+    ├── Gallery.svelte         Phase 4 Pokédex panel (top-left toggle)
+    ├── Blueprints.svelte      Blueprint library panel (top-left, next to Gallery)
     └── Marginalia.svelte      Left-margin narrator notes
 ```
 
@@ -153,17 +211,35 @@ src/
 ## Adding a new equation cell (recipe)
 
 1. Add the type to `CellType` in `cell-types.ts`.
-2. Add a `CELL_SHAPES` entry (port positions, output offset).
-3. Add an `operate()` case.
+2. Add a `CELL_SHAPES` entry (port positions, output offset). Mark fuel
+   ports with `kind: 'fuel'`; operand ports leave it unset (the default).
+3. Add an `operate()` case (operate sees ONLY operand values — fuel slots
+   are filtered upstream via `operandPending`).
 4. Add a `draw<X>Cell` in `binary-cell.ts` (binary) or a new file (unary).
 5. Add `drawCellByType` and `placementMarginalia` cases in
    `interaction.ts`.
 6. Add a Literature entry in `literature.ts`.
-7. If it has computational cost, add a `computationalCost()` case.
+7. If it has computational cost, extend `costTier` in `cost.ts`. The
+   formula `tier · max(1, ⌈log₁₀(max(|a|, |b|))⌉)` runs automatically;
+   the fire path consumes the cost via `consumeFuelOrFail`.
 8. If it needs persistent state (warehouse-style), add fields to
    `PlacedCell`, snapshot in `snapshotCells`, restore in `rehydrateCell`.
 
 The TypeScript exhaustive-switch will tell you what's left to wire.
+
+**Avoiding cell-types ↔ pixi/* runtime cycles.** `cell-types.ts` uses
+`*_CELL_WIDTH` constants from each `pixi/*-cell.ts` at module init. Any
+runtime import from a `pixi/*-cell.ts` back to `world.ts` (which itself
+imports from `cell-types.ts`) will TDZ-crash on `BINARY_CELL_WIDTH` /
+`WAREHOUSE_CELL_WIDTH` / `CULTIVATION_CELL_WIDTH`. The rules:
+
+- Pixi cell files may import from `cost.ts` (pure math, type-only
+  `CellType`) freely.
+- Pixi cell files must import `PlacedCell` from `world.ts` as
+  `import type`, never as a runtime value.
+- If you need a `world.ts` helper inside a pixi/cell file, inline it
+  there — see how `binary-cell.ts` filters operands and
+  `warehouse-cell.ts` totals rule items.
 
 ## Build verification before committing a slice
 

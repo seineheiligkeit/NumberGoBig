@@ -14,6 +14,7 @@ import {
 } from '../world';
 import { showMarginalia } from '../marginalia';
 import { installAutosave, loadFromStorage, restoreFromSave } from '../persistence';
+import { loadBlueprintsFromStorage } from '../blueprints';
 import { onCameraChange, setupCamera } from '../camera';
 import { tickEquationCells, tickPipes } from '../pipe';
 import { tickCultivation } from '../cultivation';
@@ -108,6 +109,9 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // instead of the empty world.
   const saved = loadFromStorage();
   if (saved) restoreFromSave(drag, saved);
+  // Blueprints live in their own localStorage key (Slice 5.4) so they
+  // survive `clearStorage()` and aren't tangled with the world schema.
+  loadBlueprintsFromStorage();
 
   // Layer 3: river
   const river = setupRiver(app, {
@@ -156,12 +160,20 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   };
   app.ticker.add((ticker) => advance(ticker.deltaMS));
 
-  // Dev-only: expose a manual driver so headless preview tooling (where
-  // requestAnimationFrame doesn't fire) can advance the simulation. Has
-  // no effect in production builds — Vite tree-shakes the dead branch.
+  // Dev-only: expose the manual driver + the live world module so headless
+  // preview tooling can drive the simulation and inspect runtime state
+  // (cells, blocks, badge text). Stripped from production builds.
   if (import.meta.env.DEV) {
-    (window as unknown as { __nbgAdvance: (dt: number) => void }).__nbgAdvance =
-      advance;
+    const win = window as unknown as {
+      __nbgAdvance: (dt: number) => void;
+      __nbgWorld: typeof import('../world');
+      __nbgController: typeof drag;
+    };
+    win.__nbgAdvance = advance;
+    win.__nbgController = drag;
+    import('../world').then((w) => {
+      win.__nbgWorld = w;
+    });
   }
 
   // (Unlock marginalia is fired by literature.ts inside purchase().)

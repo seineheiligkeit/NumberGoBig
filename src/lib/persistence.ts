@@ -59,10 +59,17 @@ import { valueRestore, type ValueSnapshot } from './value';
  * player has ever produced, foundation for the Phase 4 Gallery. v8 saves
  * have no record; the migration best-effort-seeds discoveries from the
  * currently-present blocks (the historical set before the upgrade is lost).
+ *
+ * **v10 — Slice 3.5.4**: adds optional `ruleWarehouseState` on cell
+ * snapshots for the new `warehouse-rule` cell type. v9 saves have no
+ * rule-warehouses, so the migration is version-only.
+ *
+ * **v11 — Slice 5.2**: adds optional `filterState` on cell snapshots for
+ * the new `filter` cell type. v10 saves have no filters; version-only bump.
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 9;
+const SAVE_VERSION = 11;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -210,6 +217,13 @@ export function loadFromStorage(): SaveData | null {
       }
       return { ...data, version: SAVE_VERSION, discoveries: [...seeded] };
     }
+    // v9 → v10: ruleWarehouseState added as an optional field on cell
+    // snapshots. v9 saves have no warehouse-rule cells, so nothing to do
+    // beyond bumping the version.
+    // v10 → v11: filterState added similarly. Same treatment.
+    if (parsed.version === 9 || parsed.version === 10) {
+      return { ...(parsed as SaveData), version: SAVE_VERSION };
+    }
     console.warn(
       `Save version mismatch: got ${parsed.version}, expected ${SAVE_VERSION}. Ignoring save.`,
     );
@@ -346,6 +360,17 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
           }
         : undefined,
       cell.botState,
+      cell.ruleWarehouseState
+        ? {
+            ruleId: cell.ruleWarehouseState.ruleId,
+            items: cell.ruleWarehouseState.items.map((it) => ({
+              value: valueRestore(it.value),
+              count: it.count,
+            })),
+            capacity: cell.ruleWarehouseState.capacity,
+          }
+        : undefined,
+      cell.filterState ? { ruleId: cell.filterState.ruleId } : undefined,
     );
   }
   for (const block of data.blocks) {

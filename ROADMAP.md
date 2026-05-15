@@ -7,14 +7,27 @@ north star is `DESIGN.md`. This file is the execution plan.
 
 ## 1. Where we are
 
-**Phase 2 is complete, plus a polish pass.** The factory runs without
+**Phases 1, 2, 3, 3.5, 4, and the Phase 4 UX polish pass are complete.** The factory runs without
 constant clicking: the canvas pans and zooms; warehouses store typed
 stacks at capacity; magnitude-rated pipes carry blocks automatically
 between cells; three cultivation cells (arithmetic, geometric, Fibonacci)
 generate streams from a single seed; multiplication and exponentiation
-cost ones per firing (a tick retries blocked cells once ones become
+pay fuel per firing (a tick retries blocked cells once fuel becomes
 available); cleanup bots sweep loose blocks into matching warehouses;
 and a Comprehension cap gates manual lifts so big numbers must be earned.
+The number families are admitted: subtraction yields negatives, division
+yields exact rationals, roots yield irrationals and complex via `√(-1)`.
+The fuel economy is in place: magnitude-scaled costs, warehouses as a
+real currency reservoir, rule-based warehouses with predicate catalogs
+(`<10`, `<100`, `<1000`, `prime`, `composite`), an optional fuel port
+on tier-1 operators, and cultivation cells that self-throttle as
+emissions climb. Plus Phase 4 discovery & engineering: the Number
+Gallery (Integers / Primes / Perfects / Famous tabs); Filter cells
+sharing the warehouse-rule predicate catalog; predicate-cost Literature
+entries ("10 primes", "5 primes ≥ 100"); and Blueprints v1 — rectangle-
+drag selection captures a subgraph as a named layout, stamped copies
+appear on the canvas as raw cells (no packed-cell unwrap semantics
+yet). Save schema v11; blueprints in their own localStorage key.
 
 A subsequent review pass closed real bugs (pipes can now deliver seeds to
 cultivation cells; cooldown-remaining is preserved across save/load;
@@ -348,17 +361,22 @@ Five phases, roughly in dependency order. Each phase is a series of small slices
 
 This phase lands BEFORE Phase 4 because Phase 4's Filters and special-currency Literature entries lean heavily on warehouses-as-resources. Doing the fuel economy first means Filters become "filters but for routing" rather than introducing the concept fresh.
 
-| Slice | Content |
-|---|---|
-| **3.5.1** | `computationalCost(type, inputs)` returns `tier · ⌈log₁₀(max(\|a\|, \|b\|) + 1)⌉`. Tier table: successor/addition 0; mul/div 1; exp 2; tetration 4; pentation 8. Cost preview badge on every cost-bearing cell, recomputed when inputs change. |
-| **3.5.2** | Total Score includes warehouse contents and in-transit pipe items. `recompute()` scans warehouses + pipes; per-block contribution is `count × magnitude`. |
-| **3.5.3** | `spendValue` extends to scan warehouse contents (smallest-block-first within rule). Loose-blocks-only is no longer special — one fuel pool, one search order. |
-| **3.5.4** | Generalized Warehouse cell (`warehouse-rule`). One predicate per warehouse from a starter catalog: `<10`, `<100`, `<1000`, `prime`, `composite`. Predicate picked on placement via a small dropdown. The classic typed warehouse stays — generalised warehouses unlock as a Literature upgrade. |
-| **3.5.5** | Tier-1 operators (mul, div, exp) gain an **optional fuel input port**. If a pipe is wired to it, the cell pulls fuel exclusively from that source (warehouse or loose). If not, fall back to the global scan from 3.5.3 — preserves existing factories. |
-| **3.5.6** | Cultivation cost: each emission costs `⌈log₁₀(emission + 1)⌉` magnitude. Cell visual shows the *next* emission's cost. Cultivators stall when fuel runs out, exactly like cost-blocked equation cells. |
-| **3.5.7** | Fuel paid in **magnitude per block, not split across blocks**. The cell consumes one block whose value ≥ cost; over-payment is wasted. Players learn to keep matched denominations. |
+| Slice | Content | Status |
+|---|---|---|
+| **3.5.1** | `computationalCost(type, inputs)` returns `tier · max(1, ⌈log₁₀(max(\|a\|, \|b\|))⌉)`. Tier table: successor/addition/subtraction 0; mul/div 1; exp 2; tetration 4; pentation 8. Cost preview badge `fuel ≥ N` on every cost-bearing cell, recomputed on every pending change. | ✅ done |
+| **3.5.2** | Total Score includes warehouse contents. `recompute()` scans warehouses and folds their contents into both Total Score and `countByValue`. In-transit pipe items aren't summed (the simulation transfers atomically — no persistent in-flight state to scan). | ✅ done |
+| **3.5.3** | `spendValue` extends to scan warehouse contents AND rule-warehouse items. Loose pool drains first, then typed warehouses, then rule warehouses. One spend path, one search order. | ✅ done |
+| **3.5.4** | Generalized Warehouse cell (`warehouse-rule`). Starter catalog of predicates: `<10`, `<100`, `<1000`, `prime`, `composite`. One Literature entry per rule (the picker-on-placement idea was simpler to express as separate entries — the predicate vocabulary is shared with Filters in Phase 4). Save schema bumps to v10. | ✅ done |
+| **3.5.5** | Tier-1 operators (mul, div, exp) gain an **optional fuel input port**. If a pipe is wired to it OR the player manually drops a fuel block there, the cell uses slot fuel; otherwise it falls back to the global scan from 3.5.3. Slot fuel below cost stays parked (under-payment rejected, symmetric to over-payment wasted). | ✅ done |
+| **3.5.6** | Per-emission cultivation cost: `max(1, ⌈log₁₀(\|emission\|)⌉)`. Cell badge shows the next emission's `next ≥ N`. Starved cells stall — cooldown doesn't reset, step doesn't advance — until fuel reappears. Geometric chains self-throttle. | ✅ done |
+| **3.5.7** | Fuel paid in **magnitude per block**. `spendFuel(cost)` picks the smallest qualifying block from loose / typed / rule pools so over-payment is minimised but never split across multiple small blocks. Bundled with 3.5.3 since both touched the same spend path. | ✅ done |
 
-**Deliverable:** The mid-game becomes a real resource economy. Players can't run cultivators 24/7 — they have to choose which to fuel. Warehouses are storage AND currency AND fuel tanks. Decomposition (Decrement, Factor) is no longer narrator-only — the fuel returned has real strategic value. Total Score reflects everything the player owns, not just the loose pile.
+**Deliverable achieved:** The mid-game IS a real resource economy. Cultivators self-throttle on cost; warehouses are storage AND currency AND fuel tanks; decomposition (Decrement, Factor) has real strategic value (small denominations to fuel cheap operations); Total Score reflects everything the player owns, not just the loose pile.
+
+**Architectural notes (post-build):**
+- The `cost.ts` module pulled all the cost formulas + `cultivationEmit` out of `cell-types.ts` to break a runtime cycle with the pixi-side cost-preview badges. `cell-types.ts` re-exports them for callers that don't need to thread that cycle.
+- `consumeFuelOrFail(cell, cost)` is the single source of truth for the fuel-resolution decision tree (slot → wait-for-pipe → global pool). Both fire paths call it.
+- Predicate vocabulary in `warehouse-rules.ts` is intentionally shaped to power Phase 4 Filter cells without additional design work.
 
 **Architectural notes:**
 - **`computationalCost` becomes input-aware.** Existing call sites pass cell type only; they'll need the cell's pending input values. The fire path already has those; the retry path (`tickEquationCells`) needs to recompute on each retry.
@@ -369,15 +387,33 @@ This phase lands BEFORE Phase 4 because Phase 4's Filters and special-currency L
 ### Phase 4: Discovery and Engineering
 **Goal:** deep strategy. The game is genuinely a math-engineering puzzle.
 
-| Slice | Content |
-|---|---|
-| **5.1** | Number Gallery (Pokédex — integers grid, primes tab, perfects, famous numbers, …) |
-| **5.2** | Filter cells (primality, magnitude threshold, family, divisibility, composite filters) |
-| **5.3** | Special-number currencies in Literature (primes, perfects, twin primes, Mersennes) |
-| **5.4** | Blueprints — abstract a subgraph into a single immutable named template |
-| **5.5** | Blueprint library UI + unwrap semantics (open instance → dissolves into raw cells) |
+| Slice | Content | Status |
+|---|---|---|
+| **5.1** | Number Gallery — toggleable panel with Integers (0-99 grid + overflow list), Primes, Perfects, Famous tabs. Driven by the existing `discoveredValues` store; famous integers get a yellow-highlighter tint. | ✅ done |
+| **5.2** | Filter cells — one input, two outputs (match top, no-match bottom). Reuses the warehouse-rule predicate catalog so `filter: prime` and `wh: prime` agree on which values pass. Lives outside `operate()` on its own route path. | ✅ done |
+| **5.3** | Predicate-cost Literature — `LiteratureCostItem` extended with `{ruleId, count, magnitudeMin?}` variant. `canAfford` and `purchase` route to `countMatching`/`spendMatching` which walk loose + warehouses + rule-warehouses. Three showpiece Theorems land ("Box of Primes", "Box of Bigger Primes", "Crate of Composites"). | ✅ done |
+| **5.4** | Blueprints v1 (data + capture) — rectangle-drag selection mode; subgraph captured as a BlueprintDef (cells + interior pipes, coords anchored at the bounding-box top-left). Stored in `numbers-go-big.blueprints` localStorage key, independent of the main world save. | ✅ done |
+| **5.5** | Blueprint library UI + stamp placement — toggleable panel listing saved blueprints. Click a blueprint → ghost preview at cursor → click to stamp. Stamping creates fresh cells + interior pipes (no packed-cell semantics; copies appear as raw cells). | ✅ done |
 
-**Deliverable:** Literature entries can now demand "400 primes greater than 10⁶" — and the player has the tools to design a factory that produces them. Blueprints make abstraction central. The Gallery's slow fill is its own long-arc reward.
+**Deliverable achieved:** Literature can now demand predicate-defined currencies, and the player has both Filters and rule-warehouses to design factories that produce them. The Gallery records every value ever produced. Blueprints let layouts be saved and reused.
+
+**Deferred to a future polish pass:**
+- Packed-cell Blueprint semantics — a Blueprint instance as a single visual cell that PRESENTS as one input/output box, with click-to-unwrap. The current implementation always unwraps on placement.
+- Blueprint preview thumbnails in the library.
+- More filter predicates (divisibility, family, composite predicates).
+- Special-number currency UI in Literature (per-predicate visible totals as the player accumulates them).
+
+### Phase 4 UX polish pass
+**Goal:** layout-by-hand. Make the factory feel like a hand-arranged page rather than a fixed circuit.
+
+| Slice | Content | Status |
+|---|---|---|
+| **5.6** | Movable cells — drag the cell body (not on a port) to reposition. The new `redrawPipesForCell(cellId)` in `pipe.ts` walks all connected pipes and re-projects them on every drag tick, so connections follow in real time. ESC cancels mid-drag, snapping back. Hit priority preserves drop-zones and output-port click semantics. | ✅ done |
+| **5.7** | Generalised output fan + back-pressure. The cultivation `planSpawn` / `commitSpawn` pair moved to a shared `src/lib/spawn.ts`. Operators (`fireCell`, `fireCellViaPipe`) and filters now pre-check each output port; if any is clogged (12 fan slots full) the cell stalls — no fuel burn, no input consumption, retries next frame. Multi-emit-per-port (Factor) keeps its 18 px within-firing fan anchored to the first emit's planned spot. | ✅ done |
+| **5.8** | Curved pipes. Cubic bezier with orientation-aware control points: horizontal-mostly pipes flow like flow-chart connectors; vertical-mostly pipes (fuel ports) bow up/down. Sampled into a polyline so `pencilStrokeDouble` still wobbles them by hand. Arc-length sampling drives the magnitude label, transit pulse, cross-hatch ticks, and jammed-state dashes — they all trace the visible curve. Hit-test walks the polyline segments. | ✅ done |
+| **5.9** | Pan/zoom polish. Wheel step halved (10% → 5% per notch) for finer settling. Min zoom widened (0.25 → 0.2) for a broader overview. `grabbing` cursor while middle/right-drag panning, restored on release. | ✅ done |
+
+**Deliverable achieved:** the factory feels arranged-by-hand. Cells move where the player wants; pipes flow as soft arcs that follow; output ports never pile up; pan/zoom is comfortable.
 
 ### Phase 5: The Long Arc
 **Goal:** open-ended escalation. The game has no end.

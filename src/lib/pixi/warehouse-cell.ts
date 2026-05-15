@@ -4,6 +4,7 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
 import { valueLabel } from '../value';
 import { valueColor } from '../family';
+import { getWarehouseRule } from '../warehouse-rules';
 
 /**
  * Warehouse — typed storage cell.
@@ -21,7 +22,13 @@ import { valueColor } from '../family';
 export const WAREHOUSE_CELL_WIDTH = 200;
 export const WAREHOUSE_CELL_HEIGHT = 124;
 
-export function drawWarehouseCell(_x: number, _y: number): Container {
+/**
+ * Draws a warehouse cell. When `ruleLabel` is provided (e.g. "< 10",
+ * "prime"), the cell renders as a rule-based warehouse — the centre
+ * type-glyph carries the predicate label permanently, and the count
+ * reflects total mixed contents instead of a single locked value.
+ */
+export function drawWarehouseCell(_x: number, _y: number, ruleLabel?: string): Container {
   const container = new Container();
 
   const halfW = WAREHOUSE_CELL_WIDTH / 2;
@@ -115,16 +122,21 @@ export function drawWarehouseCell(_x: number, _y: number): Container {
   badge.y = 0;
   container.addChild(badge);
 
+  // Rule labels (`prime`, `composite`) are wider than typed glyphs
+  // (`1`, `144`), so we shrink the font for long labels to keep them
+  // inside the cell's centre area.
+  const typeFontSize = ruleLabel && ruleLabel.length > 4 ? 18 : 26;
   const typeGlyphStyle = new TextStyle({
     fontFamily: PENCIL_FONT_FAMILY,
-    fontSize: 26,
+    fontSize: typeFontSize,
     fontWeight: '500',
+    fontStyle: ruleLabel ? 'italic' : 'normal',
     fill: GRAPHITE,
   });
-  const typeGlyph = new Text({ text: '—', style: typeGlyphStyle });
+  const typeGlyph = new Text({ text: ruleLabel ?? '—', style: typeGlyphStyle });
   typeGlyph.anchor.set(0.5);
   typeGlyph.y = -16;
-  typeGlyph.alpha = 0.8;
+  typeGlyph.alpha = ruleLabel ? 0.85 : 0.8;
   badge.addChild(typeGlyph);
 
   const countStyle = new TextStyle({
@@ -161,6 +173,23 @@ export function updateWarehouseBadge(cell: PlacedCell): void {
     __warehouseBadge?: { type: Text; count: Text };
   }).__warehouseBadge;
   if (!badge) return;
+
+  if (cell.type === 'warehouse-rule') {
+    // The rule label is installed at construction and never changes; the
+    // only thing that varies here is the count. Total counts items across
+    // every (value, count) pair the cell holds. Inlined here rather than
+    // calling `ruleWarehouseTotal` from `../world` to avoid a runtime
+    // cycle (pixi/warehouse-cell → world → cell-types → pixi/warehouse-cell).
+    let total = 0;
+    for (const item of cell.ruleItems ?? []) total += item.count;
+    const cap = cell.capacity ?? 0;
+    const rule = getWarehouseRule(cell.ruleId);
+    if (rule) badge.type.text = rule.label;
+    badge.count.text = `${total} / ${cap}`;
+    badge.count.alpha = total >= cap ? 1.0 : 0.75;
+    return;
+  }
+
   const v = cell.storedValue;
   const n = cell.storedCount ?? 0;
   const cap = cell.capacity ?? 0;

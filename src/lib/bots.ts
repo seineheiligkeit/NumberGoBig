@@ -4,11 +4,13 @@ import {
   allCells,
   decreaseStack,
   depositToWarehouse,
+  ruleWarehouseTotal,
   type PlacedBlock,
   type PlacedCell,
 } from './world';
 import { spawnSweepPulse } from './pixi/cleanup-bot';
 import { valueEq, type Value } from './value';
+import { getWarehouseRule } from './warehouse-rules';
 
 /**
  * Bot tick — for each cleanup bot, look for a loose block within its sweep
@@ -71,12 +73,27 @@ function findClosestMatchingWarehouse(
   let best: PlacedCell | null = null;
   let bestDist = Infinity;
   for (const c of allCells()) {
-    if (c.type !== 'warehouse') continue;
-    if (c.storedValue !== null && c.storedValue !== undefined && !valueEq(c.storedValue, value)) {
+    let accepts = false;
+    let cap = 0;
+    let count = 0;
+    if (c.type === 'warehouse') {
+      // Typed warehouses accept any value while empty (first deposit locks
+      // the type), otherwise only the locked value.
+      if (c.storedValue !== null && c.storedValue !== undefined && !valueEq(c.storedValue, value)) continue;
+      cap = c.capacity ?? 0;
+      count = c.storedCount ?? 0;
+      accepts = true;
+    } else if (c.type === 'warehouse-rule') {
+      const rule = getWarehouseRule(c.ruleId);
+      if (!rule || !rule.test(value)) continue;
+      cap = c.capacity ?? 0;
+      count = ruleWarehouseTotal(c);
+      accepts = true;
+    } else {
       continue;
     }
-    const cap = c.capacity ?? 0;
-    if ((c.storedCount ?? 0) >= cap) continue;
+    if (!accepts) continue;
+    if (count >= cap) continue;
     const dx = c.container.x - x;
     const dy = c.container.y - y;
     const dist = Math.hypot(dx, dy);

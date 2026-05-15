@@ -4,6 +4,9 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
 import { valueLabel } from '../value';
 import { valueColor } from '../family';
+// Both helpers come from `../cost` to avoid a runtime cycle through
+// `../cell-types` (which imports CULTIVATION_CELL_WIDTH from this file).
+import { cultivationEmissionCost, cultivationEmit } from '../cost';
 
 /**
  * Cultivation cells — seed-driven number streams.
@@ -111,11 +114,34 @@ export function drawCultivationCell(_x: number, _y: number, opts: CultivationOpt
   seedReadout.alpha = 0.55;
   container.addChild(seedReadout);
 
+  // Slice 3.5.6: next-emission cost preview. Sits just above the seed
+  // readout. Hidden until a seed lands and the next cost is known.
+  const costPreviewStyle = new TextStyle({
+    fontFamily: PENCIL_FONT_FAMILY,
+    fontSize: 12,
+    fontStyle: 'italic',
+    fontWeight: '400',
+    fill: GRAPHITE,
+  });
+  const costPreview = new Text({ text: '', style: costPreviewStyle });
+  costPreview.anchor.set(0.5);
+  costPreview.x = 0;
+  costPreview.y = halfH - 30;
+  costPreview.alpha = 0;
+  container.addChild(costPreview);
+
   // Slight whole-cell rotation.
   container.rotation = (Math.random() - 0.5) * 0.025;
 
-  // Stash the readout text on the container for later refresh.
-  (container as Container & { __cultivationReadout?: Text }).__cultivationReadout = seedReadout;
+  // Stash the readout texts on the container for later refresh.
+  (container as Container & {
+    __cultivationReadout?: Text;
+    __cultivationCostPreview?: Text;
+  }).__cultivationReadout = seedReadout;
+  (container as Container & {
+    __cultivationReadout?: Text;
+    __cultivationCostPreview?: Text;
+  }).__cultivationCostPreview = costPreview;
 
   return container;
 }
@@ -133,12 +159,36 @@ export function drawFibonacciCell(x: number, y: number): Container {
 }
 
 export function updateCultivationBadge(cell: PlacedCell): void {
-  const readout = (cell.container as Container & { __cultivationReadout?: Text })
-    .__cultivationReadout;
-  if (!readout) return;
-  readout.text = `seed: ${cell.seed === null || cell.seed === undefined ? '—' : valueLabel(cell.seed)}`;
-  readout.alpha = cell.seed === null || cell.seed === undefined ? 0.55 : 0.9;
-  readout.style.fill = cell.seed ? valueColor(cell.seed) : GRAPHITE;
+  const tagged = cell.container as Container & {
+    __cultivationReadout?: Text;
+    __cultivationCostPreview?: Text;
+  };
+  const readout = tagged.__cultivationReadout;
+  if (readout) {
+    readout.text = `seed: ${cell.seed === null || cell.seed === undefined ? '—' : valueLabel(cell.seed)}`;
+    readout.alpha = cell.seed === null || cell.seed === undefined ? 0.55 : 0.9;
+    readout.style.fill = cell.seed ? valueColor(cell.seed) : GRAPHITE;
+  }
+
+  // Next-emission cost preview (Slice 3.5.6). Only meaningful once seeded.
+  const costBadge = tagged.__cultivationCostPreview;
+  if (costBadge) {
+    if (cell.seed === null || cell.seed === undefined) {
+      costBadge.text = '';
+      costBadge.alpha = 0;
+    } else {
+      const step = cell.cultivationStep ?? 0;
+      const nextValue = cultivationEmit(cell.type, cell.seed, step);
+      const nextCost = cultivationEmissionCost(nextValue);
+      if (nextCost === 0) {
+        costBadge.text = '';
+        costBadge.alpha = 0;
+      } else {
+        costBadge.text = `next ≥ ${nextCost}`;
+        costBadge.alpha = 0.65;
+      }
+    }
+  }
 }
 
 function drawDashedRect(parent: Container, cx: number, cy: number, halfW: number, halfH: number): void {
