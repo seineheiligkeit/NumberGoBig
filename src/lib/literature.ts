@@ -152,7 +152,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Successor Function',
     glyph: '{ }',
     description: 'Wraps a number. n → n + 1. The first theorem.',
-    cost: [{ value: valueOf(0), count: 100 }],
+    cost: [{ value: valueOf(0), count: 10 }],
     unlockMessage: 'Result added to your literature: the Successor Function.',
   },
   {

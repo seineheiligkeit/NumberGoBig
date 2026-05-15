@@ -72,12 +72,15 @@ const ONE_EACH_OF_1_TO_9: CostItem[] = Array.from({ length: 9 }, (_, i) => ({
 export const LITERATURE: LitEntry[] = [
   // -- Stage A: opening (0–10 min target) -----------------------------------
 
-  // Successor: 100 zeros, ~3min of manual + pipe-fed pickup. Was 10.
+  // Successor: 10 zeros. Quick onboarding — gets the first unlock into
+  // the player's hand inside 30 seconds so the opening doesn't drag.
+  // The grind shifts to Addition (900 ones), which is the first real
+  // Stage A wait.
   {
     id: 'successor',
     kind: 'cell',
     cellType: 'successor',
-    cost: [{ value: 0, count: 100 }],
+    cost: [{ value: 0, count: 10 }],
     costScale: 1.6,
   },
   // Pipe ≤1: 1 one. Same as before.

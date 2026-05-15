@@ -493,12 +493,12 @@ The opening teaches every core mechanic through play, with one short pencil-marg
 - **0:10** — Player click-drags a `0` from the river. It lifts out; a new `0` slides in to fill the gap behind it. Player drops it on the page with a soft `tap`. Marginalia: *"You picked up a zero. Auspicious."*
 - **0:15** — Player picks more zeros. On dropping a second near the first, they auto-stack with a small `×2` count. Stacking is learned implicitly.
 - **0:25** — A few more zeros stacked. Achievement marginalia draws itself in: *"Play with some zeros."* The **Literature** tab unfolds at the page's edge.
-- **0:30** — Player opens Literature. One item available: *The Successor Function `{ }` — Wraps a zero. Produces a one. Cost: 100 zeros.* Below it, faint placeholders: `?`, `?`, `?`.
-- **2:00** — Player has accumulated 100 zeros through manual play and exploration. Buys the Successor. A new cell template attaches to the cursor. Player drops it on the page. It draws itself in: a scribbled `{ }` with a drop zone inside, input port on one side, output on the other.
-- **2:10** — Player picks a `0`, drops it into the brace's center. The `0` is briefly visible *inside* the braces, then a `1` slides out the other side. *"Built `1` from nothing. Peano nods approvingly."* The Total Score in the top corner ticks: **1**. A small `+1` floats upward like a red-pencil mark.
-- **2:30** — Player repeats. Score climbs: 2, 3, 4. The page is filling with `1`s. The loop is now taught entirely through play.
+- **0:30** — Player opens Literature. One item available: *The Successor Function `{ }` — Wraps a zero. Produces a one. Cost: 10 zeros.* Below it, faint placeholders: `?`, `?`, `?`.
+- **0:35** — Player stacks 10 zeros, buys the Successor. A new cell template attaches to the cursor. Player drops it on the page. It draws itself in: a scribbled `{ }` with a drop zone inside, input port on one side, output on the other.
+- **0:45** — Player picks a `0`, drops it into the brace's center. The `0` is briefly visible *inside* the braces, then a `1` slides out the other side. *"Built `1` from nothing. Peano nods approvingly."* The Total Score in the top corner ticks: **1**. A small `+1` floats upward like a red-pencil mark.
+- **0:55** — Player repeats. Score climbs: 2, 3, 4. The page is filling with `1`s. The loop is now taught entirely through play.
 
-By 2–3 minutes the player has held a number, stacked numbers, opened the Literature, purchased a function, placed it, used it, and watched their Total Score begin its long climb. From here the path to addition, to pipes, to the first storage, and onward is the same lesson repeated at each scale: *the next obvious thing to do.*
+By 60 seconds the player has held a number, stacked numbers, opened the Literature, purchased a function, placed it, used it, and watched their Total Score begin its long climb. From here the path to addition, to pipes, to the first storage, and onward is the same lesson repeated at each scale: *the next obvious thing to do.* Addition (the first real grind, 900 ones at ~1 one/sec with a pipe ≤1) is the first deliberate wait.
 
 ---
 
