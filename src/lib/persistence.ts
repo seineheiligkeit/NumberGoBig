@@ -130,7 +130,25 @@ function serialize(): SaveData {
   };
 }
 
+/**
+ * One-shot kill switch for autosave. Set by the reset flow before
+ * removing the storage entry and reloading — without this, the
+ * `beforeunload` handler installed by `installAutosave` synchronously
+ * serializes the still-populated in-memory world and writes it back to
+ * localStorage in the same turn, defeating the reset.
+ *
+ * Module-scoped boolean; resets implicitly on page reload. Both the
+ * debounced timer callback and the `beforeunload` handler funnel
+ * through `saveToStorage`, so one check here covers every save path.
+ */
+let _saveSuppressed = false;
+
+export function suppressAutosave(): void {
+  _saveSuppressed = true;
+}
+
 function saveToStorage(): void {
+  if (_saveSuppressed) return;
   try {
     const data = serialize();
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));

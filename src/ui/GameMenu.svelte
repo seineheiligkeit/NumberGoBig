@@ -7,6 +7,8 @@
    * settings, etc.
    */
 
+  import { suppressAutosave } from '../lib/persistence';
+
   let open = false;
   let confirming: 'soft' | 'hard' | null = null;
 
@@ -24,6 +26,12 @@
   }
 
   function confirmReset(): void {
+    // Disarm autosave FIRST. Otherwise the `beforeunload` handler
+    // installed by `installAutosave` would synchronously serialize the
+    // still-populated in-memory world and write it back over our just-
+    // removed storage entry during the reload — leaving the canvas
+    // unchanged after refresh.
+    suppressAutosave();
     try {
       localStorage.removeItem('numbers-go-big.save');
       if (confirming === 'hard') {
