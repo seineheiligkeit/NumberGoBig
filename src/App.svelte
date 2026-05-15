@@ -7,6 +7,7 @@
   import Gallery from './ui/Gallery.svelte';
   import Blueprints from './ui/Blueprints.svelte';
   import Marginalia from './ui/Marginalia.svelte';
+  import GameMenu from './ui/GameMenu.svelte';
 
   let canvasContainer: HTMLDivElement;
 
@@ -27,6 +28,7 @@
   <Gallery />
   <Blueprints />
   <Marginalia />
+  <GameMenu />
 </main>
 
 <style>
