@@ -28,8 +28,17 @@ const DEFAULT_ROADMAP: string[] = [
   'multiplication',
   'pipe_10',
   'division',
+  // Slice 6.14: negation lands here — player just unlocked rationals via
+  // division and negatives via subtraction; negation makes producing
+  // negatives systematic, in anticipation of Inversion.
+  'negation',
   'comprehension_100',
   'exponentiation',
+  // Slice 6.14: inversion arrives once the full operator hierarchy is in
+  // hand. It's the bridge that turns the previously-decorative small-
+  // number outputs (negatives, tiny rationals) into productive raw
+  // material — even if the sim's agent doesn't pick it as a shortcut.
+  'inversion',
   'comprehension_250',
   'square-root',
   'comprehension_1k',

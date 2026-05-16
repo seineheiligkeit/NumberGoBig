@@ -68,6 +68,12 @@ export function costTier(type: CellType): number {
     case 'division':
       return 1;
     case 'exponentiation':
+    case 'inversion':
+      // Inversion is tier 2 — required fuel port. The cost is signed (see
+      // computationalCost below): negative for "uphill" inversions
+      // (|input| < 1 → |output| > 1, the small-numbers-into-big route)
+      // and positive for "downhill" (|input| > 1 → |output| < 1). The
+      // `consumeFuelOrFail` matcher checks sign before magnitude.
       return 2;
     case 'tetration':
       return 4;
@@ -125,6 +131,32 @@ export function computationalCost(
   inputs: readonly (Value | null)[] = [],
   level: number = 1,
 ): Decimal {
+  // Inversion (Slice 6.15) — `n ↦ 1/n`. The output's magnitude is the
+  // negative of the input's magnitude (in log space), so to stay
+  // honest with "cost ∝ operator magnitude" the cost must scale with
+  // |output|, not |input|:
+  //
+  //   cost = -tier × ⌈log₁₀(|output|)⌉ = -tier × ⌈-log₁₀(|input|)⌉
+  //
+  // The sign indicates the direction:
+  //   - |input| > 1  (downhill, output is small): cost > 0, needs positive fuel
+  //   - |input| < 1  (uphill,   output is big):   cost < 0, needs negative fuel
+  //   - |input| in [1, 10) is a small "free" zone (ceil rounds to 0) — an
+  //     onboarding affordance for the first few hand-inversions.
+  if (type === 'inversion') {
+    const input = inputs[0];
+    if (!input) return Decimal.dZero;
+    const mag = valueMagnitude(input);
+    if (mag.lte(Decimal.dZero)) return Decimal.dZero;
+    // |output| = 1 / |input|; log₁₀(|output|) = -log₁₀(|input|).
+    const logOutput = mag.log10().neg();
+    const orderD = logOutput.ceil();
+    // No level discount on inversion in v1 — the discount qualities are
+    // bolted to mul/exp specifically (Slice 6.7). The negate flips sign
+    // so uphill inversions (logOutput > 0) yield cost < 0.
+    return orderD.neg().mul(2);
+  }
+
   // Variadic arrow's tier is `2 ^ arrows`, where `arrows` is the cell's
   // SECOND operand input (slot 1, between base and height). The `costTier`
   // table can't express that without runtime context, so we special-case

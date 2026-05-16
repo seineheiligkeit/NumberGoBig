@@ -115,6 +115,22 @@ Alongside the constructive operators are decompositional ones. These create **bi
 - **Decrement** — unary; `n` in, `n−1` out one side, a `1` block out another side. Useful for harvesting large numbers into small-number currency and fuel.
 - **Factor** — unary; composite in, its prime factorization out as separate blocks. The primary route for turning composites into primes-as-currency, and a major source of fuel reclamation.
 
+### Inversion and the Negative-Fuel Pivot
+
+Two unary cells widen the bottom of the magnitude ladder into a productive loop:
+
+- **Negation** — `n ↦ −n`. Tier 0, free, no fuel port. A sign flip, not an operation. Its only mechanical purpose is to give the player a clean way to produce negative blocks without the awkward `0 − n` dance through Subtraction. Ships alongside Inversion because Inversion needs negatives as fuel.
+
+- **Inversion** — `n ↦ 1/n`. Tier 2, required fuel port. Maps any non-zero number to its reciprocal: `5 ↦ 1/5`, `1000 ↦ 0.001`, `0.001 ↦ 1000`. The output is rational unless the input is already rational, in which case it may collapse to integer.
+
+**Why Inversion matters.** Until Inversion lands, the "small numbers" branch of the economy — Subtraction's negatives, Division's tiny rationals — is mostly decorative. Inversion converts both into raw material for big numbers: divide a `1` by a large denominator to produce a tiny rational, invert to get a large integer. Subtraction and Division gain an economic destination they didn't have before. The mechanic is load-bearing for *integration*, not new content per se — it ties three previously-isolated systems into one productive line.
+
+**Negative fuel.** Inversion's *output* magnitude is `−log₁₀(input)` — a small input produces a large output, and vice versa. To stay honest with the existing rule (fuel cost ∝ operator magnitude), Inversion's cost must scale with the *result*'s magnitude, not the input's. So the cost is signed: `cost = −⌈log₁₀(1/|n|)⌉`. A fuel block satisfies a positive cost iff its value is `≥` the cost; it satisfies a negative cost iff its value is `≤` the cost. In practice: feed Inversion negative blocks. A `wh: negative` rule warehouse is the natural reservoir.
+
+The mechanic is the same fuel rule the rest of the economy already uses — magnitude paid in proportion to operator size — applied to the only operator whose output magnitude is signed. The narrator notes this on first encounter (*"the cost is, regrettably, negative. The cell will accept negative fuel. Do not ask why."*).
+
+Inversion is also the first slice in which the player plans a factory that depends on producing negatives at scale — a small but real new logistics problem, and the reason Negation ships alongside.
+
 ### Cultivation Cells
 
 A late-mid-game family of equation cells — **Cultivation Cells** — generate streams of numbers from a single seed. Each takes a number as a seed input (which is *not consumed*) and emits a continuous output stream determined by the cell's growth function.
@@ -226,6 +242,7 @@ Mid-game introduces **rule-based warehouses** — warehouses defined by a *predi
 - `wh: value < 100` — small-change wallet
 - `wh: prime` — currency vault for Literature entries that demand primes
 - `wh: composite`, `wh: divisible by 6`, `wh: family = irrational`, …
+- `wh: negative` — fuel reservoir for Inversion (see §6 *Inversion and the Negative-Fuel Pivot*)
 
 The predicate vocabulary is the same one Filters (§13) uses — Generalized Warehouses are essentially "Filter + Storage" fused into one cell. They reuse the predicate language so introducing standalone Filters later is a small step rather than a new concept.
 
@@ -349,9 +366,11 @@ The new cell visually resembles any other equation but internally instantiates t
 - **No silent edits.** A Blueprint cannot be edited in place. This prevents the "I broke twelve places at once" frustration and makes each Blueprint a deliberate engineered artifact.
 - **The library persists across prestiges.** The player's accumulated mathematical inventions are permanent intellectual property.
 
-### Cleanup Bots
+### Translation Operators (T-bots)
 
-A later automation upgrade: bots that patrol the canvas, collecting loose blocks into the nearest matching storage. Frees the player from manual tidying once factories sprawl.
+A late-game automation upgrade: small worker units patrolling the canvas, collecting loose blocks and carrying them to the nearest matching warehouse. The name is the joke — a *translation operator* T̂ in mechanics is the operator that shifts a function in space, which is exactly what these bots do for blocks. Each bot wears a hand-drawn `T` glyph; on placement the dry narrator may observe that *"this T̂ commutes with the identity. It does not commute with anything else."*
+
+Mechanically: the bot picks the closest unmatched loose block within its search radius, walks to it, picks it up, walks to the destination warehouse, sets it down. (Earlier prototypes teleported the block via a sweep pulse — Translation Operators replace that with actual transit.) Multiple bots queue on disjoint targets so they don't fight over the same pile.
 
 ---
 
@@ -588,6 +607,7 @@ Deliberately left unsettled, to be resolved by prototyping and playtesting:
 - **Save/load and autosave cadence.** Standard concerns but not designed.
 - **Platform.** Desktop primary; mobile possible but not committed.
 - **Performance ceilings.** What happens when the player has 10,000 cells firing? Throttling? Aggregation?
+- **Cultivation cells need a design rethink.** The arithmetic / geometric / Fibonacci implementations (§6) work in code but aren't pulling their conceptual weight in the larger economy — the user wants to revisit them before any more cultivation work lands. The Harmonic / polynomial / factorial cells listed in §6 are blocked on this rethink. To be reopened in a dedicated design session.
 
 ---
 

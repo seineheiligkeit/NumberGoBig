@@ -33,6 +33,7 @@ import { captureSeed } from './cultivation';
 import { routeViaFilter } from './filter';
 import { showMarginalia } from './marginalia';
 import { commitSpawn, planSpawnAtPort } from './spawn';
+import { fadeAndDestroy } from './pixi/micro-anim';
 import { onCameraChange, screenToCanvas } from './camera';
 import {
   VALUE_ZERO,
@@ -81,7 +82,12 @@ const STALL_RETRY_MS = 200;
 
 interface PipeRuntime {
   pulse: (value: Value, durationMs: number) => void;
-  redraw: (src: { x: number; y: number }, dst: { x: number; y: number }) => void;
+  redraw: (
+    src: { x: number; y: number },
+    dst: { x: number; y: number },
+    srcDir?: { x: number; y: number } | null,
+    dstDir?: { x: number; y: number } | null,
+  ) => void;
   setJammed: (jammed: boolean) => void;
   hitTest: (x: number, y: number, tolerance?: number) => boolean;
   /** Cancel pending pulse animations. Called before container destroy. */
@@ -120,6 +126,38 @@ export function pipeEndpointPosition(ep: PipeEndpoint): { x: number; y: number }
   return { x: cell.container.x + port.offsetX, y: cell.container.y + port.offsetY };
 }
 
+/**
+ * The "outward" direction at an endpoint — the unit vector the pipe
+ * naturally points along as it leaves (source) or approaches (dest)
+ * the port. Slice 6.13. Used by the pipe-visual layer to place bezier
+ * control points so curves exit a cell along the port's axis rather
+ * than along the chord — the flow-chart-connector look.
+ *
+ * Rules:
+ *  - River endpoints face upward (away from the bottom band): (0, -1).
+ *  - Cell ports face along their dominant axis from cell center:
+ *      port at (offsetX > 0, 0) → (+1, 0) (right-facing output)
+ *      port at (offsetX < 0, 0) → (-1, 0) (left-facing input)
+ *      port at (0, offsetY > 0) → (0, +1) (bottom-facing fuel)
+ *  - Mixed offsets resolve to the dominant axis.
+ *
+ * Returns null if the endpoint's cell can't be resolved (mid-load race).
+ */
+export function pipeEndpointDirection(ep: PipeEndpoint): { x: number; y: number } | null {
+  if (ep.kind === 'river') return { x: 0, y: -1 };
+  const cell = findCellById(ep.cellId);
+  if (!cell) return null;
+  const port =
+    ep.kind === 'cell-output' ? cell.outputs[ep.portIndex] : cell.inputs[ep.portIndex];
+  if (!port) return null;
+  const dx = port.offsetX;
+  const dy = port.offsetY;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    return { x: Math.sign(dx) || 1, y: 0 };
+  }
+  return { x: 0, y: Math.sign(dy) || 1 };
+}
+
 /** True if either endpoint is the river (and so the visual depends on camera). */
 function pipeAnchoredToRiver(p: PlacedPipe): boolean {
   return p.source.kind === 'river' || p.dest.kind === 'river';
@@ -138,7 +176,7 @@ function syncRiverPipesToCamera(): void {
     const src = pipeEndpointPosition(pipe.source);
     const dst = pipeEndpointPosition(pipe.dest);
     if (!src || !dst) continue;
-    rt.redraw(src, dst);
+    rt.redraw(src, dst, pipeEndpointDirection(pipe.source), pipeEndpointDirection(pipe.dest));
   }
 }
 
@@ -166,7 +204,7 @@ export function redrawPipesForCell(cellId: number): void {
     const src = pipeEndpointPosition(pipe.source);
     const dst = pipeEndpointPosition(pipe.dest);
     if (!src || !dst) continue;
-    rt.redraw(src, dst);
+    rt.redraw(src, dst, pipeEndpointDirection(pipe.source), pipeEndpointDirection(pipe.dest));
   }
 }
 
@@ -268,6 +306,93 @@ export function deletePipe(pipe: PlacedPipe): void {
   runtimes.get(pipe.id)?.destroy();
   unregisterPipeRuntime(pipe.id);
   removePipe(pipe);
+}
+
+// ---------------------------------------------------------------------------
+// Pipe endpoint editing — Slice 6.12
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the pipe whose source or destination endpoint dot is within
+ * `tolerance` of (x, y), and which end was hit. Used by the interaction
+ * layer to start an endpoint re-route drag. Tolerance defaults tight (10
+ * px) so a click on the broader output-port hit-zone still falls through
+ * to e.g. warehouse withdraw — players grab the visible dot, not the
+ * surrounding port.
+ *
+ * Both endpoints of every pipe are scanned; the first hit wins. Source
+ * is checked before dest in iteration order, but ties are vanishingly
+ * rare in practice (would require two pipes with overlapping endpoints).
+ */
+export function findPipeEndpointAt(
+  x: number,
+  y: number,
+  tolerance = 10,
+): { pipe: PlacedPipe; end: 'source' | 'dest' } | null {
+  for (const pipe of allPipes()) {
+    const src = pipeEndpointPosition(pipe.source);
+    if (src && Math.hypot(src.x - x, src.y - y) <= tolerance) {
+      return { pipe, end: 'source' };
+    }
+    const dst = pipeEndpointPosition(pipe.dest);
+    if (dst && Math.hypot(dst.x - x, dst.y - y) <= tolerance) {
+      return { pipe, end: 'dest' };
+    }
+  }
+  return null;
+}
+
+/**
+ * Visual-only redraw of a pipe with one endpoint relocated to `pos`. Does
+ * NOT mutate the pipe's data — used during the live re-route drag so the
+ * curve follows the cursor without committing until release. The other
+ * endpoint stays at its data-canonical position.
+ */
+export function previewPipeEndpoint(
+  pipe: PlacedPipe,
+  end: 'source' | 'dest',
+  pos: { x: number; y: number },
+): void {
+  const rt = runtimes.get(pipe.id);
+  if (!rt) return;
+  const fixedKind = end === 'source' ? pipe.dest : pipe.source;
+  const fixed = pipeEndpointPosition(fixedKind);
+  if (!fixed) return;
+  // The moving end has no port — pass null to clear any stale tangent
+  // hint so the curve falls back to the chord-orientation heuristic
+  // until release. The fixed end keeps its port-aware tangent.
+  const fixedDir = pipeEndpointDirection(fixedKind);
+  if (end === 'source') rt.redraw(pos, fixed, null, fixedDir);
+  else rt.redraw(fixed, pos, fixedDir, null);
+}
+
+/**
+ * Commits a new endpoint for a pipe and redraws at the canonical
+ * positions. Marks the world dirty so autosave persists the change.
+ */
+export function setPipeEndpoint(
+  pipe: PlacedPipe,
+  end: 'source' | 'dest',
+  endpoint: PipeEndpoint,
+): void {
+  if (end === 'source') pipe.source = endpoint;
+  else pipe.dest = endpoint;
+  refreshPipeVisual(pipe);
+  markDirty();
+}
+
+/**
+ * Re-renders a pipe at its current data-canonical endpoints. Used to
+ * snap back after a cancelled re-route drag.
+ */
+export function refreshPipeVisual(pipe: PlacedPipe): void {
+  const rt = runtimes.get(pipe.id);
+  if (!rt) return;
+  const src = pipeEndpointPosition(pipe.source);
+  const dst = pipeEndpointPosition(pipe.dest);
+  if (src && dst) {
+    rt.redraw(src, dst, pipeEndpointDirection(pipe.source), pipeEndpointDirection(pipe.dest));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -405,12 +530,12 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
 
   // Clear pending values AND any pending displays (the manual path may have
   // installed them before the cell switched to cost-blocked-then-retry state).
+  // Slice 6.17: fade rather than instant-destroy.
   for (let i = 0; i < cell.pending.length; i++) {
     cell.pending[i] = null;
     const display = cell.pendingDisplays[i];
     if (display) {
-      cell.container.removeChild(display);
-      display.destroy({ children: true });
+      fadeAndDestroy(display);
       cell.pendingDisplays[i] = null;
     }
   }

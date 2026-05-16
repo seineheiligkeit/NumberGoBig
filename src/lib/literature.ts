@@ -279,6 +279,34 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     unlockMessage:
       'Result added to your literature: the Square Root. The Pythagoreans send their belated apologies.',
   },
+
+  // -- Inversion family (Slice 6.15) -----------------------------------
+  // Negation produces negatives systematically; Inversion turns small
+  // inputs into big outputs (and vice versa) on a *signed* fuel cost.
+  // The pacing sim (6.14) locked these numbers: Negation cheap (100 ×3),
+  // Inversion mid-game gate (100 ×100), no production-shortcut concern.
+  {
+    id: 'negation',
+    kind: 'cell',
+    name: 'Negation',
+    glyph: '(−)',
+    description: 'A unary sign flip — n becomes −n. A clean source of negative blocks without the awkward 0 − n dance.',
+    cost: [{ value: valueOf(3), count: 100 }],
+    costScale: 1.6,
+    unlockMessage:
+      'Result added to your literature: Negation. The minus sign now arrives on demand.',
+  },
+  {
+    id: 'inversion',
+    kind: 'cell',
+    name: 'Inversion',
+    glyph: '1/x',
+    description: 'Maps n to 1/n. Tier 2 with a required fuel port — but the cost is signed, so tiny rationals invert into large numbers powered by negative fuel.',
+    cost: [{ value: valueOf(100), count: 100 }],
+    costScale: 1.6,
+    unlockMessage:
+      'Result added to your literature: Inversion. The cost, regrettably, is sometimes negative. The cell will accept negative fuel. Do not ask why.',
+  },
   {
     id: 'warehouse',
     kind: 'cell',
@@ -372,6 +400,27 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     costScale: 1.5,
     unlockMessage:
       'Result added to your literature: the Generalized Warehouse, scoped to composites. The natural sink for everything Factor breaks down.',
+  },
+  {
+    // Slice 6.15. The natural fuel reservoir for Inversion. Cost in
+    // negatives so the player must have made a few first — they
+    // produce these through Subtraction (0 − n) or, once unlocked, the
+    // Negation cell.
+    id: 'warehouse_rule_negative',
+    kind: 'cell',
+    name: 'Generalized Warehouse (< 0)',
+    glyph: '▥',
+    description: 'Accepts any negative-valued block. Wire it to an Inversion cell\'s fuel port to power uphill inversions.',
+    cost: [
+      { value: valueOf(-1), count: 1 },
+      { value: valueOf(-2), count: 1 },
+      { value: valueOf(-3), count: 1 },
+    ],
+    placementCellType: 'warehouse-rule',
+    ruleId: 'negative',
+    costScale: 1.6,
+    unlockMessage:
+      'Result added to your literature: the Generalized Warehouse, scoped to negatives. Inversion\'s natural fuel tank.',
   },
 
   // -- Pipes (automation tier I) ----------------------------------------
@@ -561,17 +610,21 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
       'Result added to your literature: the Composite Filter. Factor and this make a small workshop.',
   },
 
-  // -- Cleanup bots ------------------------------------------------------
+  // -- Translation Operators (T-bots) -----------------------------------
+  // Slice 6.11. The cell type id stays `cleanup-bot` for save back-compat;
+  // the displayed name is the joke (translation operator T̂ in mechanics
+  // shifts a function in space — exactly what these bots do for blocks).
   {
     id: 'cleanup-bot',
     kind: 'cell',
-    name: 'Cleanup Bot',
-    glyph: '⟲',
-    description: 'Sweeps a loose block from a 240 px radius into a matching warehouse every 2.5 s.',
+    name: 'Translation Operator',
+    glyph: 'T̂',
+    description:
+      'A small worker patrols within a 240 px radius, walks to a loose block, and carries it to the nearest matching warehouse.',
     cost: [{ value: valueOf(10), count: 12 }],
     costScale: 1.5,
     unlockMessage:
-      'Result added to your literature: Cleanup Bot. The page will tidy itself, eventually.',
+      'Result added to your literature: Translation Operator. T̂ commutes with the identity. It does not commute with anything else.',
   },
 
   // -- Comprehension ladder -------------------------------------------------

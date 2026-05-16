@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { pencilStrokeDouble } from './pencil';
-import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
+import { drawDashedRect, pencilStrokeDouble } from './pencil';
+import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 
 /**
  * Shared rendering for unary equation cells — currently Decrement and Factor.
@@ -26,10 +26,24 @@ export interface UnaryCellOptions {
   symbolYOffset?: number;
   /** Extra output indicators (arrow + label) rendered relative to cell center. */
   secondaryOutputs?: readonly { offsetX: number; offsetY: number; label: string }[];
+  /**
+   * Slice 6.15: when true (Inversion), a fuel intake socket is drawn
+   * below the cell, mirroring the binary-cell pattern. A small cost-
+   * preview badge (`__costBadge`) is installed regardless of this flag
+   * — Inversion needs it, but other unary cells can opt in by passing
+   * a non-zero tier in `computationalCost` later.
+   */
+  hasFuelPort?: boolean;
 }
 
 export function drawUnaryCell(x: number, y: number, options: UnaryCellOptions): Container {
-  const { symbol, symbolFontSize = 38, symbolYOffset = 0, secondaryOutputs = [] } = options;
+  const {
+    symbol,
+    symbolFontSize = 38,
+    symbolYOffset = 0,
+    secondaryOutputs = [],
+    hasFuelPort = false,
+  } = options;
 
   const container = new Container();
   container.x = x;
@@ -123,6 +137,51 @@ export function drawUnaryCell(x: number, y: number, options: UnaryCellOptions): 
     container.addChild(label);
   }
 
+  // Fuel intake socket (Slice 6.15) — for unary tier-2+ cells (Inversion).
+  // Geometry mirrors the binary-cell fuel port so a pipe coming up from a
+  // warehouse below docks cleanly regardless of cell shape. The "fuel"
+  // italic-hint anchors the visual semantics.
+  if (hasFuelPort) {
+    drawDashedRect(container, 0, halfH + 18, 22, 14);
+    const fuelHintStyle = new TextStyle({
+      fontFamily: PENCIL_FONT_FAMILY,
+      fontSize: 11,
+      fontStyle: 'italic',
+      fontWeight: '400',
+      fill: GRAPHITE,
+    });
+    const fuelHint = new Text({ text: 'fuel', style: fuelHintStyle });
+    fuelHint.anchor.set(0.5);
+    fuelHint.x = 0;
+    fuelHint.y = halfH + 38;
+    fuelHint.alpha = 0.55;
+    fuelHint.rotation = (Math.random() - 0.5) * 0.05;
+    container.addChild(fuelHint);
+
+    // Cost-preview badge — same pattern as binary-cell. The interaction
+    // layer's `updateCostBadge` looks for `container.__costBadge` and
+    // refreshes it when pending state mutates. Hidden until the cell
+    // has a non-zero cost; for Inversion that's whenever an operand is
+    // installed whose magnitude isn't in the free [1, 10) window.
+    // Slice 6.18: cost badge uses `pencilText` so the small italic
+    // stays crisp at max zoom — same as binary cells.
+    const costStyle = new TextStyle({
+      fontFamily: PENCIL_FONT_FAMILY,
+      fontSize: 13,
+      fontStyle: 'italic',
+      fontWeight: '400',
+      fill: GRAPHITE,
+    });
+    const costBadge = pencilText('', costStyle);
+    costBadge.anchor.set(0.5);
+    costBadge.x = 0;
+    costBadge.y = halfH - 12;
+    costBadge.alpha = 0;
+    costBadge.rotation = (Math.random() - 0.5) * 0.04;
+    container.addChild(costBadge);
+    (container as Container & { __costBadge?: Text }).__costBadge = costBadge;
+  }
+
   // Slight whole-cell rotation so it sits on the page like a hand-placed object.
   container.rotation = (Math.random() - 0.5) * 0.03;
 
@@ -155,27 +214,23 @@ export function drawSquareRootCell(x: number, y: number): Container {
   });
 }
 
-/**
- * Draws a hand-drawn dashed rectangle centered on (cx, cy). Mirrors the
- * binary-cell helper — duplicated to avoid a cross-file dependency between
- * sibling renderers.
- */
-function drawDashedRect(parent: Container, cx: number, cy: number, halfW: number, halfH: number): void {
-  const g = new Graphics();
-  const dashStep = 7;
-
-  for (let dx = -halfW; dx < halfW; dx += dashStep * 2) {
-    g.moveTo(cx + dx, cy - halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy - halfH);
-    g.moveTo(cx + dx, cy + halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy + halfH);
-  }
-  for (let dy = -halfH; dy < halfH; dy += dashStep * 2) {
-    g.moveTo(cx - halfW, cy + dy);
-    g.lineTo(cx - halfW, cy + Math.min(dy + dashStep, halfH));
-    g.moveTo(cx + halfW, cy + dy);
-    g.lineTo(cx + halfW, cy + Math.min(dy + dashStep, halfH));
-  }
-  g.stroke({ color: GRAPHITE, width: 0.9, alpha: 0.32 });
-  parent.addChild(g);
+export function drawNegationCell(x: number, y: number): Container {
+  // Slice 6.15. The `−` glyph alone reads as subtraction; `(−)` makes the
+  // unary intent visible without much typographic weight.
+  return drawUnaryCell(x, y, {
+    symbol: '(−)',
+    symbolFontSize: 32,
+  });
 }
+
+export function drawInversionCell(x: number, y: number): Container {
+  // Slice 6.15. `1/x` reads as the reciprocal cleanly; the fuel port
+  // hangs below for the negative-fuel mechanic.
+  return drawUnaryCell(x, y, {
+    symbol: '1/x',
+    symbolFontSize: 30,
+    hasFuelPort: true,
+  });
+}
+
+// Slice 6.16: `drawDashedRect` is the shared helper from `pencil.ts`.

@@ -10,6 +10,7 @@ import Decimal from 'break_eternity.js';
 import {
   VALUE_ZERO,
   valueEq,
+  valueIsNegative,
   valueIsZero,
   valueKey,
   valueMagnitude,
@@ -104,13 +105,29 @@ export interface PlacedCell {
   /** Time remaining on the current cooldown. */
   cultivationCooldownRemaining?: number;
 
-  // --- Cleanup-bot-specific state -------------------------------------
-  /** Search radius in canvas pixels. */
+  // --- Cleanup-bot / Translation-Operator state (Slice 3.6 + 6.11) -----
+  /** Search radius in canvas pixels, anchored on the bot's home position. */
   botRadius?: number;
-  /** Sweep cooldown in ms. */
+  /** Legacy field — Phase 2 had instant-transfer bots on a fixed cooldown.
+   *  Slice 6.11 made bots walk; the phase machine itself is the throttle.
+   *  Field retained so v13 saves restore cleanly. */
   botCooldownMs?: number;
-  /** Time remaining on the current sweep cooldown. */
+  /** Same — legacy. */
   botCooldownRemaining?: number;
+  /** Slice 6.11 phase machine. */
+  botPhase?: 'idle' | 'approaching' | 'returning' | 'going-home';
+  /** Block id the bot has claimed as its current target (during approaching). */
+  botTargetBlockId?: number | null;
+  /** Cell id of the destination warehouse (during returning). */
+  botDestCellId?: number | null;
+  /** Walking worker's current canvas position. Initialised to the bot's
+   *  home (placement) position; advances toward the active target each tick. */
+  botWorkerX?: number;
+  botWorkerY?: number;
+  /** Walk speed in canvas pixels per second. */
+  botSpeed?: number;
+  /** The Value the worker is carrying (during returning). null otherwise. */
+  botCarried?: Value | null;
 }
 
 let nextCellId = 1;
@@ -709,10 +726,24 @@ export function spendMatching(test: (v: Value) => boolean, n: number): boolean {
 }
 
 /**
- * Pays `cost` fuel by consuming a single block whose magnitude ≥ cost
- * (DESIGN §6, Slice 3.5.7). Searches both loose blocks AND warehouse
- * contents in one pool (Slice 3.5.3); picks the smallest qualifying
- * block to minimise over-payment.
+ * Pays `cost` fuel by consuming a single block whose **signed magnitude
+ * meets the cost** (DESIGN §6, Slice 3.5.7 + 6.15). Searches loose blocks
+ * AND warehouse contents in one pool; picks the smallest qualifying block
+ * to minimise over-payment.
+ *
+ * **Sign rule (Slice 6.15).** Cost may be negative (Inversion). The
+ * matching rule generalises:
+ *
+ *   - cost > 0  → match a block with the **same sign** (non-negative)
+ *                 AND |block| ≥ cost. Existing behaviour.
+ *   - cost < 0  → match a block with the same sign (negative) AND
+ *                 |block| ≥ |cost|. The block's value is ≤ cost in the
+ *                 signed-comparison sense ("more negative").
+ *   - cost = 0  → free; nothing to consume. (Note: the function still
+ *                 returns true. Callers can early-return on zero too.)
+ *
+ * Complex blocks have a positive modulus and no meaningful "negative"
+ * sign, so they qualify only for positive costs (via their modulus).
  *
  * Why one block instead of N small ones: the design wants fuel paid in
  * magnitude, not denomination — a multiplication of cost 3 happily eats
@@ -724,8 +755,9 @@ export function spendMatching(test: (v: Value) => boolean, n: number): boolean {
  * Returns true on success, false if no qualifying block exists.
  */
 export function spendFuel(cost: Decimal): boolean {
-  if (cost.lte(Decimal.dZero)) return true;
-  const costD = cost;
+  if (cost.eq(Decimal.dZero)) return true;
+  const wantsNegative = cost.lt(Decimal.dZero);
+  const absCost = cost.abs();
 
   // Track the smallest qualifying source across all three pools. For rule
   // warehouses we also track the SPECIFIC value to draw — the warehouse's
@@ -745,11 +777,18 @@ export function spendFuel(cost: Decimal): boolean {
     }
   };
 
+  const qualifies = (v: Value): boolean => {
+    // Slice 6.15: sign-aware matching. A block must share the cost's
+    // sign before its magnitude is considered. Complex values are never
+    // "negative" (no total order on ℂ), so they only fuel positive costs.
+    if (valueIsNegative(v) !== wantsNegative) return false;
+    return valueMagnitude(v).gte(absCost);
+  };
+
   for (const b of blocks) {
     if (b.count <= 0) continue;
-    const mag = valueMagnitude(b.value);
-    if (mag.lt(costD)) continue;
-    consider(mag, { kind: 'loose', block: b });
+    if (!qualifies(b.value)) continue;
+    consider(valueMagnitude(b.value), { kind: 'loose', block: b });
   }
 
   for (const c of cells) {
@@ -757,15 +796,13 @@ export function spendFuel(cost: Decimal): boolean {
       const v = c.storedValue;
       if (v === null || v === undefined) continue;
       if ((c.storedCount ?? 0) <= 0) continue;
-      const mag = valueMagnitude(v);
-      if (mag.lt(costD)) continue;
-      consider(mag, { kind: 'warehouse-typed', cell: c });
+      if (!qualifies(v)) continue;
+      consider(valueMagnitude(v), { kind: 'warehouse-typed', cell: c });
     } else if (c.type === 'warehouse-rule') {
       for (const item of c.ruleItems ?? []) {
         if (item.count <= 0) continue;
-        const mag = valueMagnitude(item.value);
-        if (mag.lt(costD)) continue;
-        consider(mag, { kind: 'warehouse-rule', cell: c, value: item.value });
+        if (!qualifies(item.value)) continue;
+        consider(valueMagnitude(item.value), { kind: 'warehouse-rule', cell: c, value: item.value });
       }
     }
   }
@@ -851,8 +888,18 @@ export function addCell(type: CellType, container: Container): PlacedCell {
   }
   if (type === 'cleanup-bot') {
     placed.botRadius = 240;
+    // Legacy fields retained for save back-compat (v13). The new tick
+    // (Slice 6.11) ignores them — the walk phases are the throttle.
     placed.botCooldownMs = 2500;
     placed.botCooldownRemaining = placed.botCooldownMs;
+    // Phase-machine defaults. Worker starts at home, idle, empty-handed.
+    placed.botPhase = 'idle';
+    placed.botTargetBlockId = null;
+    placed.botDestCellId = null;
+    placed.botWorkerX = container.x;
+    placed.botWorkerY = container.y;
+    placed.botSpeed = 100;
+    placed.botCarried = null;
   }
   cells.push(placed);
   // Cell placement is one of the few mutations that doesn't reach recompute.
@@ -1079,6 +1126,26 @@ export function hasFuelPipeAttached(cell: PlacedCell): boolean {
 export type FuelOutcome = 'paid' | 'awaiting-pipe' | 'too-small' | 'no-fuel';
 
 /**
+ * Slice 6.17 — registered hook for disposing a pending-input ghost
+ * (fade animation rather than instant destroy). The renderer wires this
+ * in `setup.ts`; world.ts stays pixi-free at the import level. Falls
+ * back to a synchronous destroy when no hook is registered (tests, or
+ * if the renderer hasn't initialised yet).
+ */
+let _disposePendingDisplay: ((display: Container) => void) | null = null;
+export function setPendingDisplayDisposer(fn: (display: Container) => void): void {
+  _disposePendingDisplay = fn;
+}
+function disposePendingDisplay(display: Container): void {
+  if (_disposePendingDisplay) {
+    _disposePendingDisplay(display);
+    return;
+  }
+  display.parent?.removeChild(display);
+  display.destroy({ children: true });
+}
+
+/**
  * Pays the cost for one firing, in priority order:
  *
  *   1. Manual fuel sitting in the fuel slot — consume it if large enough,
@@ -1098,24 +1165,34 @@ export type FuelOutcome = 'paid' | 'awaiting-pipe' | 'too-small' | 'no-fuel';
  * success; nothing is touched on failure.
  */
 export function consumeFuelOrFail(cell: PlacedCell, cost: Decimal): FuelOutcome {
-  if (cost.lte(Decimal.dZero)) return 'paid';
+  if (cost.eq(Decimal.dZero)) return 'paid';
   const fuelIdx = fuelPortIndex(cell);
 
   // Cells without a fuel port — addition, subtraction, future tier-0 ops.
+  // (Negation also lives here; its cost is always 0 so we early-returned.)
   if (fuelIdx < 0) {
     return spendFuel(cost) ? 'paid' : 'no-fuel';
   }
 
   const slotValue = cell.pending[fuelIdx];
   if (slotValue !== null && slotValue !== undefined) {
+    // Sign-aware match (Slice 6.15). The slot fuel must share the cost's
+    // sign — a `wh: negative` warehouse can't fuel a positive-cost
+    // multiplication, and conversely a positive block can't fuel an
+    // "uphill" inversion.
+    const wantsNegative = cost.lt(Decimal.dZero);
+    if (valueIsNegative(slotValue) !== wantsNegative) return 'too-small';
     const fuelMag = valueMagnitude(slotValue);
-    if (fuelMag.lt(cost)) return 'too-small';
-    // Consume the fuel block — visual ghost in the slot is destroyed too.
+    if (fuelMag.lt(cost.abs())) return 'too-small';
+    // Consume the fuel block — visual ghost in the slot fades out via
+    // the registered display-disposer (Slice 6.17). The hook lets
+    // world.ts stay pixi-free at the import level; the renderer wires
+    // a fade animation in setup.ts. Falls back to instant destroy if no
+    // hook is registered (e.g. tests).
     cell.pending[fuelIdx] = null;
     const display = cell.pendingDisplays[fuelIdx];
     if (display) {
-      display.parent?.removeChild(display);
-      display.destroy({ children: true });
+      disposePendingDisplay(display);
       cell.pendingDisplays[fuelIdx] = null;
     }
     return 'paid';
@@ -1234,11 +1311,20 @@ export interface CellSnapshot {
     cultivationCooldownMs: number;
     cultivationCooldownRemaining?: number;
   };
-  /** Cleanup-bot cells only — config + remaining cooldown. */
+  /** Cleanup-bot cells only — config + phase-machine state.
+   *  Slice 6.11 added the phase fields; pre-v14 saves carry only the
+   *  legacy cooldown trio and the rehydrator falls back to safe defaults. */
   botState?: {
     botRadius: number;
     botCooldownMs: number;
     botCooldownRemaining: number;
+    botPhase?: 'idle' | 'approaching' | 'returning' | 'going-home';
+    botTargetBlockId?: number | null;
+    botDestCellId?: number | null;
+    botWorkerX?: number;
+    botWorkerY?: number;
+    botSpeed?: number;
+    botCarried?: ValueSnapshot | null;
   };
 }
 
@@ -1302,10 +1388,22 @@ export function snapshotCells(): CellSnapshot[] {
       };
     }
     if (c.type === 'cleanup-bot') {
+      // Phase-machine fields persist so a worker mid-walk picks up where
+      // it left off after a reload. Cell-id and block-id refs are saved
+      // raw — on load, the rehydrator (and the next tick) re-resolves them
+      // against the new world's id space; unresolvable refs fall back to
+      // idle. (Block ids reset on reset-world but persist within a save.)
       snap.botState = {
         botRadius: c.botRadius ?? 240,
         botCooldownMs: c.botCooldownMs ?? 2500,
         botCooldownRemaining: c.botCooldownRemaining ?? c.botCooldownMs ?? 2500,
+        botPhase: c.botPhase ?? 'idle',
+        botTargetBlockId: c.botTargetBlockId ?? null,
+        botDestCellId: c.botDestCellId ?? null,
+        botWorkerX: c.botWorkerX ?? c.container.x,
+        botWorkerY: c.botWorkerY ?? c.container.y,
+        botSpeed: c.botSpeed ?? 100,
+        botCarried: c.botCarried ? valueSnapshot(c.botCarried) : null,
       };
     }
     return snap;

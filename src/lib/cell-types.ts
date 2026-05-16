@@ -36,10 +36,13 @@ import {
   valueIsZero,
   valueLabel,
   valueLt,
+  valueMagnitude,
   valueMul,
+  valueNeg,
   valueOf,
   valuePow,
   valuePentate,
+  valueRecip,
   valueSqrt,
   valueSub,
   valueTetrate,
@@ -50,6 +53,7 @@ import {
   TETRATE_HEIGHT_CAP,
   type Value,
 } from './value';
+import Decimal from 'break_eternity.js';
 
 export type CellType =
   | 'successor'
@@ -64,6 +68,8 @@ export type CellType =
   | 'decrement'
   | 'factor'
   | 'square-root'
+  | 'negation'          // Slice 6.15: n ↦ −n. Tier 0, no fuel port.
+  | 'inversion'         // Slice 6.15: n ↦ 1/n. Tier 2, required fuel; cost is signed.
   | 'warehouse'
   | 'warehouse-rule'
   | 'filter'
@@ -151,6 +157,18 @@ const UNARY_INPUT_X = -UNARY_CELL_WIDTH / 2 + 32;
 const UNARY_INPUT_HALF_W = 26;
 const UNARY_INPUT_HALF_H = 22;
 const UNARY_OUTPUT_X = UNARY_CELL_WIDTH / 2 + 56;
+
+// Unary fuel port (Slice 6.15) — hangs below the cell, same offsets as
+// the binary fuel port adapted to UNARY_CELL_HEIGHT (88). Used by
+// inversion, the only unary tier-2+ cell so far.
+const UNARY_HALF_H = 44; // = UNARY_CELL_HEIGHT / 2; literal to keep init order safe.
+const UNARY_FUEL_INPUT = {
+  offsetX: 0,
+  offsetY: UNARY_HALF_H + 18,
+  halfWidth: BINARY_FUEL_PORT_HALF_W,
+  halfHeight: BINARY_FUEL_PORT_HALF_H,
+  kind: 'fuel' as const,
+};
 
 export const CELL_SHAPES: Record<CellType, CellShape> = {
   successor: {
@@ -262,6 +280,28 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
   },
   'square-root': {
     inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  // Negation (Slice 6.15). `n ↦ −n`. Tier 0, free, no fuel port — the
+  // mechanical purpose is to give the player a clean source of negative
+  // blocks (used as fuel by Inversion) without grinding `0 − n` through
+  // Subtraction. Single operand, single output.
+  negation: {
+    inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  // Inversion (Slice 6.15). `n ↦ 1/n`. Tier 2 with REQUIRED fuel port.
+  // The cost is *signed* — see `computationalCost('inversion', …)`:
+  // inverting a small input (|n|<1) to produce a big output costs
+  // negative fuel (paid by negative blocks); inverting a big input to
+  // produce a small output costs positive fuel. The fuel port accepts
+  // whatever block the consumer routes there; the sign-aware fuel
+  // matcher in `consumeFuelOrFail` does the rest.
+  inversion: {
+    inputs: [
+      { offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H },
+      UNARY_FUEL_INPUT,
+    ],
     outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
   },
   warehouse: {
@@ -639,6 +679,54 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
       // Negatives no longer refuse — Slice 4.4 routes them through the
       // complex plane. `valueSqrt` handles every variant correctly.
       return { emits: [{ portIndex: 0, value: valueSqrt(inputs[0]) }] };
+    }
+    case 'negation': {
+      // `n ↦ −n` (Slice 6.15). Trivial sign flip — `valueNeg` handles
+      // every variant (real, rational, irrational with sign-preserving
+      // symbol toggle, complex with both components negated). No
+      // marginalia: this cell is intentionally quiet. Its job is to
+      // make negatives easy.
+      return { emits: [{ portIndex: 0, value: valueNeg(inputs[0]) }] };
+    }
+    case 'inversion': {
+      // `n ↦ 1/n` (Slice 6.15). Refuses zero with a beat. The "first
+      // big-from-tiny" inversion fires the negative-fuel narrator beat —
+      // the player has just discovered that the previously-decorative
+      // small numbers (subtraction's negatives, division's tiny
+      // rationals) have a productive role. Keyed one-shot so subsequent
+      // inversions stay quiet.
+      const v = inputs[0];
+      if (valueIsZero(v)) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Inversion of zero is undefined. The cell declines, with conviction.',
+            key: 'inversion_zero',
+          },
+        };
+      }
+      const result = valueRecip(v);
+      if (!result) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'Inversion declined the configuration. The reciprocal is not in this Literature.',
+            key: 'inversion_refused',
+          },
+        };
+      }
+      // |v| < 1 → output magnitude > 1 → uphill inversion → negative
+      // fuel was just consumed. Worth a beat the first time it happens.
+      if (valueMagnitude(v).lt(Decimal.dOne)) {
+        return {
+          emits: [{ portIndex: 0, value: result }],
+          marginalia: {
+            text: 'The cost, regrettably, is negative. The cell accepts negative fuel. Do not ask why.',
+            key: 'first_inversion_negative_fuel',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: result }] };
     }
     case 'warehouse':
     case 'warehouse-rule':

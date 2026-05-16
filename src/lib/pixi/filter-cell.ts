@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { pencilStrokeDouble } from './pencil';
+import { drawDashedRect, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 
 /**
@@ -110,27 +110,10 @@ export function drawFilterCell(_x: number, _y: number, ruleLabel?: string): Cont
   noMatchHint.rotation = (Math.random() - 0.5) * 0.05;
   container.addChild(noMatchHint);
 
-  // Slight whole-cell rotation.
-  container.rotation = (Math.random() - 0.5) * 0.025;
+  // Slice 6.16: standardised to 0.03 across all cells (was 0.025 here).
+  container.rotation = (Math.random() - 0.5) * 0.03;
 
   return container;
 }
 
-function drawDashedRect(parent: Container, cx: number, cy: number, halfW: number, halfH: number): void {
-  const g = new Graphics();
-  const dashStep = 7;
-  for (let dx = -halfW; dx < halfW; dx += dashStep * 2) {
-    g.moveTo(cx + dx, cy - halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy - halfH);
-    g.moveTo(cx + dx, cy + halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy + halfH);
-  }
-  for (let dy = -halfH; dy < halfH; dy += dashStep * 2) {
-    g.moveTo(cx - halfW, cy + dy);
-    g.lineTo(cx - halfW, cy + Math.min(dy + dashStep, halfH));
-    g.moveTo(cx + halfW, cy + dy);
-    g.lineTo(cx + halfW, cy + Math.min(dy + dashStep, halfH));
-  }
-  g.stroke({ color: GRAPHITE, width: 0.9, alpha: 0.32 });
-  parent.addChild(g);
-}
+// Slice 6.16: `drawDashedRect` is the shared helper from `pencil.ts`.

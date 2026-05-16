@@ -28,8 +28,18 @@ export interface PipeVisualHandles {
   container: Container;
   /** Spawn a transit pulse for `value` traveling from src to dst over `durationMs`. */
   pulse: (value: Value, durationMs: number) => void;
-  /** Updates the pipe's endpoint positions and redraws. */
-  redraw: (src: { x: number; y: number }, dst: { x: number; y: number }) => void;
+  /**
+   * Updates the pipe's endpoint positions and redraws. Optional `srcDir`
+   * / `dstDir` are unit vectors describing the natural "outward" direction
+   * at each endpoint — supplied for port-aware bezier tangents (Slice 6.13).
+   * When omitted, falls back to the chord-orientation heuristic.
+   */
+  redraw: (
+    src: { x: number; y: number },
+    dst: { x: number; y: number },
+    srcDir?: { x: number; y: number } | null,
+    dstDir?: { x: number; y: number } | null,
+  ) => void;
   /** Toggles the "jammed" visual state. Persistent until cleared. */
   setJammed: (jammed: boolean) => void;
   /** Returns true if the (canvas-space) point lies near the pipe line. */
@@ -46,6 +56,8 @@ export function drawPipe(
   src: { x: number; y: number },
   dst: { x: number; y: number },
   magnitude: number,
+  srcDir?: { x: number; y: number } | null,
+  dstDir?: { x: number; y: number } | null,
 ): PipeVisualHandles {
   const container = new Container();
 
@@ -76,6 +88,8 @@ export function drawPipe(
 
   let _src = { ...src };
   let _dst = { ...dst };
+  let _srcDir: { x: number; y: number } | null = srcDir ?? null;
+  let _dstDir: { x: number; y: number } | null = dstDir ?? null;
   let _mag = magnitude;
   let _jammed = false;
   let _destroyed = false;
@@ -85,10 +99,17 @@ export function drawPipe(
   let _waypoints: { x: number; y: number }[] = [];
 
   /**
-   * Builds a cubic bezier from src to dst with orientation-aware control
-   * points (Slice 5.8). When the endpoints are mostly aligned horizontally
-   * the curve flows like a horizontal flow-chart connector; vertically-
-   * aligned pipes (notably tier-1 fuel ports) bow up-or-down naturally.
+   * Builds a cubic bezier from src to dst. When port-aware tangent hints
+   * are available (Slice 6.13), control points sit along those tangents
+   * — pipes exit each cell along the port's natural axis, matching the
+   * standard flow-chart-connector look. Without hints (e.g. mid-drag
+   * ghost when the moving end isn't yet over a port), falls back to the
+   * older orientation heuristic from Slice 5.8.
+   *
+   * Control-point distance is clamped so very short pipes (< 80 px) can't
+   * loop back on themselves: each control point extends no more than half
+   * the chord length toward its anchor's tangent.
+   *
    * Samples into a polyline so `pencilStrokeDouble` can wobble it like
    * the straight pipes used to.
    */
@@ -98,18 +119,38 @@ export function drawPipe(
     const len = Math.hypot(dx, dy);
     if (len === 0) return [{ ..._src }];
 
-    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    // Control-point distance: ~40% of chord with a 24 px floor for a
+    // small visible bow even on short pipes; capped at half the chord
+    // to prevent the two control points from crossing (which produces
+    // the loop-back artefact on very-short pipes).
+    const k = Math.min(Math.max(24, len * 0.4), len * 0.5);
+
     let c1: { x: number; y: number };
     let c2: { x: number; y: number };
-    if (horizontal) {
-      const k = Math.sign(dx) * Math.max(40, Math.abs(dx) * 0.45);
-      c1 = { x: _src.x + k, y: _src.y };
-      c2 = { x: _dst.x - k, y: _dst.y };
+    if (_srcDir && _dstDir) {
+      // Port-aware: each control point extends from its endpoint along
+      // the port's outward direction. For a typical horizontal flow
+      // (output port faces +x, input port faces -x), this puts c1 to
+      // the right of src and c2 to the left of dst — a clean S-curve
+      // whose entry and exit tangents match the cell ports.
+      c1 = { x: _src.x + _srcDir.x * k, y: _src.y + _srcDir.y * k };
+      c2 = { x: _dst.x + _dstDir.x * k, y: _dst.y + _dstDir.y * k };
     } else {
-      const k = Math.sign(dy) * Math.max(40, Math.abs(dy) * 0.45);
-      c1 = { x: _src.x, y: _src.y + k };
-      c2 = { x: _dst.x, y: _dst.y - k };
+      // Fallback: dominant-axis heuristic. Chord-oriented bow, switching
+      // between horizontal and vertical styles at 45°. Used during ghost
+      // placement and re-route drags before a port is resolved.
+      const horizontal = Math.abs(dx) >= Math.abs(dy);
+      if (horizontal) {
+        const kx = Math.sign(dx) * k;
+        c1 = { x: _src.x + kx, y: _src.y };
+        c2 = { x: _dst.x - kx, y: _dst.y };
+      } else {
+        const ky = Math.sign(dy) * k;
+        c1 = { x: _src.x, y: _src.y + ky };
+        c2 = { x: _dst.x, y: _dst.y - ky };
+      }
     }
+
     const samples = Math.max(10, Math.min(40, Math.floor(len / 22)));
     const pts: { x: number; y: number }[] = [];
     for (let i = 0; i <= samples; i++) {
@@ -245,7 +286,11 @@ export function drawPipe(
       const pt = sampleAtArcLength(_waypoints, lengths, total * t);
       pulseText.x = pt.x;
       pulseText.y = pt.y;
-      pulseText.alpha = Math.sin(t * Math.PI) * 0.9;
+      // Slice 6.13: flatter alpha curve so the pulse is visible across
+      // most of the pipe, not just at the midpoint. `sin(πt)^0.45` ramps
+      // quickly past 50% alpha and holds near peak through the middle
+      // 60 % of the journey, fading out near the destination.
+      pulseText.alpha = Math.pow(Math.sin(t * Math.PI), 0.45) * 0.95;
       if (t < 1) {
         requestAnimationFrame(step);
       } else {
@@ -278,9 +323,14 @@ export function drawPipe(
   return {
     container,
     pulse,
-    redraw: (s, d) => {
+    redraw: (s, d, sd, dd) => {
       _src = { ...s };
       _dst = { ...d };
+      // Caller passes `null` to deliberately clear a hint (no port);
+      // `undefined` keeps the existing one. Useful during re-route drags
+      // where the moving end has no port until release.
+      if (sd !== undefined) _srcDir = sd;
+      if (dd !== undefined) _dstDir = dd;
       render();
     },
     setJammed: (jammed: boolean) => {

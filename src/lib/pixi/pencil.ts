@@ -1,4 +1,6 @@
-import type { Graphics } from 'pixi.js';
+import type { Container, Graphics } from 'pixi.js';
+import { Graphics as GraphicsCtor } from 'pixi.js';
+import { GRAPHITE } from '../colors';
 
 export interface PencilStrokeOptions {
   color: number;
@@ -91,4 +93,47 @@ export function pencilStrokeDouble(
     alpha: (options.alpha ?? 0.88) * 0.55,
     width: options.width * 0.82,
   });
+}
+
+/**
+ * Draws a hand-noted dashed rectangle centred on `(cx, cy)` (Slice 6.16).
+ *
+ * Used by every cell visual to mark drop-zones (operand inputs, fuel
+ * sockets, deposit zones, filter inputs). Was duplicated identically in
+ * five files — extracting here is a pure DRY pass; the visual is
+ * unchanged.
+ *
+ * `dashStep` controls the dash period (7 px = 7 on, 7 off); finer steps
+ * make the rectangle read denser. `color` and `alpha` default to the
+ * faint-graphite hint look the existing call sites use.
+ */
+export function drawDashedRect(
+  parent: Container,
+  cx: number,
+  cy: number,
+  halfW: number,
+  halfH: number,
+  options: {
+    dashStep?: number;
+    color?: number;
+    alpha?: number;
+    width?: number;
+  } = {},
+): void {
+  const { dashStep = 7, color = GRAPHITE, alpha = 0.32, width = 0.9 } = options;
+  const g = new GraphicsCtor();
+  for (let dx = -halfW; dx < halfW; dx += dashStep * 2) {
+    g.moveTo(cx + dx, cy - halfH);
+    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy - halfH);
+    g.moveTo(cx + dx, cy + halfH);
+    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy + halfH);
+  }
+  for (let dy = -halfH; dy < halfH; dy += dashStep * 2) {
+    g.moveTo(cx - halfW, cy + dy);
+    g.lineTo(cx - halfW, cy + Math.min(dy + dashStep, halfH));
+    g.moveTo(cx + halfW, cy + dy);
+    g.lineTo(cx + halfW, cy + Math.min(dy + dashStep, halfH));
+  }
+  g.stroke({ color, width, alpha });
+  parent.addChild(g);
 }

@@ -18,6 +18,8 @@ import { drawVariadicArrowCell } from './pixi/variadic-arrow-cell';
 import {
   drawDecrementCell,
   drawFactorCell,
+  drawInversionCell,
+  drawNegationCell,
   drawSquareRootCell,
 } from './pixi/unary-cell';
 import {
@@ -31,7 +33,8 @@ import {
   updateCultivationBadge,
 } from './pixi/cultivation-cell';
 import { captureSeed, setCultivationBlockInteractionAttach } from './cultivation';
-import { drawCleanupBot } from './pixi/cleanup-bot';
+import { drawCleanupBot, getBotHandles } from './pixi/cleanup-bot';
+import { fadeAndDestroy } from './pixi/micro-anim';
 import { drawFilterCell } from './pixi/filter-cell';
 import { routeViaFilter, setFilterBlockInteractionAttach } from './filter';
 import {
@@ -65,10 +68,12 @@ import {
   operandPending,
   operandsFilled,
   refreshTotals,
+  setPendingDisplayDisposer,
   withdrawFromWarehouse,
   type PipeEndpoint,
   type PlacedBlock,
   type PlacedCell,
+  type PlacedPipe,
 } from './world';
 import { computationalCost, isCultivationType, operate, type CellType } from './cell-types';
 import { getWarehouseRule } from './warehouse-rules';
@@ -80,7 +85,12 @@ import { PENCIL_FONT_FAMILY } from './pixi/typography';
 import {
   deletePipe,
   findPipeAt,
+  findPipeEndpointAt,
+  previewPipeEndpoint,
+  refreshPipeVisual,
+  setPipeEndpoint,
   pipeEndpointPosition,
+  pipeEndpointDirection,
   redrawPipesForCell,
   registerPipeRuntime,
   setPipeBlockInteractionAttach,
@@ -117,6 +127,7 @@ type InteractionMode =
   | 'dragging'
   | 'placing'
   | 'placing-pipe'
+  | 'rerouting-pipe'
   | 'blueprint-select'
   | 'blueprint-stamp'
   | 'moving-cell';
@@ -154,6 +165,13 @@ export interface DragController {
       botRadius: number;
       botCooldownMs: number;
       botCooldownRemaining: number;
+      botPhase?: 'idle' | 'approaching' | 'returning' | 'going-home';
+      botTargetBlockId?: number | null;
+      botDestCellId?: number | null;
+      botWorkerX?: number;
+      botWorkerY?: number;
+      botSpeed?: number;
+      botCarried?: Value | null;
     },
     ruleWarehouseState?: {
       ruleId: string;
@@ -362,13 +380,16 @@ export function createDragController(app: Application, canvasLayer: Container): 
       return;
     }
 
-    // Clear pending state.
+    // Clear pending state. Slice 6.17: ghosts ease out via `fadeAndDestroy`
+    // instead of vanishing on a frame, giving the firing a small visible
+    // exhale. The pendingDisplays slot is cleared synchronously so the
+    // logical cell state is correct immediately; the visual lingers
+    // ~180 ms in the cell container before destroying itself.
     for (let i = 0; i < cell.pending.length; i++) {
       cell.pending[i] = null;
       const display = cell.pendingDisplays[i];
       if (display) {
-        cell.container.removeChild(display);
-        display.destroy({ children: true });
+        fadeAndDestroy(display);
         cell.pendingDisplays[i] = null;
       }
     }
@@ -649,6 +670,10 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return 'Factor';
       case 'square-root':
         return 'Square Root';
+      case 'negation':
+        return 'Negation';
+      case 'inversion':
+        return 'Inversion';
       case 'warehouse':
         return 'Warehouse';
       case 'warehouse-rule':
@@ -662,7 +687,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
       case 'cultivation-fibonacci':
         return 'Fibonacci cultivation';
       case 'cleanup-bot':
-        return 'Cleanup bot';
+        return 'Translation Operator';
     }
   }
 
@@ -697,6 +722,10 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return drawFactorCell(0, 0);
       case 'square-root':
         return drawSquareRootCell(0, 0);
+      case 'negation':
+        return drawNegationCell(0, 0);
+      case 'inversion':
+        return drawInversionCell(0, 0);
       case 'warehouse':
         return drawWarehouseCell(0, 0);
       case 'warehouse-rule': {
@@ -768,6 +797,16 @@ export function createDragController(app: Application, canvasLayer: Container): 
           text: '√ awaits a non-negative input. Non-squares emerge as something irrational.',
           key: 'first_square_root_placed',
         };
+      case 'negation':
+        return {
+          text: 'Negation: a single input, flipped in sign. The minus sign on demand.',
+          key: 'first_negation_placed',
+        };
+      case 'inversion':
+        return {
+          text: 'Inversion: n becomes 1/n. The fuel cost is signed — small inputs to big outputs accept negative fuel.',
+          key: 'first_inversion_placed',
+        };
       case 'warehouse':
         return {
           text: 'Warehouse: deposits on the left, withdrawals on the right. Untyped until the first drop.',
@@ -800,7 +839,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         };
       case 'cleanup-bot':
         return {
-          text: 'A cleanup bot. It sweeps loose blocks within reach into a nearby warehouse of matching type.',
+          text: 'A Translation Operator. The worker fetches loose blocks within reach and carries them to a matching warehouse.',
           key: 'first_cleanup_bot',
         };
     }
@@ -897,6 +936,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
         botRadius: number;
         botCooldownMs: number;
         botCooldownRemaining: number;
+        botPhase?: 'idle' | 'approaching' | 'returning' | 'going-home';
+        botTargetBlockId?: number | null;
+        botDestCellId?: number | null;
+        botWorkerX?: number;
+        botWorkerY?: number;
+        botSpeed?: number;
+        botCarried?: Value | null;
       },
       ruleWarehouseState?: {
         ruleId: string;
@@ -963,6 +1009,28 @@ export function createDragController(app: Application, canvasLayer: Container): 
         placed.botRadius = botState.botRadius;
         placed.botCooldownMs = botState.botCooldownMs;
         placed.botCooldownRemaining = botState.botCooldownRemaining;
+        // Phase-machine fields (Slice 6.11). Pre-v14 saves omit them and
+        // we fall through to the addCell defaults: idle, worker at home,
+        // empty-handed. Cell-id and block-id refs are validated lazily by
+        // the next tick — unresolvable refs revert to idle.
+        placed.botPhase = botState.botPhase ?? 'idle';
+        placed.botTargetBlockId = botState.botTargetBlockId ?? null;
+        placed.botDestCellId = botState.botDestCellId ?? null;
+        placed.botWorkerX = botState.botWorkerX ?? placed.container.x;
+        placed.botWorkerY = botState.botWorkerY ?? placed.container.y;
+        placed.botSpeed = botState.botSpeed ?? 100;
+        placed.botCarried = botState.botCarried ?? null;
+        // Push the saved walk progress into the visual so a save loaded
+        // mid-carry shows the worker where it was, with its block in
+        // hand. The next tick keeps walking from here.
+        const handles = getBotHandles(placed.container);
+        if (handles) {
+          handles.setWorkerLocal(
+            (placed.botWorkerX ?? placed.container.x) - placed.container.x,
+            (placed.botWorkerY ?? placed.container.y) - placed.container.y,
+          );
+          handles.setCarried(placed.botCarried);
+        }
       }
       // Restore pending input displays without re-firing the cell.
       for (let i = 0; i < pending.length && i < placed.inputs.length; i++) {
@@ -1008,7 +1076,8 @@ export function createDragController(app: Application, canvasLayer: Container): 
         if (!ghost || !source || !lastCursor) return;
         const sp = currentSourcePos();
         if (!sp) return;
-        ghost.redraw(sp, lastCursor);
+        // Source has a port tangent; cursor (dest preview) has none.
+        ghost.redraw(sp, lastCursor, pipeEndpointDirection(source), null);
       });
 
       const onMove = (e: PointerEvent): void => {
@@ -1017,7 +1086,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         if (!source || !ghost) return;
         const sp = currentSourcePos();
         if (!sp) return;
-        ghost.redraw(sp, c);
+        ghost.redraw(sp, c, pipeEndpointDirection(source), null);
       };
 
       const onClick = (e: PointerEvent): void => {
@@ -1037,7 +1106,9 @@ export function createDragController(app: Application, canvasLayer: Container): 
             return;
           }
           source = hit.endpoint;
-          ghost = drawPipe(hit.pos, { x, y }, magnitude);
+          // Source tangent comes from the port; dest is still the cursor
+          // until the second click resolves it.
+          ghost = drawPipe(hit.pos, { x, y }, magnitude, pipeEndpointDirection(hit.endpoint), null);
           ghost.container.alpha = 0.55;
           canvasLayer.addChild(ghost.container);
           return;
@@ -1055,7 +1126,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
         const sp = currentSourcePos();
         if (!sp) return;
         ghost.container.alpha = 1;
-        ghost.redraw(sp, hit.pos);
+        ghost.redraw(
+          sp,
+          hit.pos,
+          pipeEndpointDirection(source),
+          pipeEndpointDirection(hit.endpoint),
+        );
 
         const placed = addPipe(source, hit.endpoint, magnitude, ghost.container, cooldownMs);
         registerPipeRuntime(placed.id, {
@@ -1107,7 +1183,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
         // changes; the player loses a pipe but the world stays consistent.
         return;
       }
-      const visual = drawPipe(srcPos, dstPos, magnitude);
+      const visual = drawPipe(
+        srcPos,
+        dstPos,
+        magnitude,
+        pipeEndpointDirection(source),
+        pipeEndpointDirection(dest),
+      );
       canvasLayer.addChild(visual.container);
       const placed = addPipe(source, dest, magnitude, visual.container, cooldownMs);
       if (typeof cooldownRemaining === 'number') placed.cooldownRemaining = cooldownRemaining;
@@ -1401,6 +1483,106 @@ export function createDragController(app: Application, canvasLayer: Container): 
     };
   }
 
+  /**
+   * Slice 6.12 — pipe re-routing. Drags one end of a pipe to a new
+   * compatible port. Captures the original endpoint for snap-back,
+   * previews the curve following the cursor each pointermove, and on
+   * pointerup either commits to a resolved port (`resolvePipeEndpoint`
+   * is the same validator the fresh-placement flow uses) or restores
+   * the original. Click-without-drag is a deliberate no-op so a misfire
+   * costs nothing.
+   */
+  function beginPipeReroute(pipe: PlacedPipe, end: 'source' | 'dest'): void {
+    if (mode !== 'idle') return;
+    mode = 'rerouting-pipe';
+    document.body.style.cursor = 'crosshair';
+    const original = end === 'source' ? pipe.source : pipe.dest;
+    let moved = false;
+
+    const onMove = (ev: PointerEvent): void => {
+      const r = rectOf();
+      const sx = ev.clientX - r.left;
+      const sy = ev.clientY - r.top;
+      const c = screenToCanvas(sx, sy);
+      // Only flip `moved` once we've passed a small threshold — a tiny
+      // wobble during a click shouldn't be treated as a drag.
+      if (!moved) {
+        const origPos = endpointPosition(original);
+        if (origPos && Math.hypot(c.x - origPos.x, c.y - origPos.y) > 4) {
+          moved = true;
+        }
+      }
+      if (moved) previewPipeEndpoint(pipe, end, c);
+    };
+
+    const onUp = (ev: PointerEvent): void => {
+      if (ev.button !== 0) return;
+      if (!moved) {
+        // Pure click — no preview was ever shown, no commit needed. The
+        // visual is unchanged. Stay quiet so accidental clicks don't
+        // surface narrator chatter.
+        cleanup();
+        return;
+      }
+      const r = rectOf();
+      const sx = ev.clientX - r.left;
+      const sy = ev.clientY - r.top;
+      const c = screenToCanvas(sx, sy);
+      const hit = resolvePipeEndpoint(end, c.x, c.y, sx, sy);
+      if (hit && !endpointsEqual(original, hit.endpoint)) {
+        setPipeEndpoint(pipe, end, hit.endpoint);
+        showMarginalia('Pipe re-routed.', 'pipe_rerouted');
+      } else {
+        // No compatible target OR same endpoint as before — snap back.
+        // Snap-back is silent unless the player actually tried to move
+        // the pipe somewhere invalid.
+        refreshPipeVisual(pipe);
+        if (!hit) {
+          showMarginalia(
+            end === 'source'
+              ? 'A pipe source must be a cell output or the river.'
+              : 'A pipe destination must be a cell or warehouse input port.',
+            'pipe_reroute_invalid',
+          );
+        }
+      }
+      cleanup();
+    };
+
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== 'Escape') return;
+      if (moved) refreshPipeVisual(pipe);
+      cleanup();
+    };
+
+    const cleanup = (): void => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('keydown', onKey);
+      document.body.style.cursor = PENCIL_CURSOR_URL;
+      mode = 'idle';
+    };
+
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('keydown', onKey);
+  }
+
+  /** Structural equality on PipeEndpoint discriminated union. */
+  function endpointsEqual(a: PipeEndpoint, b: PipeEndpoint): boolean {
+    if (a.kind !== b.kind) return false;
+    if (a.kind === 'river' && b.kind === 'river') {
+      return a.screenX === b.screenX && a.screenY === b.screenY;
+    }
+    if (
+      (a.kind === 'cell-output' || a.kind === 'cell-input') &&
+      (b.kind === 'cell-output' || b.kind === 'cell-input')
+    ) {
+      return a.cellId === b.cellId && a.portIndex === b.portIndex;
+    }
+    return false;
+  }
+
   // ---- Output-port click handlers (warehouse withdrawal) ----------------
   // A window-level listener watches for left-mouse-down anywhere on the
   // canvas and checks whether the click lands on an output port. For
@@ -1434,6 +1616,18 @@ export function createDragController(app: Application, canvasLayer: Container): 
       }
     }
 
+    // Slice 6.12: plain left-click on a pipe endpoint dot starts a
+    // re-route drag. Tighter tolerance (10 px) than the port hit-zone
+    // (22 px) means a player who wants to withdraw from a warehouse
+    // with an attached pipe can still click on the port edge — only
+    // clicks AT the dot grab the endpoint. Fires after the shift-delete
+    // check so shift+click on an endpoint still deletes the whole pipe.
+    const endpointHit = findPipeEndpointAt(x, y);
+    if (endpointHit) {
+      beginPipeReroute(endpointHit.pipe, endpointHit.end);
+      return;
+    }
+
     const hit = findCellOutputPortAt(x, y);
     if (!hit) return;
     const cell = hit.cell;
@@ -1462,6 +1656,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
   setPipeBlockInteractionAttach(attachBlockInteraction);
   setCultivationBlockInteractionAttach(attachBlockInteraction);
   setFilterBlockInteractionAttach(attachBlockInteraction);
+
+  // Slice 6.17: world.ts dispatches pending-display destruction through
+  // this hook so consumed fuel-slot ghosts get the same fade animation
+  // as operand ghosts (kept here in interaction.ts because world.ts is
+  // pixi-free at the import level).
+  setPendingDisplayDisposer(fadeAndDestroy);
 
   _controller = controller;
   return controller;

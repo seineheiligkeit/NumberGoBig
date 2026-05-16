@@ -1,7 +1,7 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import Decimal from 'break_eternity.js';
-import { pencilStrokeDouble } from './pencil';
-import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
+import { drawDashedRect, pencilStrokeDouble } from './pencil';
+import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 import { computationalCost } from '../cost';
 import type { PlacedCell } from '../world';
 
@@ -125,6 +125,8 @@ export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions)
   // one input that contributes a non-zero magnitude; tier-0 cells (addition,
   // subtraction) keep it hidden permanently. The interaction layer calls
   // `updateCostBadge` whenever pending state mutates.
+  // Slice 6.18: cost badge uses `pencilText` so the small italic stays
+  // crisp at the camera's max 4× zoom.
   const costStyle = new TextStyle({
     fontFamily: PENCIL_FONT_FAMILY,
     fontSize: 13,
@@ -132,7 +134,7 @@ export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions)
     fontWeight: '400',
     fill: GRAPHITE,
   });
-  const costBadge = new Text({ text: '', style: costStyle });
+  const costBadge = pencilText('', costStyle);
   costBadge.anchor.set(0.5);
   costBadge.x = 0;
   costBadge.y = halfH - 12;
@@ -173,17 +175,22 @@ export function updateCostBadge(cell: PlacedCell, level: number = 1): void {
     (_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel',
   );
   const cost = computationalCost(cell.type, operands, level);
-  if (cost.lte(Decimal.dZero)) {
+  if (cost.eq(Decimal.dZero)) {
     badge.text = '';
     badge.alpha = 0;
     return;
   }
-  // "fuel ≥ N" — the cell pays by consuming one block whose magnitude
-  // meets or exceeds this number (Slice 3.5.7). Overpayment is wasted,
-  // so the player wants matched denominations. The Decimal `toString`
-  // emits `eXX` notation for tetration-tier costs — Slice 6.2a will
-  // route this through the magnitude-ladder renderer.
-  badge.text = `fuel ≥ ${cost.toString()}`;
+  // Slice 3.5.7 + 6.15: positive costs show "fuel ≥ N" (consume a block
+  // whose value is at least N); negative costs (Inversion's uphill path)
+  // show "fuel ≤ N" — the block's value must be at most N, i.e. more
+  // negative than N. Decimal `toString` emits `eXX` for tetration-tier
+  // costs; the negative-cost case stays human-readable since inversion
+  // costs cap around -6 or -7 in normal play.
+  if (cost.lt(Decimal.dZero)) {
+    badge.text = `fuel ≤ ${cost.toString()}`;
+  } else {
+    badge.text = `fuel ≥ ${cost.toString()}`;
+  }
   badge.alpha = 0.65;
 }
 
@@ -229,26 +236,5 @@ export function drawPentationCell(x: number, y: number): Container {
   return drawBinaryCell(x, y, { symbol: '↑↑↑', symbolFontSize: 36, hasFuelPort: true });
 }
 
-/**
- * Draws a hand-drawn dashed rectangle centered on (cx, cy). Used for the
- * input drop-zone hints inside binary cells.
- */
-function drawDashedRect(parent: Container, cx: number, cy: number, halfW: number, halfH: number): void {
-  const g = new Graphics();
-  const dashStep = 7;
-
-  for (let dx = -halfW; dx < halfW; dx += dashStep * 2) {
-    g.moveTo(cx + dx, cy - halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy - halfH);
-    g.moveTo(cx + dx, cy + halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy + halfH);
-  }
-  for (let dy = -halfH; dy < halfH; dy += dashStep * 2) {
-    g.moveTo(cx - halfW, cy + dy);
-    g.lineTo(cx - halfW, cy + Math.min(dy + dashStep, halfH));
-    g.moveTo(cx + halfW, cy + dy);
-    g.lineTo(cx + halfW, cy + Math.min(dy + dashStep, halfH));
-  }
-  g.stroke({ color: GRAPHITE, width: 0.9, alpha: 0.32 });
-  parent.addChild(g);
-}
+// Slice 6.16: `drawDashedRect` moved to `pencil.ts` as a shared helper.
+// All cell visuals now import the same implementation.

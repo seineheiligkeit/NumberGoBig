@@ -37,6 +37,8 @@ export type CellType =
   | 'square-root'
   | 'decrement'
   | 'factor'
+  | 'negation'       // Slice 6.14: n ↦ -n. Tier 0, no fuel. Source of negatives.
+  | 'inversion'      // Slice 6.14: n ↦ 1/n. Tier 2, requires NEGATIVE fuel.
   | 'cultivation-arithmetic'
   | 'cultivation-geometric'
   | 'cultivation-fibonacci';
@@ -145,6 +147,17 @@ export const LITERATURE: LitEntry[] = [
     cost: [{ value: 3, count: 200 }],
     costScale: 1.6,
   },
+  // Negation: n ↦ -n (Slice 6.14). Tier 0, no fuel. The point is to give
+  // the player a clean source of negative-valued blocks without grinding
+  // `0 - n` through subtraction. Negatives become fuel for Inversion.
+  // Modest cost: a side-cell, not on the main throughput path.
+  {
+    id: 'negation',
+    kind: 'cell',
+    cellType: 'negation',
+    cost: [{ value: 3, count: 100 }],
+    costScale: 1.6,
+  },
   // Comprehension II: ceiling 100. Cost: one 100 + one 50 + one 25.
   {
     id: 'comprehension_100',
@@ -166,6 +179,24 @@ export const LITERATURE: LitEntry[] = [
     kind: 'cell',
     cellType: 'exponentiation',
     cost: [{ value: 100, count: 200 }],
+    costScale: 1.6,
+  },
+  // Inversion: n ↦ 1/n (Slice 6.14). Tier 2 with REQUIRED negative-fuel
+  // port. Closes the small-numbers economy by turning subtraction's
+  // negatives and division's tiny rationals into productive raw material.
+  //
+  // Cost is denominated in hundreds — half of exp's 200 hundreds — because
+  // inversion is a creative tool, not a throughput shortcut. The
+  // multiplicative path is strictly cheaper for producing big magnitudes
+  // (exp 10^6 costs 2 fuel; the inversion path divide-divide-invert costs
+  // 6+6 = 12 magnitude across positive and negative fuel), so the agent
+  // won't pick it for production. This entry is on the roadmap purely as
+  // a content gate the player pays through.
+  {
+    id: 'inversion',
+    kind: 'cell',
+    cellType: 'inversion',
+    cost: [{ value: 100, count: 100 }],
     costScale: 1.6,
   },
   // Comprehension III: ceiling 250.
@@ -311,12 +342,18 @@ export function costTier(type: CellType): number {
     case 'division':
       return 1;
     case 'exponentiation':
+    case 'inversion':
+      // Inversion's |cost| matches exp's tier — produces a value with
+      // magnitude equal to its operand's log. The fuel is *negative*-
+      // magnitude (sign flipped); the simulator collapses signed
+      // magnitudes to absolute for resource accounting.
       return 2;
     case 'tetration':
       return 4;
     case 'pentation':
       return 8;
     default:
+      // Includes negation (tier 0, free — a sign flip, not an operation).
       return 0;
   }
 }

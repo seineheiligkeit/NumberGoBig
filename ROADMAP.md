@@ -8,8 +8,9 @@ north star is `DESIGN.md`. This file is the execution plan.
 ## 1. Where we are
 
 **Phases 1, 2, 3, 3.5, 4, the Phase 4 UX polish pass, the operator
-+ rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c), and the
-Phase 5.6 pacing-overhaul data port (Slice 6.6) are complete.**
++ rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c), the
+Phase 5.6 pacing overhaul + leveling system (Slices 6.6 + 6.7), and
+the Phase 5 Iteration Wave (Slices 6.11–6.18) are complete.**
 
 The pacing overhaul rebalanced every operator, pipe, and comprehension
 cost against a standalone simulator (`sim/`) that models optimal play
@@ -75,6 +76,43 @@ aesthetic round (warehouse port labels read as italic notebook
 annotations, the cleanup bot's glyph is now a notation-like rotation
 arrow). Save schema is v4. Build clean, type-check zero/zero, ~368 KB
 bundle (~118 KB gzipped).
+
+**Phase 5 Iteration Wave shipped 2026-05-16 (Slices 6.11–6.18).**
+Translation Operators (T-bots) replaced the cleanup-bot teleport with
+animated walking workers that pick up blocks and carry them to
+matching warehouses. Pipes can be re-routed in place by dragging
+either endpoint dot to a new compatible port. Pipe rendering polished
+with port-aware bezier tangents (flow-chart-connector look) and a
+flatter transit-pulse alpha curve. The **Inversion family** landed —
+`negation` (n ↦ −n, tier 0 free), `inversion` (n ↦ 1/n, tier 2 with
+required fuel port), `wh: negative` rule warehouse — built on a new
+**signed-fuel** mechanic: `consumeFuelOrFail` and `spendFuel` now
+match a block's sign against the cost's sign before checking
+magnitude. Subtraction's negatives and Division's tiny rationals
+finally have a productive role. Save schema bumped to v14 (T-bot
+phase fields, optional). Three polish passes closed the wave:
+per-cell-type level-badge offsets + shared `drawDashedRect` helper
+(6.16), micro-animations on emit/consume via new `pixi/micro-anim.ts`
+(6.17), and a typography hierarchy + `pencilText` resolution-boosting
+factory applied to block numerals, cost badges, level badges, and
+stack badges (6.18). Pacing held at ~5h speedrun / ~10h casual to
+Tetration per the sim. See §2 *Phase 5 — Iteration Wave* for slice
+detail and DESIGN.md §6 *Inversion and the Negative-Fuel Pivot* for
+the design intent.
+
+**Next up — Phase 5 remaining:** 6.10 (Literature tabs UI — overdue
+now that Inversion + Negation + `wh: negative` added entries to a
+sidebar at ~60), then 6.8 (deferred level qualities), 6.9 (warehouse
+leveling), 6.3 (Prestige + Ancestral), 6.4 (ordinals + surreals),
+6.5 (named giants).
+
+**Cultivation cells flagged for redesign.** The arithmetic / geometric
+/ Fibonacci cells work mechanically but aren't yet pulling their
+conceptual weight in the larger economy. A future session will rethink
+them from the design level — probably alongside revisiting the
+Harmonic / polynomial / factorial cells deferred from Phase 2, which
+are blocked on this rethink. Don't pile new mechanics onto the
+existing cultivation cells until that conversation happens.
 
 ### Built and verified
 
@@ -479,7 +517,39 @@ can't be tested without operators that produce values at that scale.
 - **`Decimal.layer` drives the tier classifier.** Layer 0 with mag < 1000 is digits; layer 0 with mag < 10⁶ is commas; layer 0 ≥ 10⁶ or layer 1 is sci; layer 2 to ~10⁵ is tower; beyond is arrow. The sci tier's mantissa-and-exponent split works for any layer-1 value, so `2↑↑5 ≈ 2e19728` renders cleanly without overflowing the exponent cap.
 - **Variadic-arrow tier formula.** `costTier('variadic-arrow')` returns the baseline 2 (so `consumeFuelOrFail`'s `>= 2` check treats it as required-fuel); the actual cost is computed inline in `computationalCost` from the runtime arrows-input slot (slot 1).
 
-**Deliverable so far:** the operator hierarchy is complete from successor through arbitrary-arrow hyperoperations. Outputs at every magnitude render in the appropriate notation tier — digits, commas, scientific, power tower, arrow — and the narrator notes each transition. The mid-late game now has a real climb past exponentiation, with each operator requiring tighter fuel routing than the last. Phase 5 remaining: prestige, ordinals/surreals, named giants.
+**Deliverable so far:** the operator hierarchy is complete from successor through arbitrary-arrow hyperoperations. Outputs at every magnitude render in the appropriate notation tier — digits, commas, scientific, power tower, arrow — and the narrator notes each transition. The mid-late game now has a real climb past exponentiation, with each operator requiring tighter fuel routing than the last.
+
+### Phase 5 — Iteration Wave (2026-05-16)
+**Goal:** make the canvas feel alive, reroute pipes without re-placing them, and add a new operator that turns the bottom of the magnitude ladder into raw material. Polish passes interleave at the end so they cover the new cells too.
+
+This wave reordered the previously-planned 6.8 / 6.9 / 6.10 slices behind a higher-priority block of UX, presentation, and one new operator (Inversion). The leveling-quality and warehouse-leveling work stays on the roadmap, just behind this.
+
+| Slice | Content | Status |
+|---|---|---|
+| **6.11** | **Translation Operators (T-bots).** The cleanup-bot family is now *Translation Operators* — the math/physics T̂ shift operator. Internal cell type stays `cleanup-bot` (no save migration); user-visible name + visual upgraded. Each bot now has a walking worker that picks up the target, carries it across the canvas, and sets it down at the warehouse. Per-bot phase machine in `world.ts` (`botPhase`, `botTargetBlockId`, `botDestCellId`, `botWorkerX/Y`, `botCarried`); claim system prevents two bots fighting over the same block. New visual layer in `pixi/cleanup-bot.ts` — station + halo at home, separate worker container with `T` glyph that gets the carried block as a child while returning. Save schema v14 with optional phase fields. Edge cases: target vanishes mid-walk → revert to idle; warehouse full at deposit → drop loose with narrator beat. | ✅ done |
+| **6.12** | **Pipe re-routing (endpoint drag).** Grab either pipe-endpoint dot (10 px tolerance, tighter than the 22 px output-port hit-zone so warehouse withdraw still works near the edges) and drag to a new compatible port. The bezier re-routes live during drag via `previewPipeEndpoint`; release on a compatible port commits via `setPipeEndpoint`, release elsewhere snaps back via `refreshPipeVisual`. New `'rerouting-pipe'` interaction mode. 4 px movement threshold so click-without-drag is a deliberate no-op. Shift+click on an endpoint still deletes the whole pipe (existing shortcut preserved). | ✅ done |
+| **6.13** | **Pipe rendering polish.** Port-aware bezier tangents — pipes now exit each cell along the port's outward axis (`pipeEndpointDirection(ep)`) rather than along the chord, eliminating the visible 45° flip the old chord-orientation heuristic produced. Control-point distance clamped to `[24, len/2]` so very short pipes don't loop back on themselves. Transit-pulse alpha curve flattened (`sin(πt)^0.45 × 0.95`) so the pulse is visible across most of the pipe instead of just at the midpoint. Falls back to chord heuristic when an endpoint has no port (ghost during 2-click placement, mid-drag during re-route). | ✅ done |
+| **6.14** | **Inversion — sim prototype.** Modelled `negation` + `inversion` cells in `sim/catalog.ts` and added them to the default roadmap (`negation` after division, `inversion` after exponentiation). Tier 2 for inversion; cost formula validated. Verified Tetration unlock shifts only +5m 33s (2h 39m → 2h 45m), well inside the 5 h speedrun target. The agent never picks the inversion path for production — exp 10⁶ costs 2 fuel vs. inversion-route's 12 magnitude. New entries are pure content gates, not throughput shortcuts. **Gated 6.15.** | ✅ done |
+| **6.15** | **Inversion + Negation + `wh: negative`.** All three ship together. New `valueRecip(v)` in `value.ts` (variant-aware: integers → `rational(1, n)`, rationals flip num/den, irrationals collapse to `approx`, complex via `(a−bi)/(a²+b²)`). `negation` cell tier 0 free (calls `valueNeg`); `inversion` cell tier 2 with required fuel port and the SIGNED cost formula `cost = -tier × ⌈log₁₀(|output|)⌉` — uphill inversions (|input| < 1 → big output) need negative fuel, downhill inversions need positive fuel, [1, 10) is a free zone. `spendFuel` and `consumeFuelOrFail` generalised to sign-aware matching: a block qualifies iff `valueIsNegative(block) === (cost < 0)` AND `|block| ≥ |cost|`. Cost-preview badge reads `fuel ≥ N` for positive cost and `fuel ≤ N` for negative. New `wh: negative` rule warehouse predicate (`valueIsNegative`). Three Literature entries (`negation` 100 ×3s, `inversion` 100 ×100s, `warehouse_rule_negative` 1 each of −1/−2/−3). First-encounter narrator beat: *"The cost, regrettably, is negative. The cell accepts negative fuel. Do not ask why."* No save schema bump — new cells use the existing generic snapshot path. | ✅ done |
+| **6.16** | **Cell visuals consistency pass.** New `cellLevelBadgeOffset(type)` in `level-badge.ts` returns a per-shape offset so the Roman-numeral badge lands ~24 px from the right edge on every cell (was cramped at 2 px on successor with the old default). `drawDashedRect` consolidated into `pencil.ts` — five identical copies in the cell visuals collapsed to one shared import. Whole-cell rotation standardised to 0.03 rad across the catalog (warehouse + filter were 0.025). | ✅ done |
+| **6.17** | **Micro-animations on emit/consume.** New `pixi/micro-anim.ts` module. `spawnEmitScribble(layer, x, y)` — a 4-stroke pencil flourish at every block-materialisation point, ~260 ms life with a `sin(πt)` alpha curve. Wired into `commitSpawn` so it fires for both new-spawn and merge cases. `fadeAndDestroy(display, dur?)` — replaces instant `removeChild + destroy` for consumed pending-input ghosts. Wired into the three fire paths (manual fire in `interaction.ts`, pipe-driven fire in `pipe.ts`, fuel-slot consume in `world.ts`). World stays pixi-free at the import level via a registered hook (`setPendingDisplayDisposer`); `interaction.ts` registers `fadeAndDestroy` at controller-init time. | ✅ done |
+| **6.18** | **Typography & badge legibility pass.** Hierarchy constants in `typography.ts`: `BADGE` (13 pt italic), `HINT` (12 pt italic), `ARROW` (28 pt), `COUNTER` (18 pt), each with a `.style()` factory. `pencilTextStyle` extended to accept `fontStyle` and weight `'600'`. New `pencilText(text, style)` factory bakes in `PENCIL_TEXT_RESOLUTION = 2` so text stays crisp at the camera's max 4× zoom. Applied to highest-impact Text instances: cost-preview badges (binary / unary / variadic-arrow), level-badge Roman numerals, block numerals (single-line + rational fractions), and stack `×N` badges. Other Text can migrate gradually — the hierarchy is documented in `typography.ts`. | ✅ done |
+
+After the wave: **6.10** (Literature tabs UI) becomes urgent because Inversion + Negation + `wh: negative` added entries to a sidebar already at ~60. Then **6.8** (deferred level qualities) and **6.9** (warehouse leveling) close out Phase 5's mid-game depth. Then **6.3** (prestige + Ancestral), **6.4** (ordinals + surreals), **6.5** (named giants).
+
+**Architectural notes (Iteration Wave):**
+- **Translation Operator path state.** Each bot's runtime grew six fields: `botPhase` (`'idle' | 'approaching' | 'returning' | 'going-home'`), `botTargetBlockId`, `botDestCellId`, `botWorkerX/Y`, `botSpeed`, `botCarried`. The tick advances the worker's stored position toward the active target; arrival triggers the next phase. Legacy `botCooldownMs` / `botCooldownRemaining` retained for save back-compat but no longer consulted — the walk itself is the throttle. Save schema v14 with optional phase fields; pre-v14 saves restore at idle, worker at home.
+- **Pipe endpoint drag** reuses the same `resolvePipeEndpoint` validator as fresh placement, so the rules ("source = cell-output or river; dest = cell-input") are guaranteed identical. New helpers in `pipe.ts`: `findPipeEndpointAt(x, y, tol)`, `previewPipeEndpoint(pipe, end, pos)`, `setPipeEndpoint(pipe, end, endpoint)`, `refreshPipeVisual(pipe)`.
+- **Port-aware tangents.** `pipeEndpointDirection(ep)` returns the outward unit vector for an endpoint (river: `(0,-1)`; cell ports: derived from port offset relative to cell center, snapped to dominant axis). `drawPipe` accepts optional `srcDir`/`dstDir`; when both are provided, control points sit along those tangents (clean flow-chart-connector look); when omitted, falls back to the chord-orientation heuristic.
+- **Negative fuel.** `computationalCost('inversion', [v])` returns a signed `Decimal`. `consumeFuelOrFail` checks `valueIsNegative(slot) === cost.lt(dZero)` then magnitude; `spendFuel` does the same scan across loose, typed warehouses, and rule warehouses. Existing positive-cost cells are unaffected since their costs stay non-negative and positive blocks still match. Narrator marginalia (`first_inversion_negative_fuel`) fires the first time a player inverts a value with `|v| < 1`.
+- **Negation is tier 0 free** — no fuel port — because its only job is to produce the fuel for Inversion. Direct `valueNeg(inputs[0])` in `operate()`. Intentionally quiet (no marginalia).
+- **Micro-anim hook in world.ts.** `setPendingDisplayDisposer` keeps `world.ts` pixi-free at the import level. The renderer wires `fadeAndDestroy` at controller init; `consumeFuelOrFail` calls the registered hook (or falls back to instant destroy when no hook is registered, e.g. tests).
+- **Per-cell-type level-badge offsets.** `cellLevelBadgeOffset(type)` aims for ~24 px from right edge, ~14 px below top edge across every cell shape. Centralised in `level-badge.ts`; `setup.ts` queries it per-cell at subscription time.
+- **Text resolution boost.** `pencilText` bakes in `resolution: 2` so Text textures render at 2× and survive the camera's 4× zoom without pixelating. Memory cost is bounded: ~hundreds of Text nodes in a typical factory, each at 2× pixel area = ~4× per-text texture memory but still small in absolute terms.
+
+**Deliverable achieved:** the canvas reads as a hand-arranged page that moves with the player. T-bots make automation visible (workers actually walk; you watch your factory). Pipes can be re-routed in place without delete-and-replace. The Inversion family closes the small-numbers economy — Subtraction's negatives and Division's tiny rationals finally have a productive role, powered by the new negative-fuel mechanic. The polish trio (consistency, micro-animations, typography) tightened every cell visual and gave block production a small visible exhale on every firing.
+
+**Phase 5 remaining (post-wave):** Literature tabs UI (6.10), deferred level qualities (6.8), warehouse leveling (6.9), prestige + Ancestral (6.3), ordinals + surreals (6.4), named giants (6.5).
 
 ---
 
@@ -542,6 +612,7 @@ Deliberately uncommitted, to be settled by playtesting or experimentation:
 - **Mobile support** — desktop-first; mobile is a re-skin question deferred to post-Phase 3.
 - **Computational cost balance** — only known after playtesting Phase 2
 - **Gallery scope** — how many special-number categories? Capped or open-ended?
+- **Cultivation cells need a fundamental rethink.** The current arithmetic / geometric / Fibonacci implementations work in code but aren't pulling their conceptual weight in the larger economy. The Harmonic / polynomial / factorial cells deferred from Phase 2 are blocked on this rethink. Defer new cultivation work until the design is reopened in a dedicated session. See DESIGN.md §20.
 
 ---
 

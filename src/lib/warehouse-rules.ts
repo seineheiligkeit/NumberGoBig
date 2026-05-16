@@ -24,7 +24,7 @@
  */
 
 import Decimal from 'break_eternity.js';
-import { valueMagnitude, type Value } from './value';
+import { valueIsNegative, valueMagnitude, type Value } from './value';
 
 export interface WarehouseRule {
   id: string;
@@ -95,6 +95,19 @@ export const WAREHOUSE_RULES: readonly WarehouseRule[] = [
     label: 'composite',
     description: 'Accepts composite natural numbers only.',
     test: isCompositeValue,
+  },
+  {
+    // Slice 6.15: the natural fuel reservoir for Inversion. Holds any
+    // negative-valued block — produced by the Negation cell, by
+    // Subtraction (`0 − n`), or by any operator that yields a negative.
+    // The predicate uses `valueIsNegative` to handle every variant
+    // uniformly (real, rational with negative num, irrational with
+    // `-` symbol prefix). Complex blocks never qualify — no total order
+    // on ℂ.
+    id: 'negative',
+    label: '< 0',
+    description: 'Accepts any negative-valued block — fuel for Inversion.',
+    test: valueIsNegative,
   },
 ];
 

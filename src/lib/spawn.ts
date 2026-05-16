@@ -32,6 +32,7 @@ import {
   type PlacedCell,
 } from './world';
 import { drawBlock, updateStackBadge } from './pixi/block';
+import { spawnEmitScribble } from './pixi/micro-anim';
 import { type Value } from './value';
 
 let _attachInteraction: ((b: PlacedBlock) => void) | null = null;
@@ -96,6 +97,10 @@ export function commitSpawn(
   if (target.kind === 'merge') {
     increaseStack(target.block, amount);
     updateStackBadge(target.block);
+    // Slice 6.17: a small pencil flourish at the merge point so the
+    // player notices the stack just grew. The merge block's container
+    // already lives in canvasLayer, so its (x, y) are canvas coords.
+    spawnEmitScribble(canvasLayer, target.block.container.x, target.block.container.y);
     return;
   }
   const block = drawBlock(value, target.x, target.y);
@@ -103,4 +108,6 @@ export function commitSpawn(
   const placed = addBlock(block, value, amount);
   if (amount > 1) updateStackBadge(placed);
   _attachInteraction?.(placed);
+  // Slice 6.17: same flourish at the new spawn point.
+  spawnEmitScribble(canvasLayer, target.x, target.y);
 }

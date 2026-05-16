@@ -25,7 +25,7 @@ import {
   cellLevel,
   cellLevels,
 } from '../world';
-import { applyLevelBadge } from './level-badge';
+import { applyLevelBadge, cellLevelBadgeOffset } from './level-badge';
 import { VALUE_ZERO } from '../value';
 import { family } from '../family';
 import { valueLabelTier } from './value-label';
@@ -197,7 +197,8 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // a future polish task.
   cellLevels.subscribe(() => {
     for (const cell of allCells()) {
-      applyLevelBadge(cell.container, cellLevel(cell.type));
+      const off = cellLevelBadgeOffset(cell.type);
+      applyLevelBadge(cell.container, cellLevel(cell.type), off.x, off.y);
     }
   });
 

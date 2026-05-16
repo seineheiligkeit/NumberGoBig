@@ -506,6 +506,50 @@ export function valueNeg(v: Value): Value {
   }
 }
 
+/**
+ * Reciprocal — `n ↦ 1/n` (Slice 6.15). Returns null for `0` (1/0 is
+ * undefined); the caller handles that with a narrator beat.
+ *
+ * Per-variant semantics:
+ *   - real(integer):   collapses to `rational(1, n)` (exact reciprocal)
+ *   - real(non-int):   `real(1/n)` via `Decimal.div` (loses no information
+ *                      for reals that aren't representable as integer
+ *                      fractions)
+ *   - rational:        `makeRational(den, num)` — flips num/den, with the
+ *                      sign-normalisation and `den===1` collapse the
+ *                      smart ctor already does
+ *   - irrational:      collapses to real `approx`. A symbolic `1/√k`
+ *                      would be a CAS of its own (same call we made for
+ *                      `valueSqrt` rationals)
+ *   - complex:         `1/(a+bi) = (a−bi)/(a²+b²)` — standard formula
+ */
+export function valueRecip(v: Value): Value | null {
+  if (valueIsZero(v)) return null;
+  switch (v.kind) {
+    case 'real': {
+      const num = v.n.toNumber();
+      if (
+        v.n.isFinite() &&
+        Number.isFinite(num) &&
+        Number.isInteger(num) &&
+        Math.abs(num) <= Number.MAX_SAFE_INTEGER
+      ) {
+        return makeRational(Decimal.dOne, v.n);
+      }
+      return { kind: 'real', n: Decimal.dOne.div(v.n) };
+    }
+    case 'rational':
+      return makeRational(v.den, v.num);
+    case 'irrational':
+      return { kind: 'real', n: Decimal.dOne.div(v.approx) };
+    case 'complex': {
+      const denom = v.re.mul(v.re).add(v.im.mul(v.im));
+      if (denom.eq(Decimal.dZero)) return null;
+      return makeComplex(v.re.div(denom), v.im.neg().div(denom));
+    }
+  }
+}
+
 export function valueAbs(v: Value): Value {
   switch (v.kind) {
     case 'real':

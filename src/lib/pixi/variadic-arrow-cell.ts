@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import { pencilStrokeDouble } from './pencil';
-import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
+import { drawDashedRect, pencilStrokeDouble } from './pencil';
+import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 
 /**
  * Variadic Knuth-arrow cell — `a ↑ⁿ b` (Slice 6.1c).
@@ -123,6 +123,7 @@ export function drawVariadicArrowCell(x: number, y: number): Container {
   // Cost-preview badge — same shape as binary-cell.ts. The interaction
   // layer calls `updateVariadicArrowCostBadge` whenever pending state
   // mutates.
+  // Slice 6.18: cost badge uses `pencilText` for crisp text at max zoom.
   const costStyle = new TextStyle({
     fontFamily: PENCIL_FONT_FAMILY,
     fontSize: 13,
@@ -130,7 +131,7 @@ export function drawVariadicArrowCell(x: number, y: number): Container {
     fontWeight: '400',
     fill: GRAPHITE,
   });
-  const costBadge = new Text({ text: '', style: costStyle });
+  const costBadge = pencilText('', costStyle);
   costBadge.anchor.set(0.5);
   costBadge.x = 0;
   costBadge.y = halfH - 12;
@@ -165,22 +166,4 @@ function addPortLabel(
   parent.addChild(t);
 }
 
-function drawDashedRect(parent: Container, cx: number, cy: number, halfW: number, halfH: number): void {
-  const g = new Graphics();
-  const dashStep = 7;
-
-  for (let dx = -halfW; dx < halfW; dx += dashStep * 2) {
-    g.moveTo(cx + dx, cy - halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy - halfH);
-    g.moveTo(cx + dx, cy + halfH);
-    g.lineTo(cx + Math.min(dx + dashStep, halfW), cy + halfH);
-  }
-  for (let dy = -halfH; dy < halfH; dy += dashStep * 2) {
-    g.moveTo(cx - halfW, cy + dy);
-    g.lineTo(cx - halfW, cy + Math.min(dy + dashStep, halfH));
-    g.moveTo(cx + halfW, cy + dy);
-    g.lineTo(cx + halfW, cy + Math.min(dy + dashStep, halfH));
-  }
-  g.stroke({ color: GRAPHITE, width: 0.9, alpha: 0.32 });
-  parent.addChild(g);
-}
+// Slice 6.16: `drawDashedRect` is the shared helper from `pencil.ts`.

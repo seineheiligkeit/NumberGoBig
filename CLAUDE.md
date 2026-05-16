@@ -17,8 +17,9 @@ changes.
 
 ## Current state
 
-**Phases 1–4 complete, plus the operator + rendering legs of Phase 5
-(Slices 6.1a/b/c and 6.2a/b/c).** Phase 1: manual construction of any
+**Phases 1–4 complete, plus Phase 5's operator + rendering legs
+(6.1a/b/c, 6.2a/b/c), the pacing overhaul + leveling system (6.6 +
+6.7), and the Iteration Wave (6.11–6.18).** Phase 1: manual construction of any
 natural number via Successor / Addition / Multiplication /
 Exponentiation plus decomposition (Decrement, Factor); Theorem
 milestones; repeatable Literature with scaling costs; localStorage
@@ -72,8 +73,28 @@ lvl 3 river-tap implemented as a new `tickRiverTapSuccessors` driver;
 Mult/Exp lvl 3 fuel −1 and lvl 5 fuel halved in `cost.ts`; 28 level
 upgrade Literature entries that surface only when their immediate
 target tier is next; Roman-numeral badge at the top-right of every
-leveled cell; save schema v13. See `ROADMAP.md` §1 for slice-by-slice
-notes.
+leveled cell; save schema v13. **Phase 5 Iteration Wave (6.11–6.18,
+shipped 2026-05-16):** Translation Operators replace cleanup-bot
+teleport with animated walking workers carrying blocks across the
+canvas (`pixi/cleanup-bot.ts` + new state machine in `bots.ts`; save
+schema v14 with optional T-bot phase fields); pipe endpoints draggable
+to re-route in place (`findPipeEndpointAt` + `previewPipeEndpoint` +
+`setPipeEndpoint` in `pipe.ts`, `'rerouting-pipe'` mode in
+`interaction.ts`); pipes use port-aware bezier tangents so the curve
+exits each cell along its port's outward axis (`pipeEndpointDirection`
+in `pipe.ts`); the **Inversion family** ships — `negation` (n ↦ −n,
+tier 0 free), `inversion` (n ↦ 1/n, tier 2 with required fuel port),
+`wh: negative` rule warehouse — built on a **signed-fuel** mechanic
+where `consumeFuelOrFail` and `spendFuel` match block sign against
+cost sign before checking magnitude (`valueRecip` in `value.ts`,
+signed cost formula in `cost.ts`); polish trio adds per-cell-type
+level-badge offsets (`cellLevelBadgeOffset` in `level-badge.ts`),
+shared `drawDashedRect` in `pencil.ts`, micro-animations
+(`pixi/micro-anim.ts` with `spawnEmitScribble` + `fadeAndDestroy`),
+and a typography hierarchy in `typography.ts` (`BADGE` / `HINT` /
+`ARROW` / `COUNTER` constants + `pencilText` factory baking in
+`PENCIL_TEXT_RESOLUTION = 2` for crispness at max zoom). See
+`ROADMAP.md` §1 for slice-by-slice notes.
 
 **Pacing target:** ~5h optimal-play speedrun / ~10h casual to
 Tetration. Per the sim, the leveling system makes the climb from
@@ -82,9 +103,18 @@ stall on hundreds-production. Slices 6.8 (deferred level qualities),
 6.9 (warehouse leveling), 6.10 (Literature tabs) are still pending —
 the game is end-to-end playable without them.
 
-**Next:** Slice 6.8 (deferred level qualities) → 6.9 (Warehouse
-leveling) → 6.10 (Literature tabs UI). Then Phase 5's remaining
-slices: Prestige (6.3), ordinals + surreals (6.4), named giants (6.5).
+**Next:** 6.10 (Literature tabs UI — overdue now that Inversion +
+Negation + `wh: negative` added entries to a sidebar at ~60), then
+6.8 (deferred level qualities), 6.9 (Warehouse leveling), 6.3
+(Prestige + Ancestral), 6.4 (ordinals + surreals), 6.5 (named
+giants). See ROADMAP.md §2 for slice detail.
+
+**Cultivation cells flagged for redesign.** The arithmetic / geometric
+/ Fibonacci implementations work in code but their conceptual role in
+the larger economy isn't settled — the user wants to rethink them in a
+future session. Don't add new cultivation mechanics until that
+happens. The Harmonic / polynomial / factorial cells deferred from
+Phase 2 are blocked on this rethink. See DESIGN.md §20.
 
 ## Pacing simulator
 
@@ -126,29 +156,40 @@ src/
 │   │                          zeroCount, countByValue, achievements, unlocks,
 │   │                          purchaseCounts, comprehension, dirtyTick).
 │   │                          spendValue / spendFuel scan loose + warehouses +
-│   │                          warehouse-rule items (Slice 3.5.3/7); recompute
-│   │                          folds warehouse contents into both Total Score and
+│   │                          warehouse-rule items (Slice 3.5.3/7). spendFuel
+│   │                          and consumeFuelOrFail are sign-aware since 6.15:
+│   │                          a block qualifies iff valueIsNegative(b) ===
+│   │                          (cost < 0) AND |b| ≥ |cost|. recompute folds
+│   │                          warehouse contents into both Total Score and
 │   │                          countByValue. Fuel helpers (operandPending,
 │   │                          operandsFilled, fuelPortIndex, hasFuelPipeAttached,
 │   │                          consumeFuelOrFail) used by the two fire paths.
+│   │                          setPendingDisplayDisposer (6.17) is the renderer
+│   │                          hook for fading consumed pending-input ghosts —
+│   │                          keeps world.ts pixi-free at the import level.
 │   │                          Snapshot/reset/restore mutators for persistence
 │   ├── cell-types.ts          CellType union, CELL_SHAPES (multi-port outputs,
-│   │                          with `kind: 'operand'|'fuel'` on inputs since 3.5.5),
-│   │                          operate() → { emits, marginalia? }. Cost &
-│   │                          cultivation math re-exported from `./cost`.
+│   │                          with `kind: 'operand'|'fuel'` on inputs since 3.5.5;
+│   │                          since 6.15 includes `negation` and `inversion` —
+│   │                          inversion has a required fuel port at unary
+│   │                          geometry), operate() → { emits, marginalia? }.
+│   │                          Cost & cultivation math re-exported from `./cost`.
 │   ├── cost.ts                Pure math: magnitude-scaled computationalCost
 │   │                          (returns Decimal; variadic-arrow's `2^n` tier is
-│   │                          a special case), cultivationEmit,
-│   │                          cultivationEmissionCost (also Decimal),
-│   │                          costTier (exported so consumeFuelOrFail can
-│   │                          gate tier-2+ cells out of the global fuel pool).
+│   │                          a special case). Since 6.15 inversion has a
+│   │                          SIGNED cost branch: `cost = -tier × ⌈log₁₀(|output|)⌉`
+│   │                          so uphill inversions (|input| < 1) return negative
+│   │                          Decimals and downhill return positive. cultivationEmit,
+│   │                          cultivationEmissionCost (also Decimal), costTier
+│   │                          (exported so consumeFuelOrFail can gate tier-2+
+│   │                          cells out of the global fuel pool).
 │   │                          Lives outside cell-types so renderers (binary-cell,
 │   │                          cultivation-cell) can import the formulas without
 │   │                          threading a runtime cycle back through cell-types.
 │   ├── warehouse-rules.ts     WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
-│   │                          `prime`, `composite`) + getWarehouseRule. Same
-│   │                          predicate vocabulary Filters and predicate-cost
-│   │                          Literature entries use.
+│   │                          `prime`, `composite`, `negative` — 6.15) +
+│   │                          getWarehouseRule. Same predicate vocabulary Filters
+│   │                          and predicate-cost Literature entries use.
 │   ├── classify.ts            Gallery-side classifiers — isPrime, isPerfect,
 │   │                          FAMOUS_NUMBERS catalog, integerFromKey.
 │   ├── filter.ts              routeViaFilter — Filter cells' route path,
@@ -168,24 +209,42 @@ src/
 │   │                          geometric scaling + canAfford
 │   ├── marginalia.ts          Narrator-note store + showMarginalia (key-dedup);
 │   │                          snapshot/restoreSeenMarginalia for persistence
-│   ├── persistence.ts         Versioned SaveData (v10) — blocks, cells (with
-│   │                          warehouse/rule-warehouse/cultivation/bot state),
-│   │                          pipes (with cooldownRemaining), achievements,
-│   │                          unlocks, purchaseCounts, seenMarginalia, camera,
-│   │                          comprehension, discoveries. Debounced autosave +
-│   │                          beforeunload. Structural typeguard on load.
-│   │                          v1→v10 migration chain
+│   ├── persistence.ts         Versioned SaveData (v14) — blocks, cells (with
+│   │                          warehouse/rule-warehouse/cultivation/bot state;
+│   │                          bot state now carries optional T-bot phase fields
+│   │                          since 6.11), pipes (with cooldownRemaining),
+│   │                          achievements, unlocks, purchaseCounts, cellLevels,
+│   │                          pipeLevels, seenMarginalia, camera, comprehension,
+│   │                          discoveries. Debounced autosave + beforeunload.
+│   │                          Structural typeguard on load. v1→v14 migration chain.
 │   ├── camera.ts              Pan (mid-mouse / right-mouse drag) + zoom (wheel to
 │   │                          cursor). screenToCanvas helper drives every
 │   │                          hit-test in the interaction layer
 │   ├── pipe.ts                Pipe simulation tick (peek/pull source, dest accepts,
 │   │                          transit). Stall timer + setJammed visualisation.
 │   │                          findPipeAt / deletePipe for shift-click removal.
+│   │                          Slice 6.12: findPipeEndpointAt + previewPipeEndpoint
+│   │                          + setPipeEndpoint + refreshPipeVisual for the
+│   │                          re-route flow. Slice 6.13: pipeEndpointDirection
+│   │                          (river: (0,-1); cell ports: outward axis from port
+│   │                          offset) for port-aware bezier tangents.
 │   │                          Equation-cell retry pass for cost-blocked cells.
 │   │                          fireCellViaPipe is the canonical fire path
 │   ├── cultivation.ts         Per-tick cultivation cell emission; captureSeed()
-│   ├── bots.ts                Cleanup bot tick — closest-block to closest-matching-
-│   │                          warehouse with pulse line
+│   ├── bots.ts                Translation Operator (T-bot) tick (Slice 6.11) —
+│   │                          four-phase state machine per bot: idle → search
+│   │                          for unclaimed loose block + matching warehouse;
+│   │                          approaching → walk worker toward target, on
+│   │                          arrival pick up and decreaseStack; returning →
+│   │                          walk toward destination warehouse, on arrival
+│   │                          deposit (or drop loose if full); going-home →
+│   │                          walk back to station, then idle. Claim system
+│   │                          (botTargetBlockId) prevents two bots fighting
+│   │                          over the same block. The walk is the throttle —
+│   │                          legacy botCooldownMs retained only for save
+│   │                          back-compat. Internal type name stays
+│   │                          `cleanup-bot`; user-visible name is
+│   │                          "Translation Operator".
 │   ├── cursors.ts             Pencil-style SVG cursor URLs
 │   ├── interaction.ts         Drag controller (singleton): drag, cell placement,
 │   │                          pipe placement (two-click), warehouse output click,
@@ -195,10 +254,32 @@ src/
 │       ├── setup.ts           Bootstraps the scene + camera + load/autosave +
 │       │                      app.ticker(cultivation, pipes, equation retry, bots)
 │       ├── paper.ts           Cream + faint blue squared grid
-│       ├── pencil.ts          pencilStroke / pencilStrokeDouble (wobbly graphite)
-│       ├── typography.ts      PENCIL_FONT_FAMILY, GRAPHITE, pencilTextStyle —
-│       │                      shared text constants for the pencil aesthetic
-│       ├── block.ts           drawBlock + updateStackBadge + applyComprehensionStyle
+│       ├── pencil.ts          pencilStroke / pencilStrokeDouble (wobbly graphite).
+│       │                      drawDashedRect (Slice 6.16) — shared dashed-rect
+│       │                      helper used by every cell visual's drop-zone hint.
+│       ├── typography.ts      PENCIL_FONT_FAMILY, GRAPHITE, pencilTextStyle.
+│       │                      Slice 6.18: BADGE / HINT / ARROW / COUNTER
+│       │                      typography-hierarchy constants + .style() factories;
+│       │                      pencilText(text, style) bakes in PENCIL_TEXT_RESOLUTION
+│       │                      = 2 so Text textures stay crisp at the camera's
+│       │                      max 4× zoom. Apply to any Text that needs to
+│       │                      survive camera scaling (canvasLayer children).
+│       ├── micro-anim.ts      Slice 6.17. spawnEmitScribble(layer, x, y) — a
+│       │                      4-stroke pencil flourish at block-materialisation
+│       │                      points, ~260 ms life with sin(πt) alpha curve.
+│       │                      Wired into spawn.commitSpawn for every emit.
+│       │                      fadeAndDestroy(display, dur?) — ease-out
+│       │                      replacement for instant removeChild + destroy;
+│       │                      used in the three fire paths (interaction.ts,
+│       │                      pipe.ts, world.ts via setPendingDisplayDisposer).
+│       ├── level-badge.ts     applyLevelBadge installs/updates the Roman-numeral
+│       │                      badge on a leveled cell's container.
+│       │                      cellLevelBadgeOffset(type) (Slice 6.16) returns
+│       │                      per-cell-type offsets so the badge lands ~24 px
+│       │                      from the right edge regardless of cell shape.
+│       ├── block.ts           drawBlock + updateStackBadge + applyComprehensionStyle.
+│       │                      Slice 6.18: numerals and stack badges use
+│       │                      pencilText for crispness at max zoom.
 │       ├── river.ts           500-zero parallax flow, interactive
 │       ├── successor-cell.ts  Unary { } visual
 │       ├── binary-cell.ts     Shared visual for +, −, ×, ÷, ^, ↑↑, ↑↑↑ cells.
@@ -215,16 +296,30 @@ src/
 │       │                      `drawValueLabel` returns the right Container per
 │       │                      tier; block.ts:drawNumeralInto routes real Values
 │       │                      through it.
-│       ├── unary-cell.ts      Shared visual for Decrement / Factor cells
+│       ├── unary-cell.ts      Shared visual for Decrement / Factor / Square
+│       │                      Root / Negation / Inversion cells. hasFuelPort
+│       │                      option (6.15) adds the fuel socket + cost-preview
+│       │                      badge for Inversion (the only unary tier-2 cell).
 │       ├── warehouse-cell.ts  Warehouse visual (typed + rule-based) +
 │       │                      updateWarehouseBadge. Rule label baked into the
 │       │                      centre glyph at construction.
 │       ├── cultivation-cell.ts Cultivation cell visual + updateCultivationBadge.
 │       │                      Badge shows `seed: V` and `next ≥ N` (next-emission
 │       │                      cost, Slice 3.5.6).
-│       ├── cleanup-bot.ts     Bot visual + sweep pulse helper
+│       ├── cleanup-bot.ts     Translation Operator (T-bot) visual (Slice 6.11).
+│       │                      Stationary station + dashed search-radius halo at
+│       │                      the placed position; separate worker container
+│       │                      with `T` glyph whose local position is driven by
+│       │                      bots.ts each tick. Carried block is parented on
+│       │                      the worker as a child while returning, cleared
+│       │                      on dropoff. getBotHandles(container) returns the
+│       │                      setWorkerLocal + setCarried API for the sim layer.
 │       └── pipe-visual.ts     Magnitude-weighted pencil pipe + transit pulse +
-│                              setJammed dashed-red state + destroy hook
+│                              setJammed dashed-red state + destroy hook. Slice
+│                              6.13: port-aware bezier tangents via optional
+│                              srcDir/dstDir args on drawPipe / redraw; control-
+│                              point distance clamped to [24, len/2] so short
+│                              pipes don't loop; flatter pulse alpha curve.
 └── ui/
     ├── ScoreHeader.svelte     Σ counter (top-right)
     ├── Literature.svelte      Slide-in shop sidebar (right)
@@ -328,3 +423,15 @@ The dev server is `npm run dev` (auto-opens on port 5173).
   whether the underlying approach is wrong before tuning numbers.
 - Don't drift from the design pillars in `DESIGN.md` §2 — they were
   established through extensive brainstorming.
+- **Cultivators are due for a design rethink.** Arithmetic / geometric
+  / Fibonacci cells work in code; their conceptual role doesn't.
+  Avoid extending cultivation until the user reopens that design.
+- **Inversion (`1/x`) introduces "negative fuel"** — signed costs paid
+  by negative blocks. When working on it, see DESIGN.md §6 *Inversion
+  and the Negative-Fuel Pivot* and ROADMAP.md slice 6.15. The mechanic
+  must be sim-validated (slice 6.14) before any game code lands.
+- **The user's best new mechanics integrate, they don't isolate.** When
+  he pitches something new, look first for which existing under-used
+  systems it makes essential — not just what content it adds. Inversion
+  is the canonical example: its real point is giving Subtraction and
+  Division new economic purpose, not the rationals it produces.

@@ -82,10 +82,16 @@ import { valueRestore, type ValueSnapshot } from './value';
  * `pipeLevels` arrays storing per-cell-type and per-pipe-magnitude
  * upgrade levels. Pre-v13 saves have no leveling state; the migration
  * is version-only — every primitive defaults to level 1.
+ *
+ * **v14 — Slice 6.11 Translation Operators**: cleanup-bot `botState`
+ * gained optional phase-machine fields (`botPhase`, `botTargetBlockId`,
+ * `botDestCellId`, `botWorkerX/Y`, `botSpeed`, `botCarried`). Pre-v14
+ * saves omit them; the rehydrator falls back to idle defaults
+ * (worker at home position, empty-handed). Pure version bump.
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 13;
+const SAVE_VERSION = 14;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -278,7 +284,9 @@ export function loadFromStorage(): SaveData | null {
     }
     // v12 → v13: leveling system landed. v12 saves have no level state;
     // every cell/pipe defaults to level 1. Pure version bump.
-    if (parsed.version === 12) {
+    // v13 → v14: Translation Operator phase-machine fields added to
+    // botState. Pre-v14 cleanup-bots restore at idle, worker at home.
+    if (parsed.version === 12 || parsed.version === 13) {
       return { ...(parsed as SaveData), version: SAVE_VERSION };
     }
     console.warn(
@@ -460,7 +468,22 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
             cultivationCooldownRemaining: cell.cultivationState.cultivationCooldownRemaining,
           }
         : undefined,
-      cell.botState,
+      cell.botState
+        ? {
+            botRadius: cell.botState.botRadius,
+            botCooldownMs: cell.botState.botCooldownMs,
+            botCooldownRemaining: cell.botState.botCooldownRemaining,
+            botPhase: cell.botState.botPhase,
+            botTargetBlockId: cell.botState.botTargetBlockId,
+            botDestCellId: cell.botState.botDestCellId,
+            botWorkerX: cell.botState.botWorkerX,
+            botWorkerY: cell.botState.botWorkerY,
+            botSpeed: cell.botState.botSpeed,
+            botCarried: cell.botState.botCarried
+              ? valueRestore(cell.botState.botCarried)
+              : null,
+          }
+        : undefined,
       cell.ruleWarehouseState
         ? {
             ruleId: cell.ruleWarehouseState.ruleId,

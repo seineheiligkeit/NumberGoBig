@@ -1,6 +1,6 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStroke, pencilStrokeDouble } from './pencil';
-import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
+import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 import type { PlacedBlock } from '../world';
 import { valueExceeds, valueLabel, type Value } from '../value';
 import { valueColor } from '../family';
@@ -111,7 +111,12 @@ function complexFontSize(v: Value & { kind: 'complex' }): number {
 }
 
 /** Single-line text numeral with the family colour. Used by `real` and
- *  `irrational`. Per-instance jitter for hand-placed feel. */
+ *  `irrational`. Per-instance jitter for hand-placed feel.
+ *
+ *  Slice 6.18: routed through `pencilText` so block numerals stay crisp
+ *  at the camera's max 4× zoom. With ~hundreds of blocks visible at
+ *  once in a mid-game factory, this is the single highest-impact
+ *  Text-resolution change. */
 function drawSingleLineNumeral(container: Container, value: Value, baseSize: number): void {
   const sizeJitter = (Math.random() - 0.5) * 4;
   const style = new TextStyle({
@@ -121,7 +126,7 @@ function drawSingleLineNumeral(container: Container, value: Value, baseSize: num
     fill: valueColor(value),
     align: 'center',
   });
-  const text = new Text({ text: valueLabel(value), style });
+  const text = pencilText(valueLabel(value), style);
   text.anchor.set(0.5);
   text.alpha = 0.93;
   text.rotation = (Math.random() - 0.5) * 0.04;
@@ -159,7 +164,9 @@ function drawRationalNumeral(container: Container, value: Value & { kind: 'ratio
     align: 'center',
   });
 
-  const numerator = new Text({ text: numText, style: numStyle });
+  // Slice 6.18: rational numerals also use `pencilText` for crispness
+  // at zoom — fractions read smaller per-digit than integers.
+  const numerator = pencilText(numText, numStyle);
   numerator.anchor.set(0.5);
   numerator.x = 0;
   numerator.y = -fontSize * 0.7;
@@ -167,7 +174,7 @@ function drawRationalNumeral(container: Container, value: Value & { kind: 'ratio
   numerator.rotation = (Math.random() - 0.5) * 0.03;
   container.addChild(numerator);
 
-  const denominator = new Text({ text: denText, style: denStyle });
+  const denominator = pencilText(denText, denStyle);
   denominator.anchor.set(0.5);
   denominator.x = 0;
   denominator.y = fontSize * 0.7;
@@ -227,15 +234,14 @@ export function updateStackBadge(block: PlacedBlock): void {
     return;
   }
 
-  const badge = new Text({
-    text: label,
-    style: new TextStyle({
-      fontFamily: PENCIL_FONT_FAMILY,
-      fontSize: 22,
-      fontWeight: '400',
-      fill: GRAPHITE,
-    }),
-  });
+  // Slice 6.18: stack badge crisp at zoom — visible on every multi-stack
+  // block in the world.
+  const badge = pencilText(label, new TextStyle({
+    fontFamily: PENCIL_FONT_FAMILY,
+    fontSize: 22,
+    fontWeight: '400',
+    fill: GRAPHITE,
+  }));
   badge.anchor.set(0, 0.5);
   badge.x = 30;
   badge.y = 26;
