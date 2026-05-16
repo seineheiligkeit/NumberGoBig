@@ -6,7 +6,6 @@ import {
   restoreAchievements,
   restoreCellLevels,
   restoreDiscoveries,
-  restorePipeLevels,
   restorePurchaseCounts,
   restoreUnlocks,
   setComprehension,
@@ -16,7 +15,6 @@ import {
   snapshotCells,
   snapshotComprehension,
   snapshotDiscoveries,
-  snapshotPipeLevels,
   snapshotPipes,
   snapshotPurchaseCounts,
   snapshotUnlocks,
@@ -88,10 +86,31 @@ import { valueRestore, type ValueSnapshot } from './value';
  * `botDestCellId`, `botWorkerX/Y`, `botSpeed`, `botCarried`). Pre-v14
  * saves omit them; the rehydrator falls back to idle defaults
  * (worker at home position, empty-handed). Pure version bump.
+ *
+ * **v15 — Phase 6 slice β.1 Comprehension Spine**: the comprehension
+ * ladder dissolves the eight fixed tiers (`comprehension_25` /
+ * `_100` / `_250` / `_1k` / `_10k` / `_100k` / `_1m` / `_1b`) into
+ * a power-of-2 generator (`comp_1` → ≤2, `comp_30` → ≤2^30). Old
+ * comp ids are stripped from `unlocks` and `purchaseCounts`; new
+ * `comp_N` ids are back-filled up to the player's saved ceiling
+ * (rounded UP to the next power of 2). The baseline drops from 10
+ * to 2 in fresh saves; existing players' ceilings are preserved
+ * (or rounded up — never down). See DESIGN.md §9.
+ *
+ * **v16 — Phase 6 slice γ.1 Pipe Catalog Regen**: pipe Literature
+ * dissolves the four fixed-magnitude entries (`pipe_1` / `_10` /
+ * `_100` / `_1k`) into a power-of-2 generator (`pipe_0` → ≤1,
+ * `pipe_29` → ≤2^29). Each is comp-gated (rating < comp). Pipe
+ * leveling DISSOLVES — the `pipeLevels` field, all `pipe_X_lvlY`
+ * Literature entries, and the per-pipe-magnitude level state are
+ * gone. Old pipe ids are mapped to the next-power-of-2 ≥ their
+ * old magnitude so the player's placement capability isn't reduced.
+ * Existing pipe instances on canvas keep their magnitude. See
+ * DESIGN.md §7 + §9.
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 14;
+const SAVE_VERSION = 16;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -114,7 +133,10 @@ export interface SaveData {
   /** Per-cell-type upgrade levels (added in v13). Only non-default (>1)
    *  entries are stored. */
   cellLevels?: [CellType, number][];
-  /** Per-pipe-magnitude upgrade levels (added in v13). */
+  /** Per-pipe-magnitude upgrade levels (added in v13, REMOVED in v16
+   *  alongside the dissolution of pipe leveling). The field stays in the
+   *  SaveData type as optional so v15 saves can still be parsed by
+   *  `isSaveDataLike`; the migration strips it. */
   pipeLevels?: [number, number][];
 }
 
@@ -132,7 +154,7 @@ function serialize(): SaveData {
     pipes: snapshotPipes(),
     discoveries: snapshotDiscoveries(),
     cellLevels: snapshotCellLevels(),
-    pipeLevels: snapshotPipeLevels(),
+    // pipeLevels dropped in v16 (Phase 6 γ.1) — pipe leveling dissolved.
   };
 }
 
@@ -271,23 +293,23 @@ export function loadFromStorage(): SaveData | null {
     if (parsed.version === 9 || parsed.version === 10) {
       return { ...(parsed as SaveData), version: SAVE_VERSION };
     }
-    // v11 → v12: pacing overhaul. The comprehension ladder grew from 3
-    // tiers (≤100/≤1k/≤1M) to 8 (≤25/≤100/≤250/≤1k/≤10k/≤100k/≤1M/≤1B).
-    // Pre-v12 players paid for exactly the legacy IDs they unlocked; the
-    // new sub-tiers were unreachable at the time. We back-fill `unlocks`
-    // and `purchaseCounts` so the player's ceiling is treated as if they'd
-    // earned every comprehension entry at or below it. This matches the
-    // common-sense reading ("I'm at ≤1M, so I implicitly have ≤25 too")
-    // without retroactively charging them.
-    if (parsed.version === 11) {
-      return migrateComprehensionLadder(parsed as SaveData);
+    // v11..v14 → v15: collapsing the fixed-tier comp ladder into the
+    // Phase 6 power-of-2 ladder. v15 → v16: dissolving pipe leveling
+    // + regenerating the pipe ladder on the same power-of-2 model.
+    // Both transforms run for any pre-v16 save; the migrations are
+    // designed to be idempotent and order-independent (comp transform
+    // touches comp ids + ceiling; pipe transform touches pipe ids +
+    // pipeLevels) so they compose cleanly.
+    if (
+      parsed.version === 11 ||
+      parsed.version === 12 ||
+      parsed.version === 13 ||
+      parsed.version === 14
+    ) {
+      return migratePipeLadderToV16(migrateCompLadderToV15(parsed as SaveData));
     }
-    // v12 → v13: leveling system landed. v12 saves have no level state;
-    // every cell/pipe defaults to level 1. Pure version bump.
-    // v13 → v14: Translation Operator phase-machine fields added to
-    // botState. Pre-v14 cleanup-bots restore at idle, worker at home.
-    if (parsed.version === 12 || parsed.version === 13) {
-      return { ...(parsed as SaveData), version: SAVE_VERSION };
+    if (parsed.version === 15) {
+      return migratePipeLadderToV16(parsed as SaveData);
     }
     console.warn(
       `Save version mismatch: got ${parsed.version}, expected ${SAVE_VERSION}. Ignoring save.`,
@@ -308,46 +330,123 @@ export function clearStorage(): void {
 }
 
 /**
- * v11 → v12 migration: back-fills the eight-tier comprehension ladder so
- * pre-overhaul players have lower tiers implicitly granted. A player at
- * ceiling 1,000 (from the legacy `comprehension_1k`) is treated as having
- * also earned `comprehension_25`, `comprehension_100`, and
- * `comprehension_250` — every tier at or below their ceiling. We add to
- * both `unlocks` and `purchaseCounts` so the UI hides these as "owned"
- * rather than offering them as still-purchasable.
+ * v11..v14 → v15: collapses the fixed-tier comprehension ladder into the
+ * Phase 6 power-of-2 ladder (DESIGN.md §9; ROADMAP §2 Phase 6).
  *
- * Doing this in the migration (rather than at runtime) keeps the
- * Literature display logic simple — it only ever has to check
- * `purchaseCount > 0` to know if a once-only entry is done.
+ * Strategy:
+ *   1. Round the player's saved ceiling UP to the next power of 2. Never
+ *      down — comprehension represents capability already paid for.
+ *   2. Strip all old `comprehension_X` ids from `unlocks` and
+ *      `purchaseCounts`. They reference entries that no longer exist.
+ *   3. Back-fill new `comp_N` ids for every tier up to and including the
+ *      resolved ceiling, so the UI hides them as "owned" rather than
+ *      re-offering them.
+ *
+ * Pre-Phase-6 baseline was 10 (auto-granted to cover starting blocks);
+ * Phase 6 baseline is 2. A v14 save with no comp upgrades had comp=10;
+ * post-migration that becomes comp=16 (next power of 2), with comp_2,
+ * comp_3, comp_4 implicitly owned. Never lift capability is lost.
  */
-function migrateComprehensionLadder(data: SaveData): SaveData {
-  const ceilings: Array<[string, number]> = [
-    ['comprehension_25', 25],
-    ['comprehension_100', 100],
-    ['comprehension_250', 250],
-    ['comprehension_1k', 1000],
-    ['comprehension_10k', 10_000],
-    ['comprehension_100k', 100_000],
-    ['comprehension_1m', 1_000_000],
-    ['comprehension_1b', 1_000_000_000],
-  ];
-  const currentCeiling = data.comprehension ?? 10;
+function migrateCompLadderToV15(data: SaveData): SaveData {
+  const v14Ceiling = data.comprehension ?? 10;
+  const v15Ceiling = Math.max(2, nextPowerOf2(v14Ceiling));
+  const tierN = Math.round(Math.log2(v15Ceiling));
 
-  const unlocks = new Set(data.unlocks ?? []);
-  const counts = new Map(data.purchaseCounts ?? []);
+  const oldCompIds = new Set([
+    'comprehension_25',
+    'comprehension_100',
+    'comprehension_250',
+    'comprehension_1k',
+    'comprehension_10k',
+    'comprehension_100k',
+    'comprehension_1m',
+    'comprehension_1b',
+  ]);
 
-  for (const [id, ceiling] of ceilings) {
-    if (ceiling <= currentCeiling) {
-      unlocks.add(id);
-      if ((counts.get(id) ?? 0) === 0) counts.set(id, 1);
-    }
+  const unlocks = new Set(
+    (data.unlocks ?? []).filter((id) => !oldCompIds.has(id)),
+  );
+  const counts = new Map(
+    (data.purchaseCounts ?? []).filter(([id]) => !oldCompIds.has(id)),
+  );
+
+  // Back-fill new ids. `comp_1` is the baseline (ceiling 2) and isn't a
+  // purchasable entry, so we start at n=2.
+  for (let n = 2; n <= tierN; n++) {
+    const id = `comp_${n}`;
+    unlocks.add(id);
+    if ((counts.get(id) ?? 0) === 0) counts.set(id, 1);
   }
 
   return {
     ...data,
     version: SAVE_VERSION,
+    comprehension: v15Ceiling,
     unlocks: [...unlocks],
     purchaseCounts: [...counts],
+  };
+}
+
+/** Returns the smallest power of 2 ≥ n. Floor at 1. */
+function nextPowerOf2(n: number): number {
+  if (n <= 1) return 1;
+  return Math.pow(2, Math.ceil(Math.log2(n)));
+}
+
+/**
+ * v15 → v16: dissolves pipe leveling and regenerates the pipe Literature
+ * ladder on a power-of-2 model. Old pipe ids (`pipe_1` mag 1,
+ * `pipe_10` mag 10, `pipe_100` mag 100, `pipe_1k` mag 1000) map to
+ * `pipe_N` where N is the next-power-of-2 ≥ the old magnitude.
+ * Pipe-level entries (`pipe_X_lvlY`) and the `pipeLevels` save field
+ * are stripped entirely.
+ *
+ * The actual pipe INSTANCES on canvas (in `data.pipes`) keep their
+ * magnitudes — a saved magnitude-10 pipe stays magnitude 10 and
+ * continues to operate. Only the Literature catalog and level state
+ * are reshaped.
+ */
+function migratePipeLadderToV16(data: SaveData): SaveData {
+  // Old pipe placement ids → new pipe ids (next-power-of-2 ≥ old mag).
+  const PIPE_ID_REMAP: Record<string, string> = {
+    pipe_1: 'pipe_0',   // mag 1 = 2^0
+    pipe_10: 'pipe_4',  // 10 → 16 = 2^4
+    pipe_100: 'pipe_7', // 100 → 128 = 2^7
+    pipe_1k: 'pipe_10', // 1000 → 1024 = 2^10
+  };
+
+  // Old pipe-level ids — dropped entirely.
+  const oldPipeLevelIds = new Set<string>();
+  for (const mag of [1, 10, 100]) {
+    for (let lvl = 2; lvl <= 5; lvl++) {
+      oldPipeLevelIds.add(`pipe_${mag === 1 ? '1' : mag}_lvl${lvl}`);
+    }
+  }
+
+  const remapId = (id: string): string | null => {
+    if (oldPipeLevelIds.has(id)) return null; // strip
+    return PIPE_ID_REMAP[id] ?? id;
+  };
+
+  const unlocksOut = new Set<string>();
+  for (const id of data.unlocks ?? []) {
+    const next = remapId(id);
+    if (next !== null) unlocksOut.add(next);
+  }
+
+  const countsOut = new Map<string, number>();
+  for (const [id, count] of data.purchaseCounts ?? []) {
+    const next = remapId(id);
+    if (next === null) continue;
+    countsOut.set(next, (countsOut.get(next) ?? 0) + count);
+  }
+
+  return {
+    ...data,
+    version: SAVE_VERSION,
+    unlocks: [...unlocksOut],
+    purchaseCounts: [...countsOut],
+    pipeLevels: undefined, // strip
   };
 }
 
@@ -482,6 +581,7 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
             botCarried: cell.botState.botCarried
               ? valueRestore(cell.botState.botCarried)
               : null,
+            botRating: cell.botState.botRating,
           }
         : undefined,
       cell.ruleWarehouseState
@@ -526,7 +626,8 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
   if (typeof data.comprehension === 'number') setComprehension(data.comprehension);
   if (data.camera) restoreCamera(data.camera);
   if (data.cellLevels) restoreCellLevels(data.cellLevels);
-  if (data.pipeLevels) restorePipeLevels(data.pipeLevels);
+  // pipeLevels dropped in v16 (Phase 6 γ.1) — the migration strips
+  // the field from older saves before reaching here.
 }
 
 /**

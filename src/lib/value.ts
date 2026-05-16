@@ -773,6 +773,24 @@ export function valueExceeds(v: Value, ceiling: number): boolean {
   return valueMagnitude(v).gt(new Decimal(ceiling));
 }
 
+/**
+ * Phase 6 (DESIGN.md §9): a block is *comprehensible* iff its magnitude
+ * is within the player's Comprehension ceiling. This is the universal
+ * gate the rest of the codebase reads when deciding whether a block
+ * can be lifted, carried by a T-bot, deposited or withdrawn from a
+ * warehouse — anything the player or their automation does *with* a
+ * block. Reads better at call sites than `!valueExceeds(v, c)`.
+ *
+ * Pipes are gated separately at placement (compRequirement on the
+ * Literature entry) and at runtime by their magnitude rating, both of
+ * which keep pipe-carried values within comp by construction. Cells'
+ * output ports get jammed when their next emission would exceed comp
+ * — that's β.3, not β.2.
+ */
+export function valueComprehensible(v: Value, comprehension: number): boolean {
+  return !valueExceeds(v, comprehension);
+}
+
 // ---------------------------------------------------------------------------
 // Display & identity
 // ---------------------------------------------------------------------------

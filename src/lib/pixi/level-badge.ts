@@ -66,12 +66,18 @@ export function cellLevelBadgeOffset(type: CellType): { x: number; y: number } {
     case 'cultivation-arithmetic':
     case 'cultivation-geometric':
     case 'cultivation-fibonacci':
+    case 'cultivation-harmonic':
+    case 'cultivation-polynomial':
+    case 'cultivation-factorial':
       // 168 × 104 — halfW 84, halfH 52.
       return { x: 84 - 24, y: -52 + 14 };
     case 'cleanup-bot':
-      // 56 × 56 — too small for a Roman-numeral badge to read cleanly,
-      // and cleanup-bots aren't leveled in v1 anyway. Default offset is
-      // a safe placeholder if a future tier introduces them.
+    case 'factor-bot':
+    case 'decrement-bot':
+    case 'inversion-bot':
+      // Bot family: 56 × 56 — too small for a Roman-numeral badge to
+      // read cleanly, and bots aren't leveled in v1 anyway. Default
+      // offset is a safe placeholder if a future tier introduces them.
       return { x: 28 - 8, y: -28 + 8 };
   }
 }

@@ -7,10 +7,26 @@
   // The Comprehension cap appears once it matters (after Phase 1 ends, the
   // player will be producing numbers above the default 10).
 
+  // Phase 6: comprehension is power-of-2. The bit-count is the
+  // mathematician's natural reading; pair it with the explicit value
+  // so the player sees both ("Comp ≤ 2^10 (= 1,024)"). Falls back to
+  // a plain "≤ N" for non-power-of-2 values (shouldn't happen post-
+  // v15 migration but defensive).
+  const SUPS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+  function superscript(n: number): string {
+    return String(n)
+      .split('')
+      .map((d) => SUPS[parseInt(d, 10)] ?? d)
+      .join('');
+  }
   function formatComp(n: number): string {
-    if (n >= 1_000_000) return `≤ ${(n / 1_000_000).toFixed(0)}M`;
-    if (n >= 1_000) return `≤ ${(n / 1_000).toFixed(0)}k`;
-    return `≤ ${n}`;
+    if (n < 1) return `≤ ${n}`;
+    const log = Math.log2(n);
+    const tier = Math.round(log);
+    const isExactPow2 = Math.abs(log - tier) < 1e-9;
+    if (!isExactPow2) return `≤ ${n.toLocaleString()}`;
+    if (tier <= 3) return `≤ ${n}`; // ≤2, ≤4, ≤8 read cleanly
+    return `≤ 2${superscript(tier)} (= ${n.toLocaleString()})`;
   }
 </script>
 

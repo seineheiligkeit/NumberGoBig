@@ -76,13 +76,31 @@ export type CellType =
   | 'cultivation-arithmetic'
   | 'cultivation-geometric'
   | 'cultivation-fibonacci'
-  | 'cleanup-bot';
+  // ε.2 — three series the design has called for since Phase 2 (DESIGN
+  // §6 *Cultivation Cells*). All three follow the transformer model:
+  // input × series-coefficient(step).
+  | 'cultivation-harmonic'
+  | 'cultivation-polynomial'
+  | 'cultivation-factorial'
+  | 'cleanup-bot'         // Translation Operator (T-bot)
+  // Decomposer bot family (Phase 6 δ.1, DESIGN §9 — delegated
+  // comprehension). Each walks to an in-range loose block and
+  // transforms it in place. Their rating is independent of player
+  // comp, so they're the ONLY infrastructure able to act on
+  // uncomprehended blocks. Portless like cleanup-bot — they don't
+  // fire through pending inputs; their tick handles everything.
+  | 'factor-bot'
+  | 'decrement-bot'
+  | 'inversion-bot';
 
 export function isCultivationType(t: CellType): boolean {
   return (
     t === 'cultivation-arithmetic' ||
     t === 'cultivation-geometric' ||
-    t === 'cultivation-fibonacci'
+    t === 'cultivation-fibonacci' ||
+    t === 'cultivation-harmonic' ||
+    t === 'cultivation-polynomial' ||
+    t === 'cultivation-factorial'
   );
 }
 
@@ -358,10 +376,26 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
   'cultivation-arithmetic': cultivationShape(),
   'cultivation-geometric': cultivationShape(),
   'cultivation-fibonacci': cultivationShape(),
+  'cultivation-harmonic': cultivationShape(),
+  'cultivation-polynomial': cultivationShape(),
+  'cultivation-factorial': cultivationShape(),
   // Cleanup bots: portless cells. They sweep loose blocks within a radius
   // into the nearest matching warehouse on their own cadence — no inputs
   // for the player to wire, and no outputs to wire from.
   'cleanup-bot': {
+    inputs: [],
+    outputs: [],
+  },
+  // Decomposer bots (Phase 6 δ.1) — portless, tick-driven.
+  'factor-bot': {
+    inputs: [],
+    outputs: [],
+  },
+  'decrement-bot': {
+    inputs: [],
+    outputs: [],
+  },
+  'inversion-bot': {
     inputs: [],
     outputs: [],
   },
@@ -738,12 +772,26 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
     case 'cultivation-arithmetic':
     case 'cultivation-geometric':
     case 'cultivation-fibonacci':
-      // Cultivation cells emit on a timer, not on full-input firing. The
-      // automation tick computes their emissions via `cultivationEmit`;
-      // operate() returns an empty list for exhaustiveness only.
+    case 'cultivation-harmonic':
+    case 'cultivation-polynomial':
+    case 'cultivation-factorial':
+      // Phase 6 ε.1: cultivators are now input-driven transformers.
+      // The fire path (interaction.ts / pipe.ts) short-circuits
+      // `operate` and calls `cultivationEmit(type, input, step)`
+      // directly. This case stays for exhaustiveness only.
       return { emits: [] };
     case 'cleanup-bot':
       // Cleanup bots have no operation — they sweep, they don't fire.
+      return { emits: [] };
+    case 'factor-bot':
+    case 'decrement-bot':
+    case 'inversion-bot':
+      // Decomposer bots are tick-driven (see `bots.ts`) — they walk to
+      // loose blocks and transform them in place. They call `operate`
+      // with the bot's transformation type (`factor` / `decrement` /
+      // `inversion`) on the target block's value; this case in operate
+      // is unreachable from the normal fire path because decomposer
+      // bots have no input ports to fill.
       return { emits: [] };
   }
 }

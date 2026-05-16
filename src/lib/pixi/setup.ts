@@ -10,14 +10,17 @@ import {
   comprehensionLevel,
   markDirty,
   onBlockChange,
+  recordDiscovery,
   unlockAchievement,
+  type PlacedBlock,
 } from '../world';
 import { showMarginalia } from '../marginalia';
 import { installAutosave, loadFromStorage, restoreFromSave } from '../persistence';
 import { loadBlueprintsFromStorage } from '../blueprints';
 import { onCameraChange, setupCamera } from '../camera';
 import { tickEquationCells, tickPipes } from '../pipe';
-import { tickCultivation } from '../cultivation';
+// tickCultivation removed in Phase 6 ε.1 — cultivators now fire like
+// regular operator cells via fireCell / fireCellViaPipe.
 import { tickBots } from '../bots';
 import { tickRiverTapSuccessors } from '../river-tap';
 import {
@@ -26,7 +29,7 @@ import {
   cellLevels,
 } from '../world';
 import { applyLevelBadge, cellLevelBadgeOffset } from './level-badge';
-import { VALUE_ZERO } from '../value';
+import { VALUE_ZERO, valueExceeds } from '../value';
 import { family } from '../family';
 import { valueLabelTier } from './value-label';
 
@@ -72,12 +75,20 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   onCameraChange(() => markDirty());
 
   // World <-> render glue: whenever a stack changes (or a new block lands),
-  // refresh the badge and the Comprehension fade.
-  onBlockChange((block) => {
+  // refresh the badge and Comprehension-aware styling. Phase 6 β.4 (DESIGN
+  // §9) reframes Gallery discoveries and narrator beats as *acts of
+  // comprehension*, not of production — so all of those routes are gated
+  // by the comprehension check below, and the comprehension.subscribe
+  // reveal pass replays them when an upgrade lifts the ceiling.
+  function applyBlockReveal(block: PlacedBlock, cap: number): void {
     updateStackBadge(block);
-    applyComprehensionStyle(block, comprehensionLevel());
-    // First-encounter narrator beats. Marginalia dedups by key, so each
-    // family's beat fires exactly once across the lifetime of the save.
+    applyComprehensionStyle(block, cap);
+    if (valueExceeds(block.value, cap)) return; // uncomprehended — defer
+
+    // Gallery discovery (idempotent — set-keyed by valueKey).
+    recordDiscovery(block.value);
+
+    // First-encounter family beats. Marginalia dedups by key.
     const fam = family(block.value);
     if (fam === 'negative') {
       showMarginalia(
@@ -101,12 +112,7 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
       );
     }
 
-    // Notation-transition beats (Slice 6.2a). DESIGN §17 — each time the
-    // magnitude crosses a rendering tier for the first time, the narrator
-    // notes it. Marginalia dedups by key, so each beat fires exactly once
-    // across the save's lifetime. The `commas` beat is quiet (this is just
-    // "your numbers got bigger"); the `sci` beat is the first true escalation
-    // off conventional notation, so the line carries more weight.
+    // Notation-transition beats (Slice 6.2a) — also gated by comp now.
     const tier = valueLabelTier(block.value);
     if (tier === 'commas') {
       showMarginalia(
@@ -129,11 +135,25 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
         'first_arrow_tier',
       );
     }
-  });
+  }
 
-  // Comprehension upgrades retro-style every existing block on the canvas.
+  onBlockChange((block) => applyBlockReveal(block, comprehensionLevel()));
+
+  // Phase 6 β.4 reveal pass: on every Comprehension upgrade, walk every
+  // block. Newly-comprehensible ones unmask their `?` glyph (via
+  // applyComprehensionStyle), get recorded in the Gallery, and fire
+  // their family/tier narrator beats. Already-known values dedup out
+  // by Set/marginalia keys, so the walk is cheap.
+  //
+  // γ.3: comp upgrades also expand warehouse capacity. Walk warehouse
+  // cells and refresh their badges so the visible `N / cap` updates.
   comprehension.subscribe((cap) => {
-    for (const b of allBlocks()) applyComprehensionStyle(b, cap);
+    for (const b of allBlocks()) applyBlockReveal(b, cap);
+    for (const c of allCells()) {
+      if (c.type === 'warehouse' || c.type === 'warehouse-rule') {
+        c.refreshBadge?.();
+      }
+    }
   });
 
   // Drag controller (also registers itself as module-level singleton)
@@ -206,7 +226,7 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // items between cells. Pinned to Pixi's ticker so it pauses when the tab
   // is hidden — autosave persists state on the way out via beforeunload.
   const advance = (dtMs: number): void => {
-    tickCultivation(dtMs, canvasLayer);
+    // (cultivators are no longer tick-driven — Phase 6 ε.1)
     // River-tap: lvl-3+ Successors emit on their own cadence even
     // without a pipe attached (Slice 6.7).
     tickRiverTapSuccessors(dtMs, canvasLayer);

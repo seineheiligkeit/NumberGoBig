@@ -1,13 +1,10 @@
 import { Container, Graphics, Text, TextStyle } from 'pixi.js';
-import Decimal from 'break_eternity.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
-import { valueLabel } from '../value';
-import { valueColor } from '../family';
-// Both helpers come from `../cost` to avoid a runtime cycle through
-// `../cell-types` (which imports CULTIVATION_CELL_WIDTH from this file).
-import { cultivationEmissionCost, cultivationEmit } from '../cost';
+// Phase 6 ε.1: the magnitude-based emission-cost helpers are no longer
+// consulted by the badge — cultivators now report their step counter.
+// Per-step fuel-cost preview lands in a later sim iteration.
 
 /**
  * Cultivation cells — seed-driven number streams.
@@ -108,7 +105,7 @@ export function drawCultivationCell(_x: number, _y: number, opts: CultivationOpt
     fontWeight: '400',
     fill: GRAPHITE,
   });
-  const seedReadout = new Text({ text: 'seed: —', style: seedReadoutStyle });
+  const seedReadout = new Text({ text: 'step 0', style: seedReadoutStyle });
   seedReadout.anchor.set(0.5);
   seedReadout.x = 0;
   seedReadout.y = halfH - 14;
@@ -159,36 +156,42 @@ export function drawFibonacciCell(x: number, y: number): Container {
   return drawCultivationCell(x, y, { symbol: 'a · Fₙ', symbolFontSize: 24 });
 }
 
+// Phase 6 ε.2 — three series deferred since Phase 2 (DESIGN §6).
+export function drawHarmonicCell(x: number, y: number): Container {
+  return drawCultivationCell(x, y, { symbol: 'a · Hₙ', symbolFontSize: 24 });
+}
+
+export function drawPolynomialCell(x: number, y: number): Container {
+  return drawCultivationCell(x, y, { symbol: 'a · n²', symbolFontSize: 24 });
+}
+
+export function drawFactorialCell(x: number, y: number): Container {
+  return drawCultivationCell(x, y, { symbol: 'a · n!', symbolFontSize: 24 });
+}
+
 export function updateCultivationBadge(cell: PlacedCell): void {
   const tagged = cell.container as Container & {
     __cultivationReadout?: Text;
     __cultivationCostPreview?: Text;
   };
+  // Phase 6 ε.1: cultivators are input-driven transformers — the badge
+  // now displays the cell's internal STEP counter rather than a seed.
+  // Each firing advances the step, so the badge ticks up over time.
   const readout = tagged.__cultivationReadout;
   if (readout) {
-    readout.text = `seed: ${cell.seed === null || cell.seed === undefined ? '—' : valueLabel(cell.seed)}`;
-    readout.alpha = cell.seed === null || cell.seed === undefined ? 0.55 : 0.9;
-    readout.style.fill = cell.seed ? valueColor(cell.seed) : GRAPHITE;
+    const step = cell.cultivationStep ?? 0;
+    readout.text = `step ${step}`;
+    readout.alpha = step > 0 ? 0.9 : 0.55;
+    readout.style.fill = GRAPHITE;
   }
 
-  // Next-emission cost preview (Slice 3.5.6). Only meaningful once seeded.
+  // Cost-preview readout is currently silent under the new model —
+  // the per-step fuel-cost formula will land in a later sim-tuning
+  // iteration. The Text node stays in the DOM for that future use.
   const costBadge = tagged.__cultivationCostPreview;
   if (costBadge) {
-    if (cell.seed === null || cell.seed === undefined) {
-      costBadge.text = '';
-      costBadge.alpha = 0;
-    } else {
-      const step = cell.cultivationStep ?? 0;
-      const nextValue = cultivationEmit(cell.type, cell.seed, step);
-      const nextCost = cultivationEmissionCost(nextValue);
-      if (nextCost.lte(Decimal.dZero)) {
-        costBadge.text = '';
-        costBadge.alpha = 0;
-      } else {
-        costBadge.text = `next ≥ ${nextCost.toString()}`;
-        costBadge.alpha = 0.65;
-      }
-    }
+    costBadge.text = '';
+    costBadge.alpha = 0;
   }
 }
 

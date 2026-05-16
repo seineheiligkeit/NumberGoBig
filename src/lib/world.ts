@@ -9,6 +9,7 @@ import {
 import Decimal from 'break_eternity.js';
 import {
   VALUE_ZERO,
+  valueComprehensible,
   valueEq,
   valueIsNegative,
   valueIsZero,
@@ -105,9 +106,15 @@ export interface PlacedCell {
   /** Time remaining on the current cooldown. */
   cultivationCooldownRemaining?: number;
 
-  // --- Cleanup-bot / Translation-Operator state (Slice 3.6 + 6.11) -----
+  // --- Bot state (Slice 3.6 + 6.11 + δ.1) ------------------------------
   /** Search radius in canvas pixels, anchored on the bot's home position. */
   botRadius?: number;
+  /** Phase 6 δ.1: per-bot magnitude rating. For decomposer bots
+   *  (factor-bot / decrement-bot / inversion-bot) this is independent
+   *  of player Comprehension — fixed at purchase. For cleanup-bot
+   *  (T-bot) the bot caps at the player's current comp (see `bots.ts`
+   *  `tickIdle`), so this field is unused there. */
+  botRating?: number;
   /** Legacy field — Phase 2 had instant-transfer bots on a fixed cooldown.
    *  Slice 6.11 made bots walk; the phase machine itself is the throttle.
    *  Field retained so v13 saves restore cleanly. */
@@ -251,7 +258,14 @@ _discoveredValues.subscribe((s) => {
   _currentDiscoveries = s;
 });
 
-function recordDiscovery(value: Value): void {
+/**
+ * Records a value's `valueKey` in the discoveries set. Idempotent — the
+ * Set dedups across repeated calls. Phase 6 β.4 (DESIGN §9): discovery
+ * is comprehension, not production. The renderer calls this for blocks
+ * that are currently within the player's Comp ceiling; uncomprehended
+ * blocks wait, then get recorded on the comp-upgrade reveal pass.
+ */
+export function recordDiscovery(value: Value): void {
   const key = valueKey(value);
   if (_currentDiscoveries.has(key)) return;
   _discoveredValues.update((s) => {
@@ -262,21 +276,25 @@ function recordDiscovery(value: Value): void {
   });
 }
 
-const _comprehension = writable(10);
+const _comprehension = writable(2);
 /**
  * The player's manual-lift ceiling. Blocks of `|value| > comprehension`
  * cannot be picked up by hand — they must be moved by automation (pipes,
  * bots). The player raises this via Literature upgrades that demand
- * specific number collections. Default 10; first upgrade tier is 100 (per
- * DESIGN §9).
+ * specific number collections.
  *
- * Stored as a plain JS number — the Phase 3 ceilings stay well below
- * Number.MAX_SAFE_INTEGER, and comparisons in `valueExceeds` lift the
- * ceiling into Decimal space on demand.
+ * Phase 6 (DESIGN.md §9): the ladder is power-of-2 and infinite. The
+ * baseline is **Comp ≤ 2** (zeros and ones only); the first paid
+ * Literature entry after Successor is the upgrade to ≤ 4 — teaches
+ * the mechanic in the opening minute.
+ *
+ * Stored as a plain JS number — even tier 30 (2^30 ≈ 1.07B) stays well
+ * below Number.MAX_SAFE_INTEGER, and comparisons in `valueExceeds`
+ * lift the ceiling into Decimal space on demand.
  */
 export const comprehension: Readable<number> = _comprehension;
 
-let _currentComprehension = 10;
+let _currentComprehension = 2;
 _comprehension.subscribe((c) => {
   _currentComprehension = c;
 });
@@ -315,19 +333,13 @@ _cellLevels.subscribe((m) => {
   _currentCellLevels = m;
 });
 
-const _pipeLevels = writable<Map<number, number>>(new Map());
-export const pipeLevels: Readable<Map<number, number>> = _pipeLevels;
-let _currentPipeLevels = new Map<number, number>();
-_pipeLevels.subscribe((m) => {
-  _currentPipeLevels = m;
-});
+// Phase 6 γ.1: pipe leveling DISSOLVED into the Comp ladder. The
+// per-magnitude `_pipeLevels` store, its setters, and its
+// snapshot/restore have been removed. Throughput from pipes comes from
+// placing parallel pipes (Quantity), not from upgrading them.
 
 export function cellLevel(type: CellType): number {
   return _currentCellLevels.get(type) ?? 1;
-}
-
-export function pipeLevel(magnitude: number): number {
-  return _currentPipeLevels.get(magnitude) ?? 1;
 }
 
 /** Throughput multiplier for a level. Doubling per level. */
@@ -347,33 +359,13 @@ export function setCellLevel(type: CellType, level: number): void {
   markDirty();
 }
 
-/** Sets a pipe-magnitude level. Clamped to [1, MAX_LEVEL]. */
-export function setPipeLevel(magnitude: number, level: number): void {
-  const clamped = Math.max(1, Math.min(MAX_LEVEL, level));
-  _pipeLevels.update((m) => {
-    const next = new Map(m);
-    if (clamped === 1) next.delete(magnitude);
-    else next.set(magnitude, clamped);
-    return next;
-  });
-  markDirty();
-}
-
 /** Snapshot for persistence — entries with level > 1 only. */
 export function snapshotCellLevels(): [CellType, number][] {
   return Array.from(_currentCellLevels.entries());
 }
 
-export function snapshotPipeLevels(): [number, number][] {
-  return Array.from(_currentPipeLevels.entries());
-}
-
 export function restoreCellLevels(entries: [CellType, number][]): void {
   _cellLevels.set(new Map(entries));
-}
-
-export function restorePipeLevels(entries: [number, number][]): void {
-  _pipeLevels.set(new Map(entries));
 }
 
 const _dirtyTick = writable(0);
@@ -481,10 +473,11 @@ export function addBlock(container: Container, value: Value, count = 1): PlacedB
     badge: null,
   };
   blocks.push(block);
-  // Record the Gallery discovery — only on the *first* time this value-key
-  // is seen across the lifetime of the save. Idempotent on rehydrate (the
-  // saved set is restored before any addBlock calls fire).
-  recordDiscovery(value);
+  // Discovery used to be recorded here unconditionally. Phase 6 β.4
+  // (DESIGN §9) shifts it to "on reveal" — the renderer
+  // (`applyComprehensionStyle`) records discoveries for blocks within
+  // the player's current Comp, AND on every comp upgrade walks all
+  // blocks to retroactively discover newly-comprehensible ones.
   recompute();
   // Notify renderers so per-block styling (stack badge, comprehension fade)
   // applies immediately rather than on the next stack change.
@@ -850,7 +843,28 @@ export function withdrawSpecificFromRuleWarehouse(
  * Registers a placed cell of the given type at the given container.
  * Port geometry comes from `CELL_SHAPES[type]`.
  */
-/** Default capacity of a freshly-placed warehouse. Upgradeable in later slices. */
+/**
+ * Phase 6 γ.3 (DESIGN §9): warehouse capacity scales with Comprehension.
+ * Baseline at Comp ≤ 2 is `WAREHOUSE_BASE_CAPACITY`; each comp doubling
+ * doubles the cap. Capacity is dynamic — existing warehouses gain space
+ * the moment Comprehension upgrades, without any per-warehouse state
+ * change.
+ *
+ * Future warehouse leveling (deferred slice) will multiply `baseFactor`
+ * per leveled warehouse; for γ.3 every warehouse uses the same base.
+ */
+const WAREHOUSE_BASE_CAPACITY = 10;
+
+export function warehouseCapacity(comp: number = _currentComprehension): number {
+  if (comp < 2) return WAREHOUSE_BASE_CAPACITY;
+  const tier = Math.max(1, Math.round(Math.log2(comp)));
+  return WAREHOUSE_BASE_CAPACITY * Math.pow(2, tier - 1);
+}
+
+/** Legacy default — kept for v15-era saves' `capacity` field. New
+ *  warehouses don't store capacity; the dynamic `warehouseCapacity()`
+ *  is consulted instead. The constant survives only so the persistence
+ *  snapshot path has a number to write. */
 const WAREHOUSE_DEFAULT_CAPACITY = 100;
 
 export function addCell(type: CellType, container: Container): PlacedCell {
@@ -879,12 +893,19 @@ export function addCell(type: CellType, container: Container): PlacedCell {
   if (
     type === 'cultivation-arithmetic' ||
     type === 'cultivation-geometric' ||
-    type === 'cultivation-fibonacci'
+    type === 'cultivation-fibonacci' ||
+    type === 'cultivation-harmonic' ||
+    type === 'cultivation-polynomial' ||
+    type === 'cultivation-factorial'
   ) {
+    // Phase 6 ε.1: cultivators are now input-driven transformers. The
+    // `seed` field is obsolete (kept on PlacedCell for legacy
+    // back-compat) and the cooldown fields are no longer consulted —
+    // firing happens via the standard pending-input path.
     placed.seed = null;
     placed.cultivationStep = 0;
-    placed.cultivationCooldownMs = type === 'cultivation-fibonacci' ? 2200 : 1800;
-    placed.cultivationCooldownRemaining = placed.cultivationCooldownMs;
+    placed.cultivationCooldownMs = 0;
+    placed.cultivationCooldownRemaining = 0;
   }
   if (type === 'cleanup-bot') {
     placed.botRadius = 240;
@@ -900,6 +921,24 @@ export function addCell(type: CellType, container: Container): PlacedCell {
     placed.botWorkerY = container.y;
     placed.botSpeed = 100;
     placed.botCarried = null;
+    // T-bots cap at current comp (see `bots.ts:tickIdle`); botRating is
+    // unused for them.
+  }
+  if (
+    type === 'factor-bot' ||
+    type === 'decrement-bot' ||
+    type === 'inversion-bot'
+  ) {
+    // Decomposer bots (Phase 6 δ.1). Same walking-worker chassis as
+    // T-bots, but they act on a block in place rather than carry it.
+    // `botRating` is set by the caller (interaction.ts) from the
+    // Literature entry — independent of player Comprehension.
+    placed.botRadius = 240;
+    placed.botPhase = 'idle';
+    placed.botTargetBlockId = null;
+    placed.botWorkerX = container.x;
+    placed.botWorkerY = container.y;
+    placed.botSpeed = 100;
   }
   cells.push(placed);
   // Cell placement is one of the few mutations that doesn't reach recompute.
@@ -968,7 +1007,13 @@ export function ruleWarehouseTotal(cell: PlacedCell): number {
 export function depositToWarehouse(cell: PlacedCell, value: Value): boolean {
   if (cell.type === 'warehouse-rule') return depositToRuleWarehouse(cell, value);
   if (cell.type !== 'warehouse') return false;
-  const cap = cell.capacity ?? WAREHOUSE_DEFAULT_CAPACITY;
+  // Phase 6 (DESIGN §9): warehouses store only what the player can comprehend.
+  // Pipes that deliver into a warehouse are placement-gated above comp, so
+  // pipe-delivered values are within comp by construction — this defensive
+  // check matters for manual drag-drop and for T-bot deposits.
+  if (!valueComprehensible(value, _currentComprehension)) return false;
+  // γ.3: capacity scales with Comprehension — dynamic, not stored.
+  const cap = warehouseCapacity();
   if ((cell.storedCount ?? 0) >= cap) return false;
   if (cell.storedValue === undefined || cell.storedValue === null) {
     cell.storedValue = value;
@@ -991,9 +1036,11 @@ export function depositToWarehouse(cell: PlacedCell, value: Value): boolean {
  */
 export function depositToRuleWarehouse(cell: PlacedCell, value: Value): boolean {
   if (cell.type !== 'warehouse-rule') return false;
+  // Universal comp rule — see `depositToWarehouse` for the rationale.
+  if (!valueComprehensible(value, _currentComprehension)) return false;
   const rule = getWarehouseRule(cell.ruleId);
   if (!rule || !rule.test(value)) return false;
-  const cap = cell.capacity ?? WAREHOUSE_DEFAULT_CAPACITY;
+  const cap = warehouseCapacity();
   if (ruleWarehouseTotal(cell) >= cap) return false;
 
   cell.ruleItems = cell.ruleItems ?? [];
@@ -1016,6 +1063,11 @@ export function withdrawFromWarehouse(cell: PlacedCell): Value | null {
   if (cell.type !== 'warehouse') return null;
   if ((cell.storedCount ?? 0) <= 0) return null;
   const value = cell.storedValue!;
+  // Universal comp rule (Phase 6 β.2): a withdraw is a lift, gated by comp.
+  // In practice values stored should be within comp by deposit-time check,
+  // but guard against the case where a future slice (e.g. higher-rated
+  // bots delivering into a warehouse) bypasses the deposit gate.
+  if (!valueComprehensible(value, _currentComprehension)) return null;
   cell.storedCount = (cell.storedCount ?? 0) - 1;
   // Withdrawal that empties the warehouse unlocks the type so the player
   // (or a pipe) can repurpose it.
@@ -1057,11 +1109,15 @@ export function withdrawFromRuleWarehouse(cell: PlacedCell): Value | null {
   const items = cell.ruleItems ?? [];
   if (items.length === 0) return null;
 
+  // Smallest-magnitude FIRST that's also within comp — matches both the
+  // "drain small change first" intuition and the universal comp rule
+  // (Phase 6 β.2). If everything in the warehouse exceeds comp, refuse.
   let bestIdx = -1;
   let bestMag: Decimal | null = null;
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
     if (it.count <= 0) continue;
+    if (!valueComprehensible(it.value, _currentComprehension)) continue;
     const mag = valueMagnitude(it.value);
     if (bestMag === null || mag.lt(bestMag)) {
       bestIdx = i;
@@ -1083,6 +1139,40 @@ export function withdrawFromRuleWarehouse(cell: PlacedCell): Value | null {
 
 export function allCells(): readonly PlacedCell[] {
   return cells;
+}
+
+// ---------------------------------------------------------------------------
+// Cell jam (Phase 6 β.3)
+// ---------------------------------------------------------------------------
+
+/** Fan-slot geometry mirrors `spawn.ts` constants. Duplicated rather than
+ *  imported to avoid a world.ts ⇄ spawn.ts cycle (spawn imports world for
+ *  block lookups; world can't import back without a circular dep). */
+const JAM_FAN_STEP = 40;
+const JAM_MAX_FAN = 12;
+
+/**
+ * Phase 6 β.3 (DESIGN §9): a cell is "jammed" iff any of its output
+ * ports has an uncomprehended block sitting in its fan range. A jammed
+ * cell:
+ *   - refuses to fire (no fuel burn, no input consumption)
+ *   - cannot be dragged (it's pinned in place by the stuck block)
+ *
+ * The check walks the same fan-slot grid `planSpawnAtPort` uses, so a
+ * cell that emits a `?`-block and a cell that returns 'jammed' from a
+ * spawn plan agree on what 'jammed' means.
+ */
+export function isCellJammed(cell: PlacedCell, comp: number): boolean {
+  for (const port of cell.outputs) {
+    const baseX = cell.container.x + port.offsetX;
+    const baseY = cell.container.y + port.offsetY;
+    for (let i = 0; i < JAM_MAX_FAN; i++) {
+      const x = baseX + i * JAM_FAN_STEP;
+      const existing = findBlockAt(x, baseY, MERGE_EMIT_RADIUS);
+      if (existing && !valueComprehensible(existing.value, comp)) return true;
+    }
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -1311,8 +1401,9 @@ export interface CellSnapshot {
     cultivationCooldownMs: number;
     cultivationCooldownRemaining?: number;
   };
-  /** Cleanup-bot cells only — config + phase-machine state.
-   *  Slice 6.11 added the phase fields; pre-v14 saves carry only the
+  /** Bot cells (cleanup-bot + decomposer family) — config + phase
+   *  state. Slice 6.11 added the phase fields; Phase 6 δ.1 added
+   *  `botRating` (decomposer bots only). Pre-v14 saves carry only the
    *  legacy cooldown trio and the rehydrator falls back to safe defaults. */
   botState?: {
     botRadius: number;
@@ -1325,6 +1416,8 @@ export interface CellSnapshot {
     botWorkerY?: number;
     botSpeed?: number;
     botCarried?: ValueSnapshot | null;
+    /** Phase 6 δ.1: per-bot magnitude rating (decomposer family). */
+    botRating?: number;
   };
 }
 
@@ -1377,7 +1470,10 @@ export function snapshotCells(): CellSnapshot[] {
     if (
       c.type === 'cultivation-arithmetic' ||
       c.type === 'cultivation-geometric' ||
-      c.type === 'cultivation-fibonacci'
+      c.type === 'cultivation-fibonacci' ||
+      c.type === 'cultivation-harmonic' ||
+      c.type === 'cultivation-polynomial' ||
+      c.type === 'cultivation-factorial'
     ) {
       const cooldownMs = c.cultivationCooldownMs ?? 2000;
       snap.cultivationState = {
@@ -1387,12 +1483,18 @@ export function snapshotCells(): CellSnapshot[] {
         cultivationCooldownRemaining: c.cultivationCooldownRemaining ?? cooldownMs,
       };
     }
-    if (c.type === 'cleanup-bot') {
+    if (
+      c.type === 'cleanup-bot' ||
+      c.type === 'factor-bot' ||
+      c.type === 'decrement-bot' ||
+      c.type === 'inversion-bot'
+    ) {
       // Phase-machine fields persist so a worker mid-walk picks up where
       // it left off after a reload. Cell-id and block-id refs are saved
       // raw — on load, the rehydrator (and the next tick) re-resolves them
       // against the new world's id space; unresolvable refs fall back to
       // idle. (Block ids reset on reset-world but persist within a save.)
+      // Decomposer bots additionally persist `botRating` (Phase 6 δ.1).
       snap.botState = {
         botRadius: c.botRadius ?? 240,
         botCooldownMs: c.botCooldownMs ?? 2500,
@@ -1404,6 +1506,7 @@ export function snapshotCells(): CellSnapshot[] {
         botWorkerY: c.botWorkerY ?? c.container.y,
         botSpeed: c.botSpeed ?? 100,
         botCarried: c.botCarried ? valueSnapshot(c.botCarried) : null,
+        botRating: c.botRating,
       };
     }
     return snap;
@@ -1478,9 +1581,8 @@ export function resetWorld(): void {
   _achievements.set(new Set());
   _unlocks.set(new Set());
   _purchaseCounts.set(new Map());
-  _comprehension.set(10);
+  _comprehension.set(2); // Phase 6 baseline (DESIGN §9)
   _cellLevels.set(new Map());
-  _pipeLevels.set(new Map());
   _discoveredValues.set(new Set());
 
   recompute();

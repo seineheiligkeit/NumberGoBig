@@ -169,7 +169,7 @@ export function drawWarehouseCell(_x: number, _y: number, ruleLabel?: string): C
  * Updates a warehouse cell's centre badge to reflect its current state.
  * Called by the interaction layer after deposit/withdraw, and at restore.
  */
-export function updateWarehouseBadge(cell: PlacedCell): void {
+export function updateWarehouseBadge(cell: PlacedCell, cellCapacity: number): void {
   const badge = (cell.container as Container & {
     __warehouseBadge?: { type: Text; count: Text };
   }).__warehouseBadge;
@@ -183,7 +183,11 @@ export function updateWarehouseBadge(cell: PlacedCell): void {
     // cycle (pixi/warehouse-cell → world → cell-types → pixi/warehouse-cell).
     let total = 0;
     for (const item of cell.ruleItems ?? []) total += item.count;
-    const cap = cell.capacity ?? 0;
+    // γ.3: capacity is dynamic, scales with Comprehension. Caller
+    // (interaction.ts) passes it in via the curried refreshBadge —
+    // keeps `warehouse-cell.ts` runtime-import-free from `world.ts`
+    // and avoids the cell-types ↔ pixi/* cycle CLAUDE.md warns about.
+    const cap = cellCapacity;
     const rule = getWarehouseRule(cell.ruleId);
     if (rule) badge.type.text = rule.label;
     badge.count.text = `${total} / ${cap}`;
@@ -193,7 +197,7 @@ export function updateWarehouseBadge(cell: PlacedCell): void {
 
   const v = cell.storedValue;
   const n = cell.storedCount ?? 0;
-  const cap = cell.capacity ?? 0;
+  const cap = cellCapacity;
   badge.type.text = v === null || v === undefined ? '—' : valueLabel(v);
   // Tint the type glyph by family — a warehouse holding negatives reads
   // accent-blue at a glance, the same hint the blocks themselves carry.

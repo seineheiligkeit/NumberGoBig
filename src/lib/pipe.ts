@@ -15,7 +15,6 @@ import {
   operandPending,
   operandsFilled,
   peekRuleWarehouseSmallest,
-  pipeLevel,
   removePipe,
   ruleWarehouseTotal,
   type PipeEndpoint,
@@ -28,8 +27,10 @@ import { getWarehouseRule } from './warehouse-rules';
 import type { Container } from 'pixi.js';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import { updateCostBadge } from './pixi/binary-cell';
-import { computationalCost, isCultivationType, operate } from './cell-types';
-import { captureSeed } from './cultivation';
+import { computationalCost, cultivationEmit, isCultivationType, operate } from './cell-types';
+import { updateCultivationBadge } from './pixi/cultivation-cell';
+// captureSeed removed in Phase 6 ε.1 — cultivators now use the standard
+// pending-input fire path (no seed concept).
 import { routeViaFilter } from './filter';
 import { showMarginalia } from './marginalia';
 import { commitSpawn, planSpawnAtPort } from './spawn';
@@ -211,11 +212,9 @@ export function redrawPipesForCell(cellId: number): void {
 /** Per-frame driver. `dtMs` is delta time in milliseconds. */
 export function tickPipes(dtMs: number, canvasLayer: Container): void {
   for (const pipe of allPipes()) {
-    // Pipe level multiplies the effective tick rate (Slice 6.7). A
-    // lvl-2 pipe consumes its cooldown twice as fast as a lvl-1 pipe
-    // of the same magnitude; lvl-5 sixteen times as fast.
-    const speedMult = levelMultiplier(pipeLevel(pipe.magnitude));
-    pipe.cooldownRemaining -= dtMs * speedMult;
+    // Phase 6 γ.1: pipe leveling dissolved. Every pipe ticks at its
+    // base cooldown; throughput from parallel placement only.
+    pipe.cooldownRemaining -= dtMs;
     if (pipe.cooldownRemaining > 0) continue;
 
     // Peek source + dest. JS is single-threaded so peek and pull cannot
@@ -470,10 +469,8 @@ function destAccepts(ep: PipeEndpoint, value: Value): boolean {
     // Filters always accept — routing happens on delivery.
     return true;
   }
-  if (isCultivationType(cell.type)) {
-    // Cultivation cells accept exactly one seed in their lifetime.
-    return cell.seed === null || cell.seed === undefined;
-  }
+  // Phase 6 ε.1: cultivators accept inputs like any operator cell.
+  // The legacy seed-locked branch is gone.
   // Equation cell: port must currently be empty.
   return cell.pending[ep.portIndex] === null;
 }
@@ -485,9 +482,9 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
   if (cell.type === 'warehouse') return depositToWarehouse(cell, value);
   if (cell.type === 'warehouse-rule') return depositToWarehouse(cell, value);
   if (cell.type === 'filter') return routeViaFilter(cell, value, canvasLayer);
-  // Cultivation cells capture the value as a seed; they don't use `pending`.
-  // Without this branch a pipe would silently consume seeds and emit nothing.
-  if (isCultivationType(cell.type)) return captureSeed(cell, value);
+  // Phase 6 ε.1: cultivators are now input-driven transformers — they
+  // consume each delivery via the standard pending-input + fire path.
+  // The old seed-capture branch is gone; cultivators fall through.
 
   // Equation cell: fill port, then fire if complete.
   if (cell.pending[ep.portIndex] !== null) return false;
@@ -514,16 +511,30 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
 function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
   const operands = operandPending(cell).map((v) => v as Value);
   const cost = computationalCost(cell.type, operands, cellLevel(cell.type));
-  const result = operate(cell.type, operands);
+  // Phase 6 ε.1: cultivators short-circuit `operate` — output is
+  // `f(input, step)`. Step advances after a successful firing (below).
+  let result;
+  if (isCultivationType(cell.type)) {
+    const step = cell.cultivationStep ?? 0;
+    const output = cultivationEmit(cell.type, operands[0], step);
+    result = { emits: [{ portIndex: 0, value: output }] };
+  } else {
+    result = operate(cell.type, operands);
+  }
 
-  // Pre-check every output port for capacity (Slice 5.7). If any is
-  // clogged, refuse to fire — don't burn fuel, don't consume inputs.
-  // The retry pass next frame will try again once the player drains it.
+  // Pre-check every output port (Slice 5.7 + Phase 6 β.3). 'clogged'
+  // (fan full) or 'jammed' (uncomprehended `?`-block at the port)
+  // refuses the firing — no fuel burn, no input consumption. The
+  // tickEquationCells retry pass will try again next frame; on a
+  // jammed cell that retry stalls indefinitely until the player
+  // clears the `?`-block via Comp upgrade, a sufficiently-rated pipe,
+  // or (later) a decomposer bot.
   const portsChecked = new Set<number>();
   for (const ev of result.emits) {
     if (portsChecked.has(ev.portIndex)) continue;
     portsChecked.add(ev.portIndex);
-    if (planSpawnAtPort(cell, ev.portIndex, ev.value) === 'clogged') return false;
+    const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
+    if (plan === 'clogged' || plan === 'jammed') return false;
   }
 
   if (consumeFuelOrFail(cell, cost) !== 'paid') return false;
@@ -541,7 +552,13 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
   }
   updateCostBadge(cell, cellLevel(cell.type));
 
-  if (result.marginalia) {
+  // Phase 6 ε.1: cultivators advance their step counter per firing.
+  if (isCultivationType(cell.type)) {
+    cell.cultivationStep = (cell.cultivationStep ?? 0) + 1;
+    updateCultivationBadge(cell);
+  }
+
+  if ('marginalia' in result && result.marginalia) {
     showMarginalia(result.marginalia.text, result.marginalia.key);
   }
 
@@ -559,7 +576,8 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
 
     if (fanIndex === 0) {
       const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
-      if (plan === 'clogged') continue;
+      // pre-check above caught both 'clogged' and 'jammed'; defensive.
+      if (plan === 'clogged' || plan === 'jammed') continue;
       if (plan.kind === 'new') {
         portAnchors.set(ev.portIndex, { x: plan.x, y: plan.y });
       } else {
@@ -600,7 +618,10 @@ export function tickEquationCells(_dtMs: number, canvasLayer: Container): void {
   for (const cell of allCells()) {
     if (cell.type === 'warehouse') continue;
     if (cell.type === 'warehouse-rule') continue;
-    if (isCultivationType(cell.type)) continue;
+    // Phase 6 ε.1: cultivators are now operator-shaped — they retry
+    // through this same pass when an input lands but fuel/comp gating
+    // (β.2/β.3) deferred the firing. The old "skip cultivators" line
+    // is gone with the timer-driven model.
     if (cell.inputs.length === 0) continue;
     // Operand ports filled — fuel slot may still be empty (the retry pass
     // exists precisely to thaw cost-blocked cells once fuel materialises).

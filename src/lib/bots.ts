@@ -3,6 +3,7 @@ import {
   addBlock,
   allBlocks,
   allCells,
+  comprehensionLevel,
   decreaseStack,
   depositToWarehouse,
   findBlockAt,
@@ -16,8 +17,10 @@ import {
 import { getBotHandles } from './pixi/cleanup-bot';
 import { drawBlock } from './pixi/block';
 import { showMarginalia } from './marginalia';
-import { valueEq, type Value } from './value';
+import { valueComprehensible, valueEq, valueLabel, valueMagnitude, type Value } from './value';
 import { getWarehouseRule } from './warehouse-rules';
+import { operate, type CellType } from './cell-types';
+import Decimal from 'break_eternity.js';
 
 /**
  * Translation Operator (T-bot) tick — Slice 6.11.
@@ -47,30 +50,67 @@ import { getWarehouseRule } from './warehouse-rules';
 
 const ARRIVAL_RADIUS = 6;
 
+/** All bot cell types — T-bot + decomposer family. */
+function isAnyBot(type: CellType): boolean {
+  return (
+    type === 'cleanup-bot' ||
+    type === 'factor-bot' ||
+    type === 'decrement-bot' ||
+    type === 'inversion-bot'
+  );
+}
+
+function isDecomposerBot(type: CellType): boolean {
+  return type === 'factor-bot' || type === 'decrement-bot' || type === 'inversion-bot';
+}
+
 export function tickBots(_dtMs: number, canvasLayer: Container): void {
   const dtSec = _dtMs / 1000;
 
-  // Build the claimed-block set once per tick — cheap (few bots) and
-  // shared across every bot's idle search below.
+  // Build the claimed-block set once per tick — shared across every
+  // bot's idle search. Both T-bots and decomposer bots claim, so the
+  // set spans the whole bot family.
   const claimed = new Set<number>();
   for (const c of allCells()) {
-    if (c.type !== 'cleanup-bot') continue;
+    if (!isAnyBot(c.type)) continue;
     if (c.botTargetBlockId != null) claimed.add(c.botTargetBlockId);
   }
 
   for (const cell of allCells()) {
-    if (cell.type !== 'cleanup-bot') continue;
+    if (!isAnyBot(cell.type)) continue;
     const handles = getBotHandles(cell.container);
     if (!handles) continue;
 
-    // Defensive defaults — pre-v14 saves rehydrate without these and the
-    // rehydrate hook fills them, but a brand-new code path that creates
-    // bots via some other route would otherwise NPE here.
+    // Defensive defaults — pre-v14 saves rehydrate without these.
     cell.botPhase = cell.botPhase ?? 'idle';
     cell.botWorkerX = cell.botWorkerX ?? cell.container.x;
     cell.botWorkerY = cell.botWorkerY ?? cell.container.y;
     cell.botSpeed = cell.botSpeed ?? 100;
 
+    if (isDecomposerBot(cell.type)) {
+      // Decomposer state machine has no 'returning' phase — they act
+      // in place rather than carry. idle → approaching → (transform on
+      // arrival) → going-home → idle.
+      switch (cell.botPhase) {
+        case 'idle':
+          tickDecomposerIdle(cell, claimed);
+          break;
+        case 'approaching':
+          tickDecomposerApproaching(cell, dtSec, handles, canvasLayer);
+          break;
+        case 'returning':
+          // Decomposers don't return-with-payload; if a save somehow
+          // restored a decomposer in 'returning', route to going-home.
+          cell.botPhase = 'going-home';
+          break;
+        case 'going-home':
+          tickGoingHome(cell, dtSec, handles);
+          break;
+      }
+      continue;
+    }
+
+    // T-bot (cleanup-bot) — existing four-phase state machine.
     switch (cell.botPhase) {
       case 'idle':
         tickIdle(cell, claimed);
@@ -89,12 +129,175 @@ export function tickBots(_dtMs: number, canvasLayer: Container): void {
 }
 
 // ---------------------------------------------------------------------------
+// Decomposer phases
+// ---------------------------------------------------------------------------
+
+function tickDecomposerIdle(cell: PlacedCell, claimed: Set<number>): void {
+  const radius = cell.botRadius ?? 240;
+  // Phase 6 δ.1: rating is INDEPENDENT of player comp. The bot can act
+  // on uncomprehended blocks — that's its whole point. Match the
+  // block by magnitude ≤ rating, not by comprehensibility.
+  const rating = cell.botRating ?? 0;
+  if (rating <= 0) return;
+  const ratingD = new Decimal(rating);
+  const target = findClosestBlockWithinRating(
+    cell.container.x,
+    cell.container.y,
+    radius,
+    ratingD,
+    claimed,
+  );
+  if (!target) return;
+  cell.botTargetBlockId = target.id;
+  cell.botPhase = 'approaching';
+  claimed.add(target.id);
+}
+
+function tickDecomposerApproaching(
+  cell: PlacedCell,
+  dtSec: number,
+  handles: ReturnType<typeof getBotHandles>,
+  canvasLayer: Container,
+): void {
+  if (!handles) return;
+  const target = cell.botTargetBlockId != null ? findBlockById(cell.botTargetBlockId) : null;
+  if (!target) {
+    cell.botTargetBlockId = null;
+    cell.botPhase = 'going-home';
+    return;
+  }
+  const arrived = stepToward(cell, target.container.x, target.container.y, dtSec);
+  applyWorkerLocal(cell, handles);
+  if (!arrived) return;
+
+  // ARRIVED — apply transformation in place, then walk home.
+  const inputValue = target.value;
+  const targetX = target.container.x;
+  const targetY = target.container.y;
+  const transformType = decomposerTransformFor(cell.type);
+
+  // Consume one of the target stack first so the operate() result lands
+  // in the vacated slot. (operate is pure; decreaseStack actually frees
+  // the slot.)
+  decreaseStack(target, 1);
+
+  // Apply the transformation via `operate` — same logic as the static
+  // decomposition cells. F-bot is free; D-bot is free; I-bot's
+  // signed-fuel cost is paid via the global spend path. Failures
+  // (factor of non-integer, inversion of zero) fall through quietly —
+  // the bot walks home without producing anything.
+  let result;
+  try {
+    result = operate(transformType, [inputValue]);
+  } catch (err) {
+    console.warn('Decomposer transform failed:', err);
+    result = { emits: [] };
+  }
+
+  // Emit each result block at the target's original position, fanned
+  // a few px so multiple emits don't all stack on each other.
+  let offset = 0;
+  for (const ev of result.emits) {
+    const ox = targetX + (offset * 18);
+    const oy = targetY;
+    spawnLooseAt(ev.value, ox, oy, canvasLayer);
+    offset += 1;
+  }
+
+  // One-shot narrator beat per bot family on first action. The
+  // marginalia is keyed by transformType so it fires once per family
+  // across the save's lifetime.
+  if (result.emits.length > 0) {
+    fireDecomposerBeat(cell.type, inputValue, result.emits.map((e) => e.value));
+  }
+
+  cell.botTargetBlockId = null;
+  cell.botPhase = 'going-home';
+}
+
+function decomposerTransformFor(botType: CellType): CellType {
+  switch (botType) {
+    case 'factor-bot':
+      return 'factor';
+    case 'decrement-bot':
+      return 'decrement';
+    case 'inversion-bot':
+      return 'inversion';
+    default:
+      return botType;
+  }
+}
+
+function fireDecomposerBeat(botType: CellType, input: Value, outputs: Value[]): void {
+  if (botType === 'factor-bot') {
+    const factors = outputs.map(valueLabel).join(' × ');
+    showMarginalia(
+      `The factorizer has split ${valueLabel(input)} into ${factors}. Progress, however incomplete.`,
+      'first_factor_bot',
+    );
+  } else if (botType === 'decrement-bot') {
+    showMarginalia(
+      `The decrementer takes ${valueLabel(input)} and removes one. Slow, but steady.`,
+      'first_decrement_bot',
+    );
+  } else if (botType === 'inversion-bot') {
+    showMarginalia(
+      `The inverter has taken ${valueLabel(input)} and produced its reciprocal. The cost, regrettably, may have been negative.`,
+      'first_inversion_bot',
+    );
+  }
+}
+
+function findClosestBlockWithinRating(
+  x: number,
+  y: number,
+  radius: number,
+  rating: Decimal,
+  claimed: Set<number>,
+): PlacedBlock | null {
+  let best: PlacedBlock | null = null;
+  let bestDist = Infinity;
+  for (const b of allBlocks()) {
+    if (b.count <= 0) continue;
+    if (claimed.has(b.id)) continue;
+    // Within rating: |value| ≤ rating. Independent of comp.
+    if (valueMagnitude(b.value).gt(rating)) continue;
+    const dx = b.container.x - x;
+    const dy = b.container.y - y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > radius) continue;
+    if (dist < bestDist) {
+      best = b;
+      bestDist = dist;
+    }
+  }
+  return best;
+}
+
+function spawnLooseAt(value: Value, x: number, y: number, canvasLayer: Container): void {
+  const existing = findBlockAt(x, y, MERGE_EMIT_RADIUS, value);
+  if (existing) {
+    increaseStack(existing, 1);
+    return;
+  }
+  const container = drawBlock(value, x, y);
+  canvasLayer.addChild(container);
+  addBlock(container, value, 1);
+}
+
+// ---------------------------------------------------------------------------
 // Phase: idle
 // ---------------------------------------------------------------------------
 
 function tickIdle(cell: PlacedCell, claimed: Set<number>): void {
   const radius = cell.botRadius ?? 240;
-  const block = findClosestUnclaimedBlock(cell.container.x, cell.container.y, radius, claimed);
+  // Phase 6 β.2 universal comp gate (DESIGN §9): T-bots cap at the
+  // player's current Comprehension. A bot won't pick up what its
+  // owner can't yet hold. The block-search filter applies this rule
+  // directly. (Per-bot magnitude ratings — distinct from comp — are
+  // γ.2 territory; β.2 uses the player's comp ceiling.)
+  const comp = comprehensionLevel();
+  const block = findClosestUnclaimedBlock(cell.container.x, cell.container.y, radius, claimed, comp);
   if (!block) return;
   const warehouse = findClosestMatchingWarehouse(cell.container.x, cell.container.y, block.value);
   if (!warehouse) return;
@@ -245,12 +448,15 @@ function findClosestUnclaimedBlock(
   y: number,
   radius: number,
   claimed: Set<number>,
+  comp: number,
 ): PlacedBlock | null {
   let best: PlacedBlock | null = null;
   let bestDist = Infinity;
   for (const b of allBlocks()) {
     if (b.count <= 0) continue;
     if (claimed.has(b.id)) continue;
+    // Phase 6 β.2: uncomprehended blocks aren't targets.
+    if (!valueComprehensible(b.value, comp)) continue;
     const dx = b.container.x - x;
     const dy = b.container.y - y;
     const dist = Math.hypot(dx, dy);

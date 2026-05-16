@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStroke, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 import type { PlacedBlock } from '../world';
-import { valueExceeds, valueLabel, type Value } from '../value';
+import { valueComprehensible, valueExceeds, valueLabel, type Value } from '../value';
 import { valueColor } from '../family';
 import { drawValueLabel } from './value-label';
 
@@ -26,6 +26,10 @@ import { drawValueLabel } from './value-label';
 const BLOCK_SIZE = 64;
 const CORNER_JITTER_PX = 1.8;
 const ROTATION_JITTER_RAD = 0.05;
+
+/** Label for the per-block numeral child container. Lets us replace the
+ *  numeral on Comprehension upgrades (Phase 6 β.4 reveal events). */
+const NUMERAL_LAYER_LABEL = '__numeral';
 
 export function drawBlock(value: Value, x: number, y: number): Container {
   const container = new Container();
@@ -58,12 +62,64 @@ export function drawBlock(value: Value, x: number, y: number): Container {
   });
   container.addChild(outline);
 
-  drawNumeralInto(container, value);
+  // The initial numeral renders the full value — comp-aware swap to `?`
+  // happens once `applyComprehensionStyle` runs (called immediately after
+  // addBlock via the onBlockChange listener in setup.ts).
+  attachNumeralLayer(container, value);
 
   // Whole-block rotation — sits on the page like it was placed by hand.
   container.rotation = (Math.random() - 0.5) * 2 * ROTATION_JITTER_RAD;
 
   return container;
+}
+
+/** Wraps `drawNumeralInto` in a labeled child container so the numeral
+ *  can be replaced wholesale on Comprehension upgrades. */
+function attachNumeralLayer(container: Container, value: Value): void {
+  const layer = new Container();
+  layer.label = NUMERAL_LAYER_LABEL;
+  drawNumeralInto(layer, value);
+  container.addChild(layer);
+}
+
+/** β.3: a single penciled `?` — the visual stand-in for any block whose
+ *  magnitude is beyond the player's current Comprehension. Slightly
+ *  jittered like every other pencil glyph, but quieter (lower alpha). */
+function drawUncomprehendedGlyph(container: Container): void {
+  const style = new TextStyle({
+    fontFamily: PENCIL_FONT_FAMILY,
+    fontSize: 38,
+    fontWeight: '500',
+    fill: GRAPHITE,
+    align: 'center',
+  });
+  const text = pencilText('?', style);
+  text.anchor.set(0.5);
+  text.alpha = 0.55;
+  text.rotation = (Math.random() - 0.5) * 0.08;
+  container.addChild(text);
+}
+
+/** Replace the block's numeral layer based on the current Comprehension.
+ *  Uncomprehended → `?`. Comprehensible → the full value. Called by
+ *  `applyComprehensionStyle` on every block-change AND on every comp
+ *  upgrade (Phase 6 β.4 reveal). */
+function rebuildNumeralLayer(container: Container, value: Value, cap: number): void {
+  const existing = container.children.find(
+    (c) => (c as Container & { label?: string }).label === NUMERAL_LAYER_LABEL,
+  );
+  if (existing) {
+    container.removeChild(existing);
+    existing.destroy({ children: true });
+  }
+  const layer = new Container();
+  layer.label = NUMERAL_LAYER_LABEL;
+  if (valueComprehensible(value, cap)) {
+    drawNumeralInto(layer, value);
+  } else {
+    drawUncomprehendedGlyph(layer);
+  }
+  container.addChild(layer);
 }
 
 /**
@@ -199,16 +255,24 @@ function drawRationalNumeral(container: Container, value: Value & { kind: 'ratio
 }
 
 /**
- * Sets a block's visual alpha based on the player's Comprehension level.
- * Numbers above the cap are faded so the player can see they exist but
- * understands they cannot be touched — only moved by automation. Single
- * place to keep the look consistent across block creations and Comprehension
- * upgrades.
+ * Comp-aware visual style. Two effects:
+ *   - β.3/§9: uncomprehended blocks render as a single `?` glyph (the
+ *     game knows the underlying value; the player does not). Rebuilds
+ *     the numeral layer to swap between `?` and the full value.
+ *   - The whole-container alpha dims for uncomprehended blocks too, so
+ *     they read as "there but out of reach" alongside the `?`.
+ *
+ * Called from `onBlockChange` (on every block creation / stack mutation)
+ * AND from the `comprehension.subscribe` reveal pass (β.4). Both paths
+ * pass the block through here — comp upgrades retroactively unmask
+ * parked `?`-blocks in waves.
  */
-const OVER_COMP_ALPHA = 0.42;
+const OVER_COMP_ALPHA = 0.55;
 const NORMAL_ALPHA = 1.0;
 export function applyComprehensionStyle(block: PlacedBlock, cap: number): void {
-  block.container.alpha = valueExceeds(block.value, cap) ? OVER_COMP_ALPHA : NORMAL_ALPHA;
+  const comprehensible = !valueExceeds(block.value, cap);
+  block.container.alpha = comprehensible ? NORMAL_ALPHA : OVER_COMP_ALPHA;
+  rebuildNumeralLayer(block.container, block.value, cap);
 }
 
 /**

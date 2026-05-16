@@ -1,14 +1,13 @@
 import type { CellType } from './cell-types';
 import {
   cellLevel,
+  comprehensionLevel,
   countMatching,
   hasUnlock,
   incrementPurchaseCount,
-  pipeLevel,
   purchaseCountOf,
   raiseComprehension,
   setCellLevel,
-  setPipeLevel,
   spendMatching,
   spendValue,
   unlock,
@@ -135,8 +134,186 @@ export interface LiteratureEntry {
    *  becomes purchasable when the current level for the target is
    *  exactly `targetLevel - 1`. */
   targetLevel?: number;
+  /** Phase 6 β.2 (DESIGN §9): minimum comprehension required to purchase.
+   *  Used by pipes to enforce the one-tier-lag rule (`pipe rating < comp`).
+   *  Undefined means no comp requirement. */
+  compRequirement?: number;
+  /** Phase 6 δ.1: bot magnitude rating set on placement. Decomposer
+   *  bots (factor-bot / decrement-bot / inversion-bot) read this field
+   *  to know what magnitudes their worker can act on — independent of
+   *  player Comprehension. Undefined for non-decomposer entries. */
+  botRating?: number;
   /** Optional narrator note fired on the *first* purchase only. */
   unlockMessage?: string;
+}
+
+/**
+ * Phase 6 — Comprehension as Spine (DESIGN.md §9; ROADMAP §2 Phase 6).
+ *
+ * The comprehension ladder is power-of-2, infinite in principle. We
+ * materialise 30 tiers up front (`comp_1` → ≤2, …, `comp_30` → ≤2^30
+ * ≈ 1.07B); extending past that is a single bump of `COMP_MAX_TIER`.
+ *
+ * The cost curve mirrors `sim/catalog.ts:compUpgradeCost` — locked at
+ * α.3 against the ~5h speedrun / ~10h casual target. Re-tune in the
+ * sim first, then port back here.
+ */
+const COMP_MAX_TIER = 30;
+
+function compUpgradeCost(n: number): LiteratureCostItem[] {
+  const ceiling = Math.pow(2, n);
+  if (ceiling <= 8) return [{ value: valueOf(1), count: ceiling * 20 }];
+  if (ceiling <= 64) return [{ value: valueOf(2), count: Math.ceil(ceiling * 12) }];
+  if (ceiling <= 512) return [{ value: valueOf(10), count: Math.ceil(ceiling * 2.5) }];
+  if (ceiling <= 4096) return [{ value: valueOf(100), count: Math.ceil(ceiling) }];
+  if (ceiling <= 32_768) return [{ value: valueOf(1000), count: Math.ceil(ceiling / 5) }];
+  if (ceiling <= 262_144) return [{ value: valueOf(10_000), count: Math.ceil(ceiling / 32) }];
+  if (ceiling <= 2_097_152) return [{ value: valueOf(100_000), count: Math.ceil(ceiling / 256) }];
+  if (ceiling <= 16_777_216) return [{ value: valueOf(1_000_000), count: Math.ceil(ceiling / 2048) }];
+  return [{ value: valueOf(1_000_000), count: Math.ceil(ceiling / 4096) }];
+}
+
+/** Unicode superscript digits for the 2^N glyph notation. */
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+function superscript(n: number): string {
+  return String(n)
+    .split('')
+    .map((d) => SUPERSCRIPT_DIGITS[parseInt(d, 10)] ?? d)
+    .join('');
+}
+
+function compGlyph(n: number): string {
+  const ceiling = Math.pow(2, n);
+  return ceiling < 1000 ? `≤${ceiling}` : `≤2${superscript(n)}`;
+}
+
+/**
+ * Optional milestone flavor for specific binary-canonical tiers. Generic
+ * tiers fall back to the utilitarian default; milestones get narrator
+ * beats on first comprehension.
+ */
+function compMilestoneFlavor(
+  n: number,
+): { name?: string; description?: string; unlockMessage?: string } | null {
+  switch (n) {
+    case 2: // ≤4 — first paid entry after Successor
+      return {
+        unlockMessage:
+          'Comprehension ≤4. The first paid result. The mechanism, in miniature.',
+      };
+    case 10: // ≤1024 — first kilobyte
+      return {
+        name: 'Comprehension ≤2¹⁰ — Kilobyte',
+        unlockMessage:
+          'Two to the tenth is one thousand and twenty-four. The thousand is admitted, with twenty-four to spare.',
+      };
+    case 11: // ≤2048 — Hardy-Ramanujan reachable (1729 < 2048)
+      return {
+        unlockMessage:
+          'Comprehension ≤2¹¹. 1,729 is now liftable — the smallest number expressible as a sum of two cubes in two distinct ways.',
+      };
+    case 16: // ≤65,536 — 16-bit
+      return {
+        name: 'Comprehension ≤2¹⁶ — 16-bit',
+        unlockMessage:
+          'Sixty-five thousand, five hundred and thirty-six. The same as a moderately well-fed birthday.',
+      };
+    case 20: // ≈1.05M — megabyte
+      return {
+        name: 'Comprehension ≤2²⁰ — Megabyte',
+        unlockMessage:
+          'Comprehension ≤2²⁰. The million is in reach. Whether you should manually move one is another question.',
+      };
+    case 30: // ≈1.07B — gigabyte
+      return {
+        name: 'Comprehension ≤2³⁰ — Gigabyte',
+        unlockMessage:
+          'Comprehension ≤2³⁰. The billion is held in mind, if not in hand.',
+      };
+    default:
+      return null;
+  }
+}
+
+function generateComprehensionLadder(): LiteratureEntry[] {
+  const entries: LiteratureEntry[] = [];
+  // We skip n=1 (ceiling 2) because it's the baseline — the world starts
+  // there, no purchase required. The first paid entry is n=2 (≤4).
+  for (let n = 2; n <= COMP_MAX_TIER; n++) {
+    const ceiling = Math.pow(2, n);
+    const ceilStr = ceiling.toLocaleString();
+    const flavor = compMilestoneFlavor(n);
+    const defaultName = `Comprehension ${compGlyph(n)}`;
+    entries.push({
+      id: `comp_${n}`,
+      kind: 'comprehension',
+      name: flavor?.name ?? defaultName,
+      glyph: compGlyph(n),
+      description:
+        flavor?.description ??
+        `Lift the manual ceiling to ${ceilStr}.`,
+      cost: compUpgradeCost(n),
+      comprehensionLevel: ceiling,
+      isOnce: true,
+      unlockMessage: flavor?.unlockMessage,
+    });
+  }
+  return entries;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 6 γ.1 — Pipe ladder generator (power-of-2, gated by Comp)
+// ---------------------------------------------------------------------------
+//
+// Pipe rated ≤ 2^N requires Comp ≥ 2^(N+1) (strict one-tier lag —
+// DESIGN §9). Per-placement cost preserves the recursive bootstrap:
+// a 2^N-pipe is paid in blocks at that magnitude. Mirrors
+// `sim/catalog.ts:pipeCost` after α.3 lock.
+
+const PIPE_MAX_TIER = 30; // pipe_0 (≤1) through pipe_29 (≤2^29)
+
+function pipeCost(n: number): LiteratureCostItem[] {
+  const mag = Math.pow(2, n);
+  if (mag <= 4) return [{ value: valueOf(1), count: Math.max(5, mag * 5) }];
+  if (mag <= 32) return [{ value: valueOf(10), count: Math.max(5, Math.ceil(mag / 2)) }];
+  if (mag <= 256) return [{ value: valueOf(100), count: Math.max(5, Math.ceil(mag / 4)) }];
+  if (mag <= 4096) return [{ value: valueOf(1000), count: Math.max(5, Math.ceil(mag / 16)) }];
+  if (mag <= 65_536) return [{ value: valueOf(10_000), count: Math.max(5, Math.ceil(mag / 128)) }];
+  if (mag <= 1_048_576) return [{ value: valueOf(100_000), count: Math.max(5, Math.ceil(mag / 1_024)) }];
+  return [{ value: valueOf(1_000_000), count: Math.max(5, Math.ceil(mag / 8_192)) }];
+}
+
+function pipeGlyph(n: number): string {
+  const mag = Math.pow(2, n);
+  return mag < 1000 ? `≤${mag}` : `≤2${superscript(n)}`;
+}
+
+function generatePipeLadder(): LiteratureEntry[] {
+  const entries: LiteratureEntry[] = [];
+  for (let n = 0; n < PIPE_MAX_TIER; n++) {
+    const mag = Math.pow(2, n);
+    const isBaseline = n === 0;
+    entries.push({
+      id: `pipe_${n}`,
+      kind: 'pipe',
+      name: `Pipe ${pipeGlyph(n)}`,
+      glyph: pipeGlyph(n),
+      description:
+        isBaseline
+          ? 'Carries 0s and 1s. One item per second. Source: river or cell output. Dest: cell input.'
+          : `Carries values up to ${mag.toLocaleString()}. One item per second.`,
+      cost: pipeCost(n),
+      pipeMagnitude: mag,
+      pipeCooldownMs: 1000,
+      costScale: 1.6,
+      compRequirement: Math.pow(2, n + 1),
+      unlockMessage:
+        isBaseline
+          ? 'Result added to your literature: Pipe. Automation begins where the hand stops.'
+          : `A heavier pipe rated for ${mag.toLocaleString()}. Bigger numbers may travel by themselves now.`,
+    });
+  }
+  return entries;
 }
 
 export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
@@ -423,60 +600,14 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
       'Result added to your literature: the Generalized Warehouse, scoped to negatives. Inversion\'s natural fuel tank.',
   },
 
-  // -- Pipes (automation tier I) ----------------------------------------
-  // Each pipe rating costs that-many of itself: the recursive bootstrap. To
-  // get a 10-pipe you must first hand-craft ten 10s. Once you can mass-
-  // produce N, the corresponding pipe is cheap.
-  {
-    id: 'pipe_1',
-    kind: 'pipe',
-    name: 'Pipe (≤1)',
-    glyph: '─',
-    description: 'Carries values 0–1. One item per second. Source: river or cell output. Dest: cell input.',
-    cost: [{ value: valueOf(1), count: 1 }],
-    pipeMagnitude: 1,
-    pipeCooldownMs: 1000,
-    costScale: 1.6,
-    unlockMessage:
-      'Result added to your literature: Pipe. Automation begins where the hand stops.',
-  },
-  {
-    id: 'pipe_10',
-    kind: 'pipe',
-    name: 'Pipe (≤10)',
-    glyph: '═',
-    description: 'Carries values 0–10. One item per second.',
-    cost: [{ value: valueOf(10), count: 200 }],
-    pipeMagnitude: 10,
-    pipeCooldownMs: 900,
-    costScale: 1.6,
-    unlockMessage: 'A heavier pipe. Bigger numbers may travel by themselves now.',
-  },
-  {
-    id: 'pipe_100',
-    kind: 'pipe',
-    name: 'Pipe (≤100)',
-    glyph: '≡',
-    description: 'Carries values 0–100. One item per second.',
-    cost: [{ value: valueOf(100), count: 5000 }],
-    pipeMagnitude: 100,
-    pipeCooldownMs: 800,
-    costScale: 1.6,
-    unlockMessage: 'A hundred hundreds, well spent.',
-  },
-  {
-    id: 'pipe_1k',
-    kind: 'pipe',
-    name: 'Pipe (≤1000)',
-    glyph: '⫶',
-    description: 'Carries values 0–1000. The fuel route for tetration-class operators.',
-    cost: [{ value: valueOf(1000), count: 1000 }],
-    pipeMagnitude: 1000,
-    pipeCooldownMs: 750,
-    costScale: 1.6,
-    unlockMessage:
-      'A pipe rated for the thousands. Tetration may now be fed from a dedicated reservoir.',
-  },
+  // -- Pipes (Phase 6 γ.1) ----------------------------------------------
+  // Power-of-2 ladder, generated programmatically. One Literature entry
+  // per magnitude tier (`pipe_N` rated ≤ 2^N for N = 0..29). Pipe
+  // leveling has DISSOLVED into the Comp ladder (DESIGN §9): throughput
+  // comes from placing parallel pipes, not from upgrading them. The
+  // recursive-bootstrap rule survives — each pipe is priced in blocks
+  // of its own magnitude.
+  ...generatePipeLadder(),
 
   // -- Cultivation cells -------------------------------------------------
   // Cultivation is intentionally late-mid-game work — the cells trivialise
@@ -518,7 +649,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Cultivation: Fibonacci',
     glyph: 'a·Fₙ',
     description:
-      'Drop a seed; emits a·F₁, a·F₂, a·F₃, … (1, 1, 2, 3, 5, 8, …) times a. Each emission burns fuel matched to its magnitude.',
+      'Input-driven transformer: each input is multiplied by the n-th Fibonacci number (F₁, F₂, F₃, … = 1, 1, 2, 3, 5, …), where n advances per firing.',
     cost: [
       { value: valueOf(1000), count: 10 },
       { value: valueOf(2), count: 5 },
@@ -527,7 +658,53 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     ],
     costScale: 1.8,
     unlockMessage:
-      'Result added to your literature: Fibonacci Cultivation. Each emission is the sum of its two predecessors — and pulls fuel proportional to its size.',
+      'Result added to your literature: Fibonacci Cultivation. Each emission is your input scaled by the n-th Fibonacci number.',
+  },
+
+  // Phase 6 ε.2 — three series deferred since Phase 2 (DESIGN §6).
+  // Costs are placeholders pending α.x sim-tuned curves.
+  {
+    id: 'cultivation-harmonic',
+    kind: 'cell',
+    name: 'Cultivation: Harmonic',
+    glyph: 'a·Hₙ',
+    description:
+      'Input-driven transformer: each input scales by the n-th harmonic sum (1 + 1/2 + 1/3 + …). Painfully slow growth.',
+    cost: [
+      { value: valueOf(100), count: 250 },
+    ],
+    costScale: 1.7,
+    unlockMessage:
+      'Result added to your literature: Harmonic Cultivation. Each scaling is the running sum of reciprocals — growth measured against ln n.',
+  },
+  {
+    id: 'cultivation-polynomial',
+    kind: 'cell',
+    name: 'Cultivation: Polynomial',
+    glyph: 'a·n²',
+    description:
+      'Input-driven transformer: each input scales by (n+1)². Quadratic growth — slower than geometric, faster than arithmetic.',
+    cost: [
+      { value: valueOf(100), count: 350 },
+    ],
+    costScale: 1.8,
+    unlockMessage:
+      'Result added to your literature: Polynomial Cultivation. The quadratic terms march upward at a steady, calculable pace.',
+  },
+  {
+    id: 'cultivation-factorial',
+    kind: 'cell',
+    name: 'Cultivation: Factorial',
+    glyph: 'a·n!',
+    description:
+      'Input-driven transformer: each input scales by (n+1)!. Factorial growth — terrifying, throttled only by the universal Comprehension gate.',
+    cost: [
+      { value: valueOf(1000), count: 100 },
+      { value: valueOf(100), count: 200 },
+    ],
+    costScale: 2.0,
+    unlockMessage:
+      'Result added to your literature: Factorial Cultivation. The factorial does not blink at 20! ≈ 2.4 × 10¹⁸. It does not blink at 100! either.',
   },
 
   // -- Filters (Slice 5.2) ----------------------------------------------
@@ -620,150 +797,187 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Translation Operator',
     glyph: 'T̂',
     description:
-      'A small worker patrols within a 240 px radius, walks to a loose block, and carries it to the nearest matching warehouse.',
+      'A small worker patrols within a 240 px radius, walks to a loose block, and carries it to the nearest matching warehouse. Caps at the player\'s current Comprehension.',
     cost: [{ value: valueOf(10), count: 12 }],
     costScale: 1.5,
     unlockMessage:
       'Result added to your literature: Translation Operator. T̂ commutes with the identity. It does not commute with anything else.',
   },
 
-  // -- Comprehension ladder -------------------------------------------------
-  // Eight tiers, Phase 5.6 pacing overhaul. Each tier pairs an engineered
-  // specific-number puzzle with a bulk stockpile — the puzzle is the
-  // signature challenge, the bulk is the pacing.
+  // -- Decomposer bots (Phase 6 δ.1, DESIGN §9) -------------------------
+  // The keystone unjam tool. Each bot walks to a loose block within
+  // its rating and transforms it in place. Crucially, the rating is
+  // INDEPENDENT of player Comprehension — these are the ONE family of
+  // automation that can act on uncomprehended `?`-blocks. Stockpile-
+  // priced (the rating is paid for in lots of small change), three
+  // tiers per family: low / mid / high.
   //
-  // Tier numbering: I (≤25), II (≤100), III (≤250), IV (≤1k), V (≤10k),
-  // VI (≤100k), VII (≤1M), VIII (≤1B). Note: existing save IDs
-  // `comprehension_100` / `_1k` / `_1m` are preserved — only display
-  // names and costs change. The persistence migration auto-unlocks
-  // implied lower tiers based on the player's existing ceiling.
+  // Costs are placeholders pending α.2-extension sim modeling of bot
+  // tick effects on pacing. Revisit when the simulator can choose
+  // between comp-upgrade and decomposer-bot deployment for jam
+  // clearing.
+
+  // Factor-bot — splits a composite into prime factors. Decomposition's
+  // hot path: turn a stuck 9,797 into 97 × 101 in one motion.
   {
-    id: 'comprehension_25',
-    kind: 'comprehension',
-    name: 'Comprehension I',
-    glyph: '≤25',
+    id: 'factor-bot',
+    kind: 'cell',
+    name: 'Factor Operator (≤256)',
+    glyph: 'F',
     description:
-      'Lift the manual ceiling to 25. The first cohort: one each of 1–9 and one 25.',
-    cost: [
-      ...Array.from({ length: 9 }, (_, i) => ({ value: valueOf(i + 1), count: 1 })),
-      { value: valueOf(25), count: 1 },
-    ],
-    comprehensionLevel: 25,
-    isOnce: true,
+      'A walking worker rated for blocks up to 256. On arrival, splits a composite into its prime factors at the original position. Independent of Comprehension.',
+    cost: [{ value: valueOf(10), count: 40 }],
+    costScale: 1.6,
+    botRating: 256,
     unlockMessage:
-      'Comprehension I. You may now lift numbers up to 25. The first nine plus a 25 — paid in full.',
+      'Result added to your literature: Factor Operator. The factorizer does not know what it has split apart. Neither, regrettably, do we.',
   },
   {
-    id: 'comprehension_100',
-    kind: 'comprehension',
-    name: 'Comprehension II',
-    glyph: '≤100',
-    description: 'Lift the manual ceiling to 100. Cost: one each of 25, 50, and 100.',
-    cost: [
-      { value: valueOf(100), count: 1 },
-      { value: valueOf(50), count: 1 },
-      { value: valueOf(25), count: 1 },
-    ],
-    comprehensionLevel: 100,
-    isOnce: true,
-    unlockMessage:
-      'Comprehension II. The hundred is admitted. Twenty-five, fifty, and a hundred were the toll.',
-  },
-  {
-    id: 'comprehension_250',
-    kind: 'comprehension',
-    name: 'Comprehension III',
-    glyph: '≤250',
-    description: 'Lift the manual ceiling to 250. Cost: one 250 plus five hundreds.',
-    cost: [
-      { value: valueOf(250), count: 1 },
-      { value: valueOf(100), count: 5 },
-    ],
-    comprehensionLevel: 250,
-    isOnce: true,
-    unlockMessage:
-      'Comprehension III. The mid-hundreds are within reach.',
-  },
-  {
-    id: 'comprehension_1k',
-    kind: 'comprehension',
-    name: 'Comprehension IV',
-    glyph: '≤10³',
+    id: 'factor-bot-mid',
+    kind: 'cell',
+    placementCellType: 'factor-bot',
+    name: 'Factor Operator (≤16,384)',
+    glyph: 'F',
     description:
-      'Lift the manual ceiling to 1,000. Cost: one Hardy–Ramanujan number (1,729) and ten hundreds.',
+      'A heavier Factor Operator rated for blocks up to 2¹⁴ = 16,384. Same action, larger reach.',
     cost: [
-      { value: valueOf(1729), count: 1 },
-      { value: valueOf(100), count: 10 },
+      { value: valueOf(100), count: 100 },
+      { value: valueOf(1000), count: 5 },
     ],
-    comprehensionLevel: 1000,
-    isOnce: true,
+    costScale: 1.6,
+    botRating: 16384,
     unlockMessage:
-      'Comprehension IV. 1,729 — the smallest number expressible as a sum of two cubes in two distinct ways. The thousand is in reach.',
+      'Result added to your literature: Factor Operator (mid). The unknown sixteen-thousand may now be quietly disassembled.',
   },
   {
-    id: 'comprehension_10k',
-    kind: 'comprehension',
-    name: 'Comprehension V',
-    glyph: '≤10⁴',
+    id: 'factor-bot-hi',
+    kind: 'cell',
+    placementCellType: 'factor-bot',
+    name: 'Factor Operator (≤1,048,576)',
+    glyph: 'F',
     description:
-      'Lift the manual ceiling to 10,000. Cost: one Kaprekar constant (6,174), 3,500 ten-thousands, and 350 thousands.',
+      'A late-game Factor Operator rated for blocks up to 2²⁰ ≈ 1.05M. Even the megabyte-scale ?-blocks now have a path home.',
     cost: [
-      { value: valueOf(6174), count: 1 },
-      { value: valueOf(10_000), count: 3500 },
-      { value: valueOf(1000), count: 350 },
+      { value: valueOf(10_000), count: 200 },
+      { value: valueOf(100_000), count: 20 },
     ],
-    comprehensionLevel: 10_000,
-    isOnce: true,
+    costScale: 1.7,
+    botRating: 1048576,
     unlockMessage:
-      'Comprehension V. 6,174: Kaprekar showed that almost any 4-digit number, iterated, lands here. So have you.',
+      'Result added to your literature: Factor Operator (high). What you cannot read, this one will partition.',
+  },
+
+  // Decrement-bot — chips one off. Brute-force salvage for any
+  // stuck number, including primes (which Factor refuses).
+  {
+    id: 'decrement-bot',
+    kind: 'cell',
+    name: 'Decrement Operator (≤256)',
+    glyph: 'D',
+    description:
+      'A walking worker rated for blocks up to 256. Removes one and leaves a free 1 alongside. The slow, honest unjam tool.',
+    cost: [{ value: valueOf(10), count: 30 }],
+    costScale: 1.6,
+    botRating: 256,
+    unlockMessage:
+      'Result added to your literature: Decrement Operator. The decrementer takes one off the unknown. This may take a while.',
   },
   {
-    id: 'comprehension_100k',
-    kind: 'comprehension',
-    name: 'Comprehension VI',
-    glyph: '≤10⁵',
+    id: 'decrement-bot-mid',
+    kind: 'cell',
+    placementCellType: 'decrement-bot',
+    name: 'Decrement Operator (≤16,384)',
+    glyph: 'D',
     description:
-      'Lift the manual ceiling to 100,000. Cost: one 65,536 (2¹⁶), 1,750 hundred-thousands, and 350 ten-thousands.',
+      'A heavier Decrement Operator rated for blocks up to 2¹⁴ = 16,384.',
     cost: [
-      { value: valueOf(65_536), count: 1 },
-      { value: valueOf(100_000), count: 1750 },
-      { value: valueOf(10_000), count: 350 },
+      { value: valueOf(100), count: 80 },
+      { value: valueOf(1000), count: 4 },
     ],
-    comprehensionLevel: 100_000,
-    isOnce: true,
+    costScale: 1.6,
+    botRating: 16384,
     unlockMessage:
-      'Comprehension VI. 2¹⁶ = 65,536. A round number, in the right base.',
+      'Result added to your literature: Decrement Operator (mid).',
   },
   {
-    id: 'comprehension_1m',
-    kind: 'comprehension',
-    name: 'Comprehension VII',
-    glyph: '≤10⁶',
+    id: 'decrement-bot-hi',
+    kind: 'cell',
+    placementCellType: 'decrement-bot',
+    name: 'Decrement Operator (≤1,048,576)',
+    glyph: 'D',
     description:
-      'Lift the manual ceiling to one million. Cost: one 9,999, 700 millions, and 175 hundred-thousands.',
+      'A late-game Decrement Operator rated for blocks up to 2²⁰ ≈ 1.05M.',
     cost: [
-      { value: valueOf(9999), count: 1 },
-      { value: valueOf(1_000_000), count: 700 },
-      { value: valueOf(100_000), count: 175 },
+      { value: valueOf(10_000), count: 160 },
+      { value: valueOf(100_000), count: 15 },
     ],
-    comprehensionLevel: 1_000_000,
-    isOnce: true,
+    costScale: 1.7,
+    botRating: 1048576,
     unlockMessage:
-      'Comprehension VII. You can now manually move a million. Whether you should is another question.',
+      'Result added to your literature: Decrement Operator (high).',
+  },
+
+  // Inversion-bot — turns a big number into a tiny one. Inherits
+  // Inversion's signed-fuel mechanic (DESIGN §6).
+  {
+    id: 'inversion-bot',
+    kind: 'cell',
+    name: 'Inversion Operator (≤256)',
+    glyph: '1/x',
+    description:
+      'A walking worker rated for blocks up to 256. Replaces a block with its reciprocal. Inherits Inversion\'s signed-fuel mechanic — see DESIGN §6.',
+    cost: [{ value: valueOf(100), count: 30 }],
+    costScale: 1.6,
+    botRating: 256,
+    unlockMessage:
+      'Result added to your literature: Inversion Operator. The inverter trades a large number for its small reciprocal. The cost, as before, is sometimes negative.',
   },
   {
-    id: 'comprehension_1b',
-    kind: 'comprehension',
-    name: 'Comprehension VIII',
-    glyph: '≤10⁹',
+    id: 'inversion-bot-mid',
+    kind: 'cell',
+    placementCellType: 'inversion-bot',
+    name: 'Inversion Operator (≤16,384)',
+    glyph: '1/x',
     description:
-      'Lift the manual ceiling to one billion. Cost: 350 billion-class blocks. The 10⁹-scale challenge.',
-    cost: [{ value: valueOf(1_000_000_000), count: 350 }],
-    comprehensionLevel: 1_000_000_000,
-    isOnce: true,
+      'A heavier Inversion Operator rated for blocks up to 2¹⁴ = 16,384.',
+    cost: [
+      { value: valueOf(1000), count: 50 },
+      { value: valueOf(10_000), count: 5 },
+    ],
+    costScale: 1.7,
+    botRating: 16384,
     unlockMessage:
-      'Comprehension VIII. The billion is held in mind, if not in hand.',
+      'Result added to your literature: Inversion Operator (mid).',
   },
+  {
+    id: 'inversion-bot-hi',
+    kind: 'cell',
+    placementCellType: 'inversion-bot',
+    name: 'Inversion Operator (≤1,048,576)',
+    glyph: '1/x',
+    description:
+      'A late-game Inversion Operator rated for blocks up to 2²⁰ ≈ 1.05M.',
+    cost: [
+      { value: valueOf(100_000), count: 100 },
+      { value: valueOf(1_000_000), count: 10 },
+    ],
+    costScale: 1.8,
+    botRating: 1048576,
+    unlockMessage:
+      'Result added to your literature: Inversion Operator (high).',
+  },
+
+  // -- Comprehension ladder -------------------------------------------------
+  // Phase 6 (DESIGN.md §9): the comprehension ladder is power-of-2 and
+  // generated programmatically. 29 tiers materialise here — `comp_2` → ≤4
+  // through `comp_30` → ≤2^30 ≈ 1.07B. `comp_1` (ceiling 2) is the
+  // baseline; the world starts there without a purchase. The cost curve
+  // mirrors `sim/catalog.ts:compUpgradeCost` after α.3 lock.
+  //
+  // The Literature panel hides all but the *next-unowned* tier via
+  // `isComprehensionEntryAvailable`, so the catalog doesn't visually
+  // explode despite housing 29 entries here.
+  ...generateComprehensionLadder(),
 
   // -- Theorems (milestone inscriptions) --------------------------------
   // Each demands the construction of a specific number. No mechanical
@@ -1077,143 +1291,10 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     unlockMessage: 'Exponentiation V.',
   },
 
-  // Pipe ≤1 levels
-  {
-    id: 'pipe_1_lvl2',
-    kind: 'level',
-    name: 'Pipe ≤1 — II',
-    glyph: 'Ⅱ',
-    description: 'Levels every pipe ≤1 to II. Twice the delivery rate.',
-    cost: [{ value: valueOf(1), count: 200 }],
-    isOnce: true,
-    levelPipeMagnitude: 1,
-    targetLevel: 2,
-    unlockMessage: 'Pipe ≤1 II. The river runs a touch faster.',
-  },
-  {
-    id: 'pipe_1_lvl3',
-    kind: 'level',
-    name: 'Pipe ≤1 — III',
-    glyph: 'Ⅲ',
-    description: 'Levels every pipe ≤1 to III. Four times the delivery rate.',
-    cost: [{ value: valueOf(1), count: 2000 }],
-    isOnce: true,
-    levelPipeMagnitude: 1,
-    targetLevel: 3,
-    unlockMessage: 'Pipe ≤1 III.',
-  },
-  {
-    id: 'pipe_1_lvl4',
-    kind: 'level',
-    name: 'Pipe ≤1 — IV',
-    glyph: 'Ⅳ',
-    description: 'Levels every pipe ≤1 to IV. 8× the delivery rate.',
-    cost: [{ value: valueOf(10), count: 3000 }],
-    isOnce: true,
-    levelPipeMagnitude: 1,
-    targetLevel: 4,
-    unlockMessage: 'Pipe ≤1 IV.',
-  },
-  {
-    id: 'pipe_1_lvl5',
-    kind: 'level',
-    name: 'Pipe ≤1 — V',
-    glyph: 'Ⅴ',
-    description: 'Levels every pipe ≤1 to V — the maximum. 16× the delivery rate.',
-    cost: [{ value: valueOf(100), count: 5000 }],
-    isOnce: true,
-    levelPipeMagnitude: 1,
-    targetLevel: 5,
-    unlockMessage: 'Pipe ≤1 V.',
-  },
-
-  // Pipe ≤10 levels
-  {
-    id: 'pipe_10_lvl2',
-    kind: 'level',
-    name: 'Pipe ≤10 — II',
-    glyph: 'Ⅱ',
-    description: 'Levels every pipe ≤10 to II. Twice the delivery rate.',
-    cost: [{ value: valueOf(10), count: 200 }],
-    isOnce: true,
-    levelPipeMagnitude: 10,
-    targetLevel: 2,
-    unlockMessage: 'Pipe ≤10 II.',
-  },
-  {
-    id: 'pipe_10_lvl3',
-    kind: 'level',
-    name: 'Pipe ≤10 — III',
-    glyph: 'Ⅲ',
-    description: 'Levels every pipe ≤10 to III. 4× delivery rate.',
-    cost: [{ value: valueOf(100), count: 200 }],
-    isOnce: true,
-    levelPipeMagnitude: 10,
-    targetLevel: 3,
-    unlockMessage: 'Pipe ≤10 III.',
-  },
-  {
-    id: 'pipe_10_lvl4',
-    kind: 'level',
-    name: 'Pipe ≤10 — IV',
-    glyph: 'Ⅳ',
-    description: 'Levels every pipe ≤10 to IV. 8× delivery rate.',
-    cost: [{ value: valueOf(1000), count: 300 }],
-    isOnce: true,
-    levelPipeMagnitude: 10,
-    targetLevel: 4,
-    unlockMessage: 'Pipe ≤10 IV.',
-  },
-  {
-    id: 'pipe_10_lvl5',
-    kind: 'level',
-    name: 'Pipe ≤10 — V',
-    glyph: 'Ⅴ',
-    description: 'Levels every pipe ≤10 to V — the maximum. 16× delivery rate.',
-    cost: [{ value: valueOf(1000), count: 3000 }],
-    isOnce: true,
-    levelPipeMagnitude: 10,
-    targetLevel: 5,
-    unlockMessage: 'Pipe ≤10 V.',
-  },
-
-  // Pipe ≤100 levels (cap at IV; lvl V deferred until playtest confirms need)
-  {
-    id: 'pipe_100_lvl2',
-    kind: 'level',
-    name: 'Pipe ≤100 — II',
-    glyph: 'Ⅱ',
-    description: 'Levels every pipe ≤100 to II. Twice the delivery rate.',
-    cost: [{ value: valueOf(100), count: 200 }],
-    isOnce: true,
-    levelPipeMagnitude: 100,
-    targetLevel: 2,
-    unlockMessage: 'Pipe ≤100 II.',
-  },
-  {
-    id: 'pipe_100_lvl3',
-    kind: 'level',
-    name: 'Pipe ≤100 — III',
-    glyph: 'Ⅲ',
-    description: 'Levels every pipe ≤100 to III. 4× delivery rate.',
-    cost: [{ value: valueOf(1000), count: 200 }],
-    isOnce: true,
-    levelPipeMagnitude: 100,
-    targetLevel: 3,
-    unlockMessage: 'Pipe ≤100 III.',
-  },
-  {
-    id: 'pipe_100_lvl4',
-    kind: 'level',
-    name: 'Pipe ≤100 — IV',
-    glyph: 'Ⅳ',
-    description: 'Levels every pipe ≤100 to IV. 8× delivery rate.',
-    cost: [{ value: valueOf(10_000), count: 300 }],
-    isOnce: true,
-    levelPipeMagnitude: 100,
-    targetLevel: 4,
-    unlockMessage: 'Pipe ≤100 IV.',
-  },
+  // -- Pipe leveling DISSOLVED (Phase 6 γ.1) ----------------------------
+  // Pipe progression collapses into the Comp ladder; throughput comes
+  // from placing parallel pipes (Quantity), not from upgrading them.
+  // The 12 lvl-II/III/IV/V pipe entries that lived here are gone.
 ];
 
 /** Convenient predicate for the UI to route only cell purchases to placement mode. */
@@ -1234,10 +1315,35 @@ export function isLevelUpgradeAvailable(entry: LiteratureEntry): boolean {
   if (entry.levelCellType) {
     return cellLevel(entry.levelCellType) === entry.targetLevel - 1;
   }
-  if (entry.levelPipeMagnitude !== undefined) {
-    return pipeLevel(entry.levelPipeMagnitude) === entry.targetLevel - 1;
-  }
+  // Pipe leveling dissolved in γ.1 — any lingering `levelPipeMagnitude`
+  // entry (shouldn't exist; defensive) is treated as unavailable.
   return false;
+}
+
+/**
+ * Phase 6: whether a comprehension entry is the *next-unowned* tier.
+ * The ladder houses 29 entries (`comp_2` through `comp_30`); the
+ * Literature panel shows only the next one so the catalog doesn't
+ * visually explode. Equivalent to "this entry's ceiling is exactly
+ * twice the player's current comprehension."
+ *
+ * Non-comprehension entries always return true.
+ */
+export function isComprehensionEntryAvailable(entry: LiteratureEntry): boolean {
+  if (entry.kind !== 'comprehension') return true;
+  if (entry.comprehensionLevel === undefined) return false;
+  return entry.comprehensionLevel === comprehensionLevel() * 2;
+}
+
+/**
+ * Phase 6 β.2 (DESIGN §9): whether an entry's `compRequirement` is met
+ * by the player's current Comprehension. Pipes use this to stay hidden
+ * until comp climbs past their magnitude (the one-tier-lag rule). Other
+ * entries with no `compRequirement` always pass.
+ */
+export function isCompRequirementMet(entry: LiteratureEntry): boolean {
+  if (entry.compRequirement === undefined) return true;
+  return comprehensionLevel() >= entry.compRequirement;
 }
 
 /**
@@ -1362,6 +1468,10 @@ export function canAfford(
 export function purchase(entry: LiteratureEntry): boolean {
   const owned = purchaseCountOf(entry.id);
   if (entry.isOnce && owned > 0) return false;
+  // Phase 6 β.2 (DESIGN §9): a `compRequirement` field gates purchase
+  // beneath the affordability check. Pipes carry one for the one-tier-
+  // lag rule; future bot entries will too.
+  if (!isCompRequirementMet(entry)) return false;
 
   const cost = currentCost(entry, owned);
 
@@ -1404,9 +1514,10 @@ export function purchase(entry: LiteratureEntry): boolean {
   if (entry.kind === 'level' && entry.targetLevel) {
     if (entry.levelCellType) {
       setCellLevel(entry.levelCellType, entry.targetLevel);
-    } else if (entry.levelPipeMagnitude !== undefined) {
-      setPipeLevel(entry.levelPipeMagnitude, entry.targetLevel);
     }
+    // Pipe leveling dissolved in γ.1 — `levelPipeMagnitude` no longer
+    // routed. Old saves that still reference these entries are stripped
+    // in the v15 → v16 migration.
   }
 
   if (owned === 0 && entry.unlockMessage) {

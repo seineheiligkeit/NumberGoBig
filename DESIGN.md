@@ -133,21 +133,25 @@ Inversion is also the first slice in which the player plans a factory that depen
 
 ### Cultivation Cells
 
-A late-mid-game family of equation cells — **Cultivation Cells** — generate streams of numbers from a single seed. Each takes a number as a seed input (which is *not consumed*) and emits a continuous output stream determined by the cell's growth function.
+A late-mid-game family of equation cells — **Cultivation Cells** — apply a mathematical series to each input they consume. Each cultivator has **one input port** and **one output port** and maintains an **internal step counter** that advances with every input consumed. The output is `f(input, step)` per the cell's growth function. The cell is an **inline transformer**, not an autonomous printer.
+
+The shift away from the earlier timer-driven streaming model is deliberate. Cultivators previously fired on a cadence regardless of input, which made them auto-clicker-shaped and undermined the "one river, one substrate" provenance chain. Under the transformer model, the player **paces** the cultivator by routing inputs into it; the series **flavors** the transformation. Every emission has an explicit upstream block to its name.
 
 Different Cultivation cells implement different mathematical growth patterns, each its own Literature unlock:
 
-- **Arithmetic** — emits `seed, seed + k, seed + 2k, seed + 3k, …` (linear growth)
-- **Geometric** — emits `seed, seed × r, seed × r², …` (exponential growth)
-- **Fibonacci** — emits the Fibonacci sequence scaled by the seed
-- **Harmonic** — emits the partial sums of `seed × (1 + ½ + ⅓ + …)` (painfully slow; narrator joke material)
-- **Polynomial** — emits values along a chosen polynomial curve
-- **Factorial** — emits `seed × 0!, seed × 1!, seed × 2!, …` (terrifying)
+- **Arithmetic** — adds a step-scaled offset, e.g. `f(x, n) = x + nk`.
+- **Geometric** — multiplies by a step-scaled factor, e.g. `f(x, n) = x · r^n` (exponential growth).
+- **Fibonacci** — advances along a Fibonacci-shaped curve in `n`, scaled by the most recent input.
+- **Harmonic** — emits the running partial sum `x · (1 + ½ + ⅓ + … + 1/n)` (painfully slow; narrator joke material).
+- **Polynomial** — output follows a chosen polynomial in step `n`.
+- **Factorial** — multiplies by `n!` (terrifying).
 - Other growth functions unlock progressively as Literature deepens.
 
-Cultivation cells are the primary mechanism for producing the **ungodly stockpiles of low-value numbers** that high-tier operators require as fuel (see *Computational Cost* below). A dedicated cultivation zone — typically seeded with `1`s, producing endless streams of small numbers — becomes a normal part of the mid-to-late factory layout.
+**Per-step fuel cost escalates.** Each cell type carries its own cost formula in step `n` (arithmetic perhaps linear in `n`; geometric quadratic; factorial exponential). The cell self-throttles: the longer the series runs, the more expensive each emission. Exact constants are sim-tuned (§19).
 
-Cultivation respects the "one source" pillar by requiring a seed: every cultivated number derives ultimately from a seed the player constructed from the river of zeros. The river remains the origin; cultivation only amplifies.
+**Cell Jam still applies.** Per §9, an output whose magnitude exceeds Comprehension pins the cell. The cultivator climbs exactly to the player's Comp ceiling and stops there until comprehension advances or a decomposer bot intervenes. *Production runs ahead of utilization* (Pillar §2.2) becomes mechanically enforced, not aspirational.
+
+Cultivation respects the "one source" pillar (§2.1): every cultivated number derives ultimately from an input the player constructed from the river of zeros. The river remains the origin; cultivation only amplifies. Making cultivators input-driven rather than self-running renders the chain of provenance explicit at every emission.
 
 ### Computational Cost
 
@@ -168,7 +172,7 @@ For binary operators, **cost ≈ tier · ⌈log₁₀(max(|a|, |b|) + 1)⌉**, w
 
 Successor on a `0` is free; multiplication of two single-digit numbers costs `1`; multiplication by a `10⁶` costs `6`; exponentiation `2^10` costs `2`; tetration `2↑↑3` costs ~4. The framing is mathematically honest: the operator pays in proportion to the work it represents.
 
-For **cultivators** (which emit a sequence on a timer), each emission's cost is **⌈log₁₀(emission + 1)⌉**. A geometric cultivator with seed `2` emits 2, 4, 8, 16, … and costs 1, 1, 1, 2, 2, 2, 3, … as the values grow — the chain naturally throttles itself. Player removes the seed when fuel runs short.
+For **cultivators** (now input-driven transformer cells, see *Cultivation Cells* above), each emission's cost escalates per step per a cell-type-specific formula (sim-tuned). Combined with the Cell Jam rule (§9), the chain throttles itself twice: cost grows per step, and output magnitude grows per step until it outruns Comprehension and the cell pins.
 
 **Decomposition** (Decrement, Factor) is **free and refunds magnitude**: factoring a 144 returns three 2s and a 3 (small, useful fuel), at the cost of Total Score. Decomposition is the game's mid-game pressure release.
 
@@ -212,11 +216,13 @@ If an equation has no output pipe and no storage, blocks pile up at the output p
 
 ## 7. Pipes and Magnitude
 
-Pipes transport blocks automatically between cells. Each pipe has a **magnitude rating** — a 10-rated pipe carries blocks up to 10 but rejects anything larger.
+Pipes transport blocks automatically between cells. Each pipe has a **magnitude rating** — a 2^N-rated pipe carries blocks up to 2^N but rejects anything larger. Pipe magnitudes are powers of two, aligned with the Comprehension ladder (§9).
 
-**Building a pipe rated for magnitude N costs N-rated blocks.** A 10-pipe costs 10s; a 1000-pipe costs 1000s; a 10⁶-pipe costs 10⁶s.
+**Building a pipe rated for magnitude 2^N costs blocks of that magnitude.** The recursive bootstrap is preserved: you must first produce a magnitude before you can pipe it. Hand-craft a few small blocks manually, use them to build a small-rated pipe, automate that magnitude's production, accumulate the next tier, and so on up the tower.
 
-This creates a **recursive bootstrap**: you must first produce a magnitude before you can pipe it. Hand-craft a few 10s manually, use them to build a 10-pipe, automate 10-production, accumulate 100s to build a 100-pipe, and so on up the magnitude tower.
+**Pipes are gated by Comprehension.** A pipe rated for 2^N requires Comp ≥ 2^(N+1) — pipes lag manual handling by exactly one tier (§9 *The Frontier Band*). The player cannot build a pipe for a magnitude they have not yet comfortably mastered.
+
+**One Literature entry per magnitude tier**, auto-generated from the Comp ladder. Pipes have **no separate leveling axis** — the lvl I–V system that briefly existed has dissolved into the Comp ladder itself. Throughput comes from placing parallel pipes (per §19 *Three axes of progression*: Quantity, not Level).
 
 **Connections are strict**: a pipe rated below an equation's output magnitude simply will not connect. The player must plan their layout by magnitude.
 
@@ -232,7 +238,9 @@ Storage is what allows the player to **hoard numbers** to fuel later operations.
 
 ### Typed warehouses (early game)
 
-The basic warehouse holds blocks of a **single value type**, locked by the first deposit (drop a `1` and the warehouse stores `1`s; further deposits of any other value are refused). Capacity is fixed (default 100). Drag-drop on the deposit zone to add; click the output port to withdraw one.
+The basic warehouse holds blocks of a **single value type**, locked by the first deposit (drop a `1` and the warehouse stores `1`s; further deposits of any other value are refused). Drag-drop on the deposit zone to add; click the output port to withdraw one.
+
+**Capacity is tied to Comprehension** (§9). A small base count scales geometrically as Comprehension climbs — each comp doubling roughly doubles available storage. Warehouse-quality leveling (planned: dual output, fuel port, multi-destination) layers atop this capacity axis. Both deposit and withdrawal of individual blocks are also gated by Comprehension under the universal rule (§9) — a block too large to lift is also too large to warehouse.
 
 ### Generalized warehouses (mid-game and beyond)
 
@@ -254,28 +262,136 @@ The predicate vocabulary is the same one Filters (§13) uses — Generalized War
 
 ---
 
-## 9. Comprehension (manual handling cap)
+## 9. Comprehension — Spine of the Economy
 
-The player can manually drag blocks anywhere on the canvas — but only up to their current **Comprehension** level. Early game, Comprehension is small (e.g. 10). Larger blocks visibly exist on the canvas but cannot be picked up by hand.
+The player's **Comprehension** ceiling is the single pacing axis around which the rest of the economy turns. Production, transport, storage, and automation all bend to it. Where §6, §7, §8, and §14 speak of lifting, piping, warehousing, or carrying, the rule below governs.
 
-**Comprehension is upgraded from the Shop**, and is the spine of the pacing curve — eight tiers from ≤25 to ≤10⁹, each pairing a **specific-number engineering puzzle** (1729, 6174, 65,536, etc.) with a **bulk stockpile** at the tier's magnitude.
+### The Ladder
 
-The ladder, as currently tuned (Phase 5.6):
+- **Form:** Comp ≤ 2^N for N = 1, 2, 3, …
+- **Open-ended:** no cap. Each Literature purchase doubles the ceiling.
+- **Baseline:** the player begins at **Comp ≤ 2** (zeros and ones only). The first paid Literature entry after Successor is the upgrade to ≤ 4 — teaching the mechanic in the opening minute.
+- **Display:** the header reads `Comp ≤ 2^N (= V)` — the bit-count alongside the explicit value. Bit-counting fits the mathematician's voice.
+- **Cost ingredients:** most tiers are paid in **bulk stockpile** at the current magnitude (forcing sustained production). **Milestone tiers** (2^10 = 1024, 2^16 = 65,536, 2^20, 2^24, …) carry an additional **engineering puzzle** — a specific significant number the player must construct (1024, 1729, 6174, …). The narrator marks each milestone.
 
-| Tier | Ceiling | Engineering puzzle | Bulk |
-|------|---------|--------------------|------|
-| I    | 25      | one each of 1–9 + a 25 | — |
-| II   | 100     | one each of 25, 50, 100 | — |
-| III  | 250     | one 250 | 5 hundreds |
-| IV   | 1,000   | one 1,729 (Hardy–Ramanujan) | 10 hundreds |
-| V    | 10,000  | one 6,174 (Kaprekar) | 3,500 ten-thousands + 350 thousands |
-| VI   | 100,000 | one 65,536 (2¹⁶) | 1,750 hundred-thousands + 350 ten-thousands |
-| VII  | 10⁶     | one 9,999 | 700 millions + 175 hundred-thousands |
-| VIII | 10⁹     | — | 350 billions |
+The exact cost curve is sim-discovered, not hand-designed (§19).
 
-The puzzle is the *signature challenge*; the bulk is the *pacing*. A player who knows how to construct 1729 (12³ + 1) spends a moment on it; the 10 hundreds force the factory to run for a while. Together they make each tier feel both intellectual and earned.
+### The Universal Rule
 
-This mechanic guarantees that **manual play has a soft ceiling that climbs behind automation**. Automated pipes can transport any-sized block they are rated for; only manual drag is gated. The player can build big numbers but cannot trivially hand-place them — they must first earn the right to understand them.
+One sentence governs the entire economy:
+
+> **Anything that lifts, carries, routes, or stores a block requires that block to be within Comprehension.**
+
+| Mechanism | Magnitude cap | Acts on uncomprehended? |
+|---|---|---|
+| Manual lift | ≤ Comp | no |
+| **T-bot** | ≤ Comp | no |
+| **Pipe** | < Comp (one tier behind, strict) | no |
+| **Warehouse** (deposit / withdraw) | ≤ Comp per block | no |
+| **Warehouse capacity** (count) | scales with Comp | — |
+| **Decomposer bot** (Factor / Decrement / Inversion) | independent magnitude rating | **yes** |
+
+Decomposer bots are the only exception — *delegated comprehension*, see below.
+
+### The Frontier Band
+
+A pipe rated for magnitude 2^N requires **Comp ≥ 2^(N+1)**. The strict inequality carves a permanent **frontier band** [2^(N-1), 2^N] at the top of every Comprehension tier: a magnitude range the player can handle by hand and by T-bot, but not yet by pipe. The frontier moves with Comprehension; it is never empty.
+
+Every Comprehension purchase delivers two payoffs at once — a new band opens at the top (manual + T-bot work to do), and the previous frontier becomes pipeable (automation arrives where you grew comfortable).
+
+### Cell Jams and Pinned Cells
+
+A cell will not fire if its next emission would land at a port already holding a block whose magnitude exceeds Comprehension.
+
+- **Cell stalls.** No fuel burn, no input consumption, no step advance.
+- **Cell pins in place.** A stuck cell cannot be dragged. The factory must engineer *around* it.
+- **Pipes attached to the cell remain editable.** Inputs can be redirected; output pipes can be detached and re-wired.
+- **Visual:** dashed-red `JAM_TINT` cell outline; the offending block at the port renders as `?` (a single graphite question mark).
+- **Narrator beat fires once per cell** on first jam.
+
+### The Uncomprehended Block
+
+A block whose magnitude exceeds Comprehension displays as a single `?`. The game knows the underlying value; the player does not. The block exists, occupies a port, blocks emissions, and contributes its magnitude to Total Score (the bookkeeping is internal). It cannot be read, lifted, piped, or warehoused. Only a decomposer bot can act on it.
+
+### Recovery from a Jam
+
+A stuck cell has five named recovery paths:
+
+1. **Upgrade Comprehension.** Eventually the block reveals and becomes liftable.
+2. **Build a pipe of sufficient rating** and route the block away. Possible only after Comprehension climbs enough to make such a pipe purchasable.
+3. **Deploy a T-bot of sufficient rating** to carry the block to a matching warehouse. Same caveat.
+4. **Deploy a decomposer bot** rated for the block's magnitude. Reduces in place — no waiting on Comprehension.
+5. **Shift-click delete the cell.** Cell and its uncomprehended block are both destroyed. Cost: the cell purchase. Recovery of last resort.
+
+### Decomposer Bots — Delegated Comprehension
+
+A new bot family extends the Translation Operator (§14):
+
+- **Factor-bot (F-bot)** — walks to a loose block, splits it into its prime factorisation, leaves the fan of factors at the original position.
+- **Decrement-bot (D-bot)** — walks to a loose block, decrements once, leaves the result and a `1`.
+- **Inversion-bot (I-bot)** — walks to a loose block, replaces it with its reciprocal. Late-game; inherits Inversion's signed-fuel mechanic.
+
+Decomposer bots have **independent magnitude ratings**, purchased in Literature and denominated in stockpiles. The rating is not gated by Comprehension — the bot is a mechanical specialist trained to perform a transformation regardless of whether the player has yet learned to read what it is operating on.
+
+This makes Factor / Decrement / Inversion structurally essential, not curiosities. Decomposition cells in static form remain in the catalog for piped use; their bot variants are the keystone unjam tool. The narrator can be very pleased: *"The factorizer has split the unknown 9,797 into 97 × 101. Both, regrettably, remain beyond your reading. Progress, however, has been made."*
+
+### Reveal Events
+
+When the player upgrades Comprehension, every parked `?`-block on the canvas whose magnitude is now ≤ Comp resolves into its true numeral in a brief pencil-fill-in animation. The page literally clarifies. Three things fire on reveal:
+
+- **Gallery entries** record the discovery. Producing a number is not enough; the player must come to comprehend it. The Gallery becomes *"what I have understood,"* not *"what passed through my pipes."*
+- **Theorem narrator beats** fire on comprehension — Hardy–Ramanujan 1729 unlocks when the player can read a 1729, not when one was silently produced upstream.
+- **Stuck cells unjam** as their oversize outputs reveal. Frozen factory branches resume in waves.
+
+### Pipes — One Per Tier, No Leveling
+
+The pipe-leveling axis (lvl I–V per magnitude, the Phase 5.6 system) **collapses into the Comprehension ladder**. There is no separate "Pipe ≤100 lvl II" purchase.
+
+- **One Literature entry per pipe magnitude tier** (2^0, 2^1, 2^2, …), auto-generated from the Comp ladder.
+- **Unlock requirement:** Comp ≥ 2^(N+1) for the pipe ≤ 2^N tier.
+- **Per-placement cost** scales with magnitude — the recursive-bootstrap economy (a 2^N pipe paid in 2^N-rated blocks) is preserved.
+- **Throughput:** constant per pipe. Players acquire throughput by placing **parallel** pipes, not by levelling individual ones.
+
+One ladder, one knob: Comprehension. Quantity remains the throughput axis, exactly as Quantity governs throughput everywhere else (§19).
+
+### Translation Operators — The Bridge
+
+T-bots sit at the **current Comprehension tier**. They are the only automation available at the leading edge — pipes lag one tier behind, so the frontier band [2^(N-1), 2^N] is reachable only by hand and by T-bot.
+
+Their structural role: **rotating scouts**. As Comp climbs and pipes catch up to the old frontier, T-bots retire from that magnitude and redeploy to the new frontier. Pipes are the permanent backbone; T-bots are the perpetually-leading edge.
+
+T-bot ratings are purchased per-bot, capped at current Comp. T-bots cannot lift uncomprehended blocks.
+
+### Warehouse Capacity
+
+Warehouse capacity is **tied to Comprehension**.
+
+- **Base count:** small (target: 10–25, sim-tuned).
+- **Multiplier:** scales geometrically in Comp tier — each Comp doubling roughly doubles available storage.
+- **Magnitude constraint:** the universal rule applies — deposited and withdrawn blocks must be ≤ Comp.
+- **Warehouse-quality leveling** (planned slice for dual output, fuel port, multi-destination) layers on top. Capacity is the Comp-tied axis; qualities are level-tied.
+
+This is the mechanism that pushes resource management. A low-Comp player cannot hoard enough small numbers to fuel high-tier operators; they must climb Comprehension to climb production. The entire economy threads through Comp at every level.
+
+### Cultivators (Downstream)
+
+Cultivators are rebuilt as **transformer cells** under the universal rule — see §6 *Cultivation Cells*. Briefly: one input port, one output port, internal step counter; each input consumed produces `f(input, step)` and advances the counter. Outputs are subject to the Cell Jam rule. The cultivator climbs exactly to the player's Comp ceiling and stops there until the player advances. Per-step fuel-cost escalation is a future sim-tuning iteration; the universal comp-jam alone is the throttle today. Production runs ahead of utilization (Pillar §2.2) is mechanically enforced.
+
+### What This Replaces
+
+| Replaced | By |
+|---|---|
+| Eight-tier Comp ladder (≤25 → ≤10⁹) | Power-of-2 ladder, infinite |
+| Pipe leveling system (lvl I–V) | Comp ladder alone |
+| Streaming cultivators (timer-driven) | Transformer cultivators (input-driven, §6) |
+| Decomposition cells as tactical-currency tools | Decomposition cells + bots as the salvage layer |
+| Comprehension as a manual-lift gate | Comprehension as the spine of the economy |
+
+### What This Defers
+
+- **Cell levels.** Currently capped at 5; remain so. A separate design session revisits cell leveling on its own terms.
+- **Warehouse-quality leveling.** Stays in scope as a later slice; capacity scaling lands here.
+- **Bot leveling.** Bots have rating tiers, not levels. Whether bots gain qualities at higher tiers is a future question.
 
 ---
 
@@ -301,9 +417,9 @@ Some achievements unlock automatically (first prime produced, first composite, f
 
 ## 11. The Number Gallery
 
-The Gallery is the game's Pokédex — a visible record of every special number the player has ever produced. It is organized into tabs:
+The Gallery is the game's Pokédex — a visible record of every special number the player has ever *comprehended*. It is organized into tabs:
 
-- **Integers** — a literal grid filling in as each value is produced
+- **Integers** — a literal grid filling in as each value is produced and read
 - **Primes** — with subcategories for twins, cousins, Mersennes, Fermats, etc.
 - **Perfect numbers**
 - **Famous constants** — π, e, φ, …
@@ -311,7 +427,9 @@ The Gallery is the game's Pokédex — a visible record of every special number 
 - **Sequences and families** — Fibonacci, Catalan, Lucas, …
 - **And so on, expandable indefinitely**
 
-**Gallery entries persist across prestiges.** Discovery is permanent; currency is per-run. The Gallery is the player's long-term identity and achievement record.
+**Discovery is comprehension, not mere production.** Per §9, a number produced beyond Comprehension renders as `?` and is not added to the Gallery. When the player later upgrades Comp and the `?`-block reveals its numeral, *then* the Gallery records the entry and any associated theorem narrator beat fires. Numbers comprehended in passing-through pipes count; numbers that left the factory before the player could read them do not.
+
+**Gallery entries persist across prestiges.** Discovery is permanent; currency is per-run. The Gallery is the player's long-term identity and achievement record — a notebook of what they have come to understand.
 
 ---
 
@@ -366,11 +484,17 @@ The new cell visually resembles any other equation but internally instantiates t
 - **No silent edits.** A Blueprint cannot be edited in place. This prevents the "I broke twelve places at once" frustration and makes each Blueprint a deliberate engineered artifact.
 - **The library persists across prestiges.** The player's accumulated mathematical inventions are permanent intellectual property.
 
-### Translation Operators (T-bots)
+### Bots — Translation and Decomposition
 
-A late-game automation upgrade: small worker units patrolling the canvas, collecting loose blocks and carrying them to the nearest matching warehouse. The name is the joke — a *translation operator* T̂ in mechanics is the operator that shifts a function in space, which is exactly what these bots do for blocks. Each bot wears a hand-drawn `T` glyph; on placement the dry narrator may observe that *"this T̂ commutes with the identity. It does not commute with anything else."*
+Two families of mobile automation. Both are walking workers; both have **magnitude ratings** purchased in Literature.
 
-Mechanically: the bot picks the closest unmatched loose block within its search radius, walks to it, picks it up, walks to the destination warehouse, sets it down. (Earlier prototypes teleported the block via a sweep pulse — Translation Operators replace that with actual transit.) Multiple bots queue on disjoint targets so they don't fight over the same pile.
+**Translation Operators (T-bots).** Small worker units patrolling the canvas, collecting loose blocks and carrying them to the nearest matching warehouse. The name is the joke — a *translation operator* T̂ in mechanics is the operator that shifts a function in space, which is exactly what these bots do for blocks. Each bot wears a hand-drawn `T` glyph; on placement the dry narrator may observe that *"this T̂ commutes with the identity. It does not commute with anything else."* Mechanically: the bot picks the closest unmatched loose block within its search radius, walks to it, picks it up, walks to the destination warehouse, sets it down. Multiple bots queue on disjoint targets so they don't fight over the same pile.
+
+**T-bots are capped at current Comprehension** (§9). They share the lift constraint with the player — they cannot pick up what cannot be lifted. Their structural role is *rotating scout*: at any Comp tier, T-bots sit at the **current frontier band** (manual-only for pipes), retiring as Comprehension climbs and pipes catch up.
+
+**Decomposer bots** (Factor-bot, Decrement-bot, Inversion-bot). The unjam family. Each walks to a loose block within its rating, applies its transformation **in place**, and leaves the output(s) where the original was — no carrying. The F-bot splits a composite into its prime factors; the D-bot decrements by one; the I-bot replaces a value with its reciprocal (late-game; inherits Inversion's signed-fuel mechanic).
+
+**Decomposer bots have independent magnitude ratings**, priced in Literature in **stockpiles, not in Comp prerequisites**. The bot is a mechanical specialist — *delegated comprehension* — trained to perform a specific transformation without the player needing to read what it operates on. Decomposer bots are therefore the **only** infrastructure in the game that can act on uncomprehended blocks (§9), and the keystone tool for unjamming cells whose outputs have outrun Comprehension. The narrator can be very pleased: *"The factorizer has split the unknown 9,797 into 97 × 101. Both, regrettably, remain beyond your reading. Progress, however, has been made."*
 
 ---
 
@@ -527,40 +651,30 @@ Pacing is the most playtest-sensitive aspect of the game, and the team
 relies on a standalone simulator (`sim/`) to model the curve rather than
 guessing.
 
-### Pacing targets (Phase 5.6)
+### Pacing targets
 
 | Milestone | Speedrun (optimal play) | Casual |
 |-----------|--------------------------|--------|
 | Tetration | ~5 hours | ~10 hours |
 | Pentation | ~7 hours | ~14 hours |
 
-The shape is **dense early, climbing mid, aspirational late**:
-
-- **Stage A (0–15 min)**: Successor → Subtraction. 5 unlocks at 3–7 min cadence. Teaches mechanics.
-- **Stage B (15–60 min)**: Multiplication and infrastructure. The first real grind appears (500-1000 ones for Addition).
-- **Stage C (1–2 hr)**: Exponentiation, Square Root, Comp_1k. Mid-magnitude production matures.
-- **Stage D (2–3 hr)**: Pipe ≤100 climb. 5,000 hundreds — the signature mid-game gate. Cultivation Arithmetic intermediate.
-- **Stage E (3–4 hr)**: Comp_10k, Comp_100k, Pipe ≤1k, Comp_1m. Real stockpiles at each tier, not waterfall.
-- **Stage F (4–5 hr)**: Tetration. 4,000 thousands.
-- **Stage G (5+ hr)**: Comp_1b, Pentation. The "10⁹ class" payoff.
+These targets are stable across the Comprehension Spine rework (§9). The curve underneath will change — power-of-2 Comprehension tiers replace the eight-tier ladder, pipe leveling dissolves into Comprehension itself, cultivators move from streaming to transformer-with-escalating-cost — so the previous Stage A–G stage-by-stage outline is being re-derived from scratch. Phase 6's first move is to re-port the simulator and discover the new shape; the targets in this table are what the sim is solving for.
 
 ### Three axes of progression
 
-Every primitive (Successor, Adder, Mult, Exp, Pipe, Warehouse) has three orthogonal growth axes:
+Every primitive (Successor, Adder, Mult, Exp, Warehouse) has three orthogonal growth axes:
 
-1. **Quantity** — build more copies. Geometric repurchase scaling.
+1. **Quantity** — build more copies. Geometric repurchase scaling. This is also the throughput knob for **Pipes**, which no longer have a separate leveling axis (per §9, pipe progression collapses into the Comprehension ladder; one Literature entry per magnitude tier, parallel placement for throughput).
 2. **Level** — upgrade existing copies. Doubling per level, with **qualities** at certain tiers:
    - Successor lvl 3: *river-tap* (fires without a pipe ≤1)
    - Successor lvl 5: *bundle output* (every 5 firings emit a `5` block)
    - Addition lvl 4: *variadic* (sums 3 inputs per firing)
    - Mult/Exp lvl 3: *fuel cost −1* (min 1)
    - Mult/Exp lvl 5: *fuel cost halved*
-   - Pipe lvl 3: *lower jam threshold*
-   - Pipe lvl 4: *batched transfer* (2 items per tick)
    - Warehouse lvl 3: *dual output ports*
    - Warehouse lvl 4: *built-in fuel port*
    - Warehouse lvl 5: *feeds multiple destinations*
-3. **Type** — entirely new variants (cell types, pipe magnitudes, warehouse rules).
+3. **Type** — entirely new variants (cell types, warehouse rules, bot families).
 
 Both Quantity and Level are mathematically equivalent in pure throughput
 (2× for 1 level, 2× for 2 copies), but **leveling adds qualities, takes
@@ -568,8 +682,9 @@ less canvas space, and costs higher-magnitude currency** (self-amortizing —
 you must use a cell to afford its next level). The player makes
 meaningful choices at every step.
 
-Level cap is currently 5; future iterations may extend levels into the
-giant-number tiers themselves.
+Level cap is currently 5; a separate design session revisits cell leveling
+on its own terms (§9 *What This Defers*). **Bots** carry independent
+magnitude ratings rather than levels — see §14.
 
 ### The simulator
 
@@ -586,9 +701,14 @@ node sim/run.ts --verbose      # show every purchase event
 node sim/run.ts --csv pacing.csv   # spreadsheet output
 ```
 
-The simulator models the leveling system, river-tap, and fuel-cost
-discount qualities. The agent automatically considers cloning vs.
-upgrading, picking whichever has higher ROI given the bottleneck.
+The simulator currently models the leveling system, river-tap, fuel-cost
+discount qualities, and inversion. Phase 6 extends it to model the
+Comprehension Spine: power-of-2 Comprehension ladder, universal
+magnitude gate, cell-jam state, decomposer bots, warehouse-capacity
+scaling, transformer cultivators. The agent decision tree gains new
+branches: choose between Comp upgrade, decomposer bot for in-place jam
+clearing, T-bot deployment at the current frontier, or waiting for
+cheaper paths.
 
 When changing Literature costs in `src/lib/literature.ts`, also update
 `sim/catalog.ts` and re-run the sim to confirm the curve still hits the
@@ -607,7 +727,6 @@ Deliberately left unsettled, to be resolved by prototyping and playtesting:
 - **Save/load and autosave cadence.** Standard concerns but not designed.
 - **Platform.** Desktop primary; mobile possible but not committed.
 - **Performance ceilings.** What happens when the player has 10,000 cells firing? Throttling? Aggregation?
-- **Cultivation cells need a design rethink.** The arithmetic / geometric / Fibonacci implementations (§6) work in code but aren't pulling their conceptual weight in the larger economy — the user wants to revisit them before any more cultivation work lands. The Harmonic / polynomial / factorial cells listed in §6 are blocked on this rethink. To be reopened in a dedicated design session.
 
 ---
 

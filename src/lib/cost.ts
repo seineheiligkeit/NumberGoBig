@@ -257,6 +257,35 @@ export function cultivationEmit(
       }
       return valueMul(seed, a);
     }
+    // Phase 6 ε.2: three series the design has called for since
+    // Phase 2 (DESIGN §6 *Cultivation Cells*). All use the same
+    // transformer model — input × series-coefficient(step).
+    case 'cultivation-harmonic': {
+      // f(x, n) = x · H_{n+1}, where H_k = 1 + 1/2 + ... + 1/k.
+      // Harmonic numbers grow logarithmically — painfully slow.
+      let H = valueOf(0);
+      for (let k = 1; k <= stepIndex + 1; k++) {
+        const recip = valuePow(valueOf(k), valueOf(-1));
+        H = valueAdd(H, recip);
+      }
+      return valueMul(seed, H);
+    }
+    case 'cultivation-polynomial': {
+      // f(x, n) = x · (n+1)^2. Quadratic growth — slower than
+      // geometric, faster than arithmetic. Future sim iterations may
+      // generalise to player-chosen polynomial coefficients.
+      return valueMul(seed, valuePow(valueOf(stepIndex + 1), valueOf(2)));
+    }
+    case 'cultivation-factorial': {
+      // f(x, n) = x · (n+1)!. Factorial growth — terrifying. The
+      // cell self-throttles via the universal comp jam rule (β.3)
+      // long before reaching truly absurd magnitudes.
+      let fac: Value = VALUE_ONE;
+      for (let k = 1; k <= stepIndex + 1; k++) {
+        fac = valueMul(fac, valueOf(k));
+      }
+      return valueMul(seed, fac);
+    }
     default:
       return VALUE_ZERO;
   }

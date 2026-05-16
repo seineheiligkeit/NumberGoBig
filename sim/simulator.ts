@@ -1,32 +1,43 @@
 // sim/simulator.ts
 //
-// Pacing simulator engine. Runs a tick-by-tick simulation of an
-// "optimal-play" agent walking a fixed Literature roadmap.
+// Pacing simulator engine — Phase 6 model (Comprehension as Spine).
+// Runs a tick-by-tick simulation of an "optimal-play" agent walking a
+// fixed Literature roadmap.
+//
+// Phase 6 changes (α.1 port):
+//   - Comprehension is the universal gate. Producing value V requires
+//     comp ≥ V; the recipe DAG is checked against the comp ceiling at
+//     each call.
+//   - Pipes have no leveling axis (dissolved into the comp ladder).
+//     Throughput from a pipe-rated path is `count × 1` per tick.
+//   - Pipe purchases honor `compRequirement` (a 2^N-pipe requires
+//     comp ≥ 2^(N+1)).
+//   - Agent picks comp upgrades when comp is the bottleneck.
+//   - Decomposer-bot and transformer-cultivator entries land in the
+//     catalog as stubs; their tick-time effects on production wire up
+//     in α.2.
 //
 // Production model
 // ----------------
 //
 // For each target value V, we compute a **resource-cost vector** — how
-// many firings of each cell type (and how many river zeros) are required
-// to manufacture one unit of V from scratch. The steady-state production
-// rate of V is then:
+// many firings of each cell type (and how many river zeros) are
+// required to manufacture one unit of V from scratch. The steady-state
+// production rate of V is then:
 //
 //   rate(V) = min over cell types C of (N_cells(C) / cost_per_output_C(V))
 //
-// This naturally captures sharing: an adder making 5 via add(2,3) requires
-// firings to make both the 2 and the 3 (and the 2 inside the 3); the
-// per-output cost folds all of that in.
+// This naturally captures sharing across recipes.
 //
-// The agent focuses on ONE value at a time — the most-needed item in the
-// current cost bundle. This mirrors real sequential play ("now I'm making
-// tens until I have 10 of them, then I'll make twos"). The pool grows
-// only in the focus value; intermediates are consumed in steady state.
+// The agent focuses on ONE value at a time — the most-needed item in
+// the current cost bundle.
 
 import {
   type CellType,
   type LitEntry,
   type CostItem,
   type LevelEntry,
+  LITERATURE,
   LITERATURE_BY_ID,
   RECIPE_BY_VALUE,
   MANUAL_PICKUP_RATE_PER_TICK,
@@ -44,17 +55,15 @@ export interface WorldState {
   cells: Map<CellType, number>;
   /** Current level per cell type (default 1). All cells of a type share level. */
   cellLevels: Map<CellType, number>;
-  /** Number of pipes per magnitude rating. */
+  /** Number of pipes per magnitude rating. No leveling. */
   pipes: Map<number, number>;
-  /** Current level per pipe magnitude (default 1). */
-  pipeLevels: Map<number, number>;
   /** Pool of accumulated currency: value → count (fractional accumulators OK). */
   pool: Map<number, number>;
   /** Set of Literature ids already purchased. */
   unlocked: Set<string>;
   /** Per-entry purchase counts (for geometric repurchase cost scaling). */
   purchaseCount: Map<string, number>;
-  /** Manual ceiling (Comprehension). */
+  /** Comprehension ceiling — the spine. Baseline is 2 (Phase 6, DESIGN §9). */
   comprehension: number;
 }
 
@@ -64,11 +73,10 @@ export function newWorld(): WorldState {
     cells: new Map(),
     cellLevels: new Map(),
     pipes: new Map(),
-    pipeLevels: new Map(),
     pool: new Map(),
     unlocked: new Set(),
     purchaseCount: new Map(),
-    comprehension: 10,
+    comprehension: 2, // Phase 6 baseline (DESIGN §9: Comp ≤ 2 at game start)
   };
 }
 
@@ -79,11 +87,9 @@ export function cellThroughput(world: WorldState, cellType: CellType): number {
   return count * levelMultiplier(level);
 }
 
-/** Effective throughput per pipe of a given magnitude (level multiplier × count). */
+/** Pipe throughput at a given magnitude — count alone (no leveling in Phase 6). */
 export function pipeThroughput(world: WorldState, magnitude: number): number {
-  const count = world.pipes.get(magnitude) ?? 0;
-  const level = world.pipeLevels.get(magnitude) ?? 1;
-  return count * levelMultiplier(level);
+  return world.pipes.get(magnitude) ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -108,10 +114,6 @@ export function smallestFuelDenomination(magnitudeRequired: number): number {
  *
  *   - Mult/Exp lvl 3+: fuel magnitude − 1 (min 1)
  *   - Mult/Exp lvl 5:  fuel magnitude halved (min 1)
- *
- * For low-magnitude operations (mult of small numbers), fuel was already
- * 1 — leveling can't go lower. For mult/exp on hundreds and beyond,
- * leveling produces real fuel savings.
  */
 export function effectiveFuelMagnitude(
   world: WorldState,
@@ -134,9 +136,6 @@ export function effectiveFuelMagnitude(
  * current factory state (levels affect effective fuel costs). Keys are
  * cell types (their firings required) plus the special key `'zero'`
  * (river zeros consumed).
- *
- * Computed by recursively walking the recipe DAG, summing per-output
- * costs. NOT cached at module level — depends on world.cellLevels.
  */
 export type ResourceVector = Map<string, number>;
 
@@ -170,16 +169,39 @@ export function resourceCost(world: WorldState, target: number): ResourceVector 
   return vec;
 }
 
+/**
+ * Largest value that appears anywhere in the recipe DAG for `target`,
+ * INCLUDING fuel sub-recipes. Used to gate production against the
+ * comprehension ceiling — every intermediate must be ≤ comp for the
+ * production path to be viable.
+ *
+ * Phase 6 universal rule (DESIGN §9): producing V requires comp ≥
+ * each intermediate's value, because every block on the canvas
+ * (input, output, fuel) must be liftable/pipeable to flow.
+ */
+export function maxIntermediateValue(target: number): number {
+  let max = 0;
+  const visited = new Set<number>();
+  function visit(v: number) {
+    if (visited.has(v)) return;
+    visited.add(v);
+    if (v > max) max = v;
+    const r = RECIPE_BY_VALUE.get(v);
+    if (!r) return;
+    for (const inp of r.inputs) visit(inp);
+    if (r.fuelMagnitude > 0) {
+      const fuelValue = smallestFuelDenomination(r.fuelMagnitude);
+      visit(fuelValue);
+    }
+  }
+  visit(target);
+  return max;
+}
+
 // ---------------------------------------------------------------------------
 // Throughput math
 // ---------------------------------------------------------------------------
 
-/**
- * Steady-state production rate (per tick) for one value, given the
- * factory's owned cells/pipes.
- *
- * Computed as min over all required resources of (supply / per-output-cost).
- */
 /**
  * Effective zero supply, accounting for the level-3 successor river-tap
  * quality. Without river-tap, zeros come from pipe ≤1s (or manual
@@ -195,10 +217,21 @@ export function zeroSupply(world: WorldState): number {
   return pipe1 > 0 ? pipe1 : MANUAL_PICKUP_RATE_PER_TICK;
 }
 
+/**
+ * Steady-state production rate (per tick) for one value, given the
+ * factory's owned cells/pipes and Comprehension ceiling.
+ *
+ * Returns 0 if the target — or any intermediate in its recipe DAG —
+ * exceeds Comprehension. This is the Phase 6 universal rule's
+ * simulator-level expression: a value the factory cannot lift cannot
+ * flow.
+ */
 export function steadyStateRate(world: WorldState, target: number): number {
-  if (target === 0) {
-    return zeroSupply(world);
-  }
+  if (target === 0) return zeroSupply(world);
+
+  // Phase 6 comp gate: any intermediate above comp blocks the whole path.
+  if (maxIntermediateValue(target) > world.comprehension) return 0;
+
   const vec = resourceCost(world, target);
   let minRate = Infinity;
   for (const [key, perOutput] of vec) {
@@ -218,23 +251,25 @@ export function steadyStateRate(world: WorldState, target: number): number {
 }
 
 /**
- * Identifies which cell type (or pipe-≤1 → 'zero') is the binding
- * constraint when producing `target`. The agent buys more of this to
- * raise the production rate.
+ * Identifies which cell type (or pipe-≤1 → 'zero' / 'comprehension')
+ * is the binding constraint when producing `target`. The agent buys
+ * more of this to raise the production rate.
  */
 export function bottleneckResource(
   world: WorldState,
   target: number,
 ): string | null {
   if (target === 0) {
-    // Zero supply has two possible bottlenecks: pipe ≤1 (if river-tap
-    // not yet unlocked) or successor (if it is).
     const successorLevel = world.cellLevels.get('successor') ?? 1;
     if (successorLevel >= 3 && (world.cells.get('successor') ?? 0) > 0) {
       return 'successor';
     }
     return (world.pipes.get(1) ?? 0) === 0 ? 'zero' : null;
   }
+
+  // Phase 6 comp bottleneck — checked before any cell-supply analysis.
+  if (maxIntermediateValue(target) > world.comprehension) return 'comprehension';
+
   const vec = resourceCost(world, target);
   let worstRatio = Infinity;
   let worstKey: string | null = null;
@@ -281,6 +316,16 @@ export function canAfford(world: WorldState, cost: CostItem[]): boolean {
   return true;
 }
 
+/**
+ * Phase 6: a purchase is allowed only if its `compRequirement` is met
+ * AND its cost is affordable. Pipes with `compRequirement = 2^(N+1)`
+ * can't be bought until comp climbs that high.
+ */
+export function canPurchase(world: WorldState, entry: LitEntry, cost: CostItem[]): boolean {
+  if (entry.compRequirement && world.comprehension < entry.compRequirement) return false;
+  return canAfford(world, cost);
+}
+
 export function deductCost(world: WorldState, cost: CostItem[]): void {
   const required = new Map<number, number>();
   for (const item of cost) {
@@ -293,24 +338,17 @@ export function deductCost(world: WorldState, cost: CostItem[]): void {
 }
 
 /**
- * Apply a level-up. Deducts cost, increments the level, sets the entry as
- * unlocked. Returns true on success.
+ * Apply a level-up. Deducts cost, increments the level, sets the entry
+ * as unlocked. Returns true on success. Phase 6: cell-level only
+ * (pipes no longer have a level axis).
  */
 export function purchaseLevel(world: WorldState, entry: LevelEntry): boolean {
   if (!canAfford(world, entry.cost)) return false;
-  // Verify current level is one below target.
-  const currentLevel =
-    entry.target.kind === 'cell'
-      ? world.cellLevels.get(entry.target.cellType) ?? 1
-      : world.pipeLevels.get(entry.target.magnitude) ?? 1;
+  const currentLevel = world.cellLevels.get(entry.target.cellType) ?? 1;
   if (currentLevel !== entry.level - 1) return false;
 
   deductCost(world, entry.cost);
-  if (entry.target.kind === 'cell') {
-    world.cellLevels.set(entry.target.cellType, entry.level);
-  } else {
-    world.pipeLevels.set(entry.target.magnitude, entry.level);
-  }
+  world.cellLevels.set(entry.target.cellType, entry.level);
   world.unlocked.add(entry.id);
   return true;
 }
@@ -322,7 +360,7 @@ export function purchase(world: WorldState, entryId: string): boolean {
   if (entry.once && owned > 0) return false;
 
   const cost = currentCost(entry, owned);
-  if (!canAfford(world, cost)) return false;
+  if (!canPurchase(world, entry, cost)) return false;
 
   deductCost(world, cost);
   world.purchaseCount.set(entryId, owned + 1);
@@ -347,6 +385,11 @@ export function purchase(world: WorldState, entryId: string): boolean {
         world.comprehension = Math.max(world.comprehension, entry.comprehensionLevel);
       }
       break;
+    case 'bot':
+      // α.1: bots are catalog stubs. Tick-time effects (T-bots as
+      // frontier throughput; decomposer bots as jam-clearing) wire up
+      // in α.2.
+      break;
     case 'theorem':
       break;
   }
@@ -358,15 +401,6 @@ export function purchase(world: WorldState, entryId: string): boolean {
 // Per-tick production
 // ---------------------------------------------------------------------------
 
-/**
- * Applies one tick of production with a SINGLE focus value. All factory
- * output flows into the focus pool at steady-state rate; intermediates
- * are implicitly consumed (their cost is folded into the resource
- * vector).
- *
- * For multi-item costs, the agent rotates focus between cost items
- * each tick based on which has the largest shortfall.
- */
 export function tickProduction(world: WorldState, focus: number): void {
   const rate = steadyStateRate(world, focus);
   if (rate > 0) {
@@ -382,9 +416,7 @@ export function tickProduction(world: WorldState, focus: number): void {
 
 export interface AgentDecision {
   buy?: string;
-  /** Level upgrade to apply this step. */
   buyLevel?: LevelEntry;
-  /** What value to focus production on this tick. */
   tickFocus?: number;
   done?: boolean;
 }
@@ -398,10 +430,7 @@ export function newAgent(roadmap: string[]): AgentState {
   return { roadmap, goalIndex: 0 };
 }
 
-/**
- * Picks the cost item with the largest production-time shortfall. The
- * agent will focus production on this value next.
- */
+/** Picks the cost item with the largest production-time shortfall. */
 function mostNeededValue(world: WorldState, cost: CostItem[]): number | null {
   let worstShortfall = -1;
   let worstValue: number | null = null;
@@ -428,19 +457,34 @@ function entryForCellType(cellType: CellType): LitEntry | null {
 
 /**
  * Returns the entry id that would resolve the given resource bottleneck:
- * a pipe_1 purchase for 'zero', or the cell entry for a cell-type key.
+ * a pipe ≤1 purchase for 'zero', or the cell entry for a cell-type key.
  */
 function infraEntryForBottleneck(bn: string): LitEntry | null {
-  if (bn === 'zero') return LITERATURE_BY_ID.get('pipe_1') ?? null;
+  if (bn === 'zero') return LITERATURE_BY_ID.get('pipe_0') ?? null;
   if (bn.startsWith('literal:')) return null;
   return entryForCellType(bn as CellType);
 }
 
 /**
- * Estimates the time-to-acquire for a cost bundle at the factory's
- * current rates. Used to decide whether a bottleneck cell is worth
- * buying — if it would noticeably speed up the goal, buy it.
+ * Phase 6: next unowned comprehension upgrade above the current ceiling.
+ * The agent buys these sequentially as the comp gate forces.
  */
+function nextCompUpgrade(world: WorldState): LitEntry | null {
+  let best: LitEntry | null = null;
+  for (const entry of LITERATURE) {
+    if (entry.kind !== 'comprehension') continue;
+    if (world.unlocked.has(entry.id)) continue;
+    if ((entry.comprehensionLevel ?? 0) <= world.comprehension) continue;
+    if (
+      !best ||
+      (entry.comprehensionLevel ?? Infinity) < (best.comprehensionLevel ?? Infinity)
+    ) {
+      best = entry;
+    }
+  }
+  return best;
+}
+
 function ticksToAfford(world: WorldState, cost: CostItem[]): number {
   let worst = 0;
   for (const item of cost) {
@@ -468,43 +512,52 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
     }
     const cost = currentCost(entry, world.purchaseCount.get(goalId) ?? 0);
 
-    if (canAfford(world, cost)) {
+    // Phase 6: if the entry has a compRequirement we can't meet, route
+    // through the comp ladder first regardless of affordability.
+    if (entry.compRequirement && world.comprehension < entry.compRequirement) {
+      const compDecision = pursueCompUpgrade(world);
+      if (compDecision) return compDecision;
+      // Fallthrough: no comp upgrade available — agent will idle.
+    }
+
+    if (canPurchase(world, entry, cost)) {
       return { buy: goalId };
     }
 
-    // Pick the most-needed cost item for the current goal.
     const focus = mostNeededValue(world, cost);
     if (focus === null) {
       return { tickFocus: 0 };
     }
 
-    // Identify the bottleneck for producing the focus value.
     const bn = bottleneckResource(world, focus);
     if (!bn || bn.startsWith('literal:')) {
       return { tickFocus: focus };
     }
 
-    // Is buying more of this infrastructure worth it? Compare clone vs
-    // upgrade ROI: with N owned cells at multiplier M, an upgrade gains
-    // N×M throughput; a clone gains only M. Upgrades favored at high N.
+    // Phase 6: if the focus value's bottleneck is comp, prioritise the
+    // next comp upgrade — clone/upgrade analysis doesn't help here.
+    if (bn === 'comprehension') {
+      const compDecision = pursueCompUpgrade(world);
+      if (compDecision) return compDecision;
+      return { tickFocus: focus }; // No more comp tiers; idle.
+    }
+
+    // Standard clone/upgrade ROI analysis for cell-supply bottlenecks.
     const infraEntry = infraEntryForBottleneck(bn);
     const cloneCount = infraEntry
       ? world.purchaseCount.get(infraEntry.id) ?? 0
       : 0;
     const cloneCost = infraEntry ? currentCost(infraEntry, cloneCount) : null;
 
-    // Find the next-level upgrade for this bottleneck, if any.
+    // Phase 6: pipes no longer level. Only cell-type bottlenecks have
+    // upgrade options.
     let upgradeEntry: LevelEntry | null = null;
-    if (bn === 'zero') {
-      const pipeLevel = world.pipeLevels.get(1) ?? 1;
-      upgradeEntry = nextLevelEntry({ kind: 'pipe', magnitude: 1 }, pipeLevel);
-    } else if (!bn.startsWith('literal:')) {
+    if (!bn.startsWith('literal:') && bn !== 'zero') {
       const cellType = bn as CellType;
       const currentLevel = world.cellLevels.get(cellType) ?? 1;
       upgradeEntry = nextLevelEntry({ kind: 'cell', cellType }, currentLevel);
     }
 
-    // Compute ROI for each option (lower ticksToAfford / per-firing-gain wins).
     let bestAction:
       | { kind: 'goal' }
       | { kind: 'clone' }
@@ -527,21 +580,16 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
       const levelMult =
         infraEntry.kind === 'cell' && infraEntry.cellType
           ? levelMultiplier(world.cellLevels.get(infraEntry.cellType) ?? 1)
-          : infraEntry.kind === 'pipe' && infraEntry.pipeMagnitude !== undefined
-            ? levelMultiplier(world.pipeLevels.get(infraEntry.pipeMagnitude) ?? 1)
-            : 1;
-      // Gain from cloning = +levelMult throughput on this cell type.
-      // Effective speedup on the goal ≈ goalRemaining × (currentSupply / (currentSupply + levelMult))
+          : 1; // pipes don't level
       const currentSupply = ownedCells * levelMult;
       const cloneSpeedupRatio =
         currentSupply > 0 ? currentSupply / (currentSupply + levelMult) : 0;
-      const cloneAffordTime = canAfford(world, cloneCost)
-        ? 0
-        : ticksToAfford(world, cloneCost);
+      const cloneAffordable = canPurchase(world, infraEntry, cloneCost);
+      const cloneAffordTime = cloneAffordable ? 0 : ticksToAfford(world, cloneCost);
       const cloneScore = cloneAffordTime + goalRemaining * cloneSpeedupRatio;
       if (cloneScore < bestScore) {
         bestScore = cloneScore;
-        if (canAfford(world, cloneCost)) {
+        if (cloneAffordable) {
           bestAction = { kind: 'clone' };
         } else {
           bestAction = { kind: 'pursue-infra', cost: cloneCost };
@@ -550,12 +598,9 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
     }
 
     if (upgradeEntry) {
-      // Upgrade doubles throughput on this cell type (multiplier scales 2×).
-      // Speedup ratio ≈ 1/2 of the bottleneck contribution.
       const upgradeAffordTime = canAfford(world, upgradeEntry.cost)
         ? 0
         : ticksToAfford(world, upgradeEntry.cost);
-      // Optimistic: upgrade halves the time spent on this bottleneck.
       const upgradeSpeedupRatio = 0.5;
       const upgradeScore = upgradeAffordTime + goalRemaining * upgradeSpeedupRatio;
       if (upgradeScore < bestScore) {
@@ -584,6 +629,22 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
     return { tickFocus: focus };
   }
   return { done: true };
+}
+
+/**
+ * Phase 6 helper: when comp is the bottleneck, route the agent toward
+ * the next available comp upgrade — either buy it or pursue its cost.
+ * Returns null if there's no comp upgrade to pursue.
+ */
+function pursueCompUpgrade(world: WorldState): AgentDecision | null {
+  const compEntry = nextCompUpgrade(world);
+  if (!compEntry) return null;
+  if (canPurchase(world, compEntry, compEntry.cost)) {
+    return { buy: compEntry.id };
+  }
+  const compFocus = mostNeededValue(world, compEntry.cost);
+  if (compFocus !== null) return { tickFocus: compFocus };
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -637,7 +698,6 @@ export function simulate(
         lastPurchaseTick = world.tick;
         continue;
       }
-      // Failed buy — defensive. Advance tick with no-op focus.
       tickProduction(world, 0);
       continue;
     }
@@ -689,6 +749,11 @@ function describeBottleneck(world: WorldState, goalId: string): string {
   const owned = world.purchaseCount.get(goalId) ?? 0;
   const cost = currentCost(entry, owned);
   const parts: string[] = [];
+  if (entry.compRequirement && world.comprehension < entry.compRequirement) {
+    parts.push(
+      `comp gate: need comp ≥ ${entry.compRequirement}, have ${world.comprehension}`,
+    );
+  }
   for (const item of cost) {
     const have = world.pool.get(item.value) ?? 0;
     const need = item.count;

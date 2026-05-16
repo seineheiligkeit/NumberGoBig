@@ -5,6 +5,8 @@
     currentCost,
     formatCost,
     isCellEntry,
+    isCompRequirementMet,
+    isComprehensionEntryAvailable,
     isLevelUpgradeAvailable,
     purchase,
     type LiteratureEntry,
@@ -12,8 +14,8 @@
   import {
     achievements,
     cellLevels,
+    comprehension,
     countByValue,
-    pipeLevels,
     purchaseCounts,
   } from '../lib/world';
   import { getController } from '../lib/interaction';
@@ -21,16 +23,21 @@
 
   $: visible = $achievements.has('play_with_zeros');
 
-  // Re-evaluate the visible entries whenever cell or pipe levels change.
-  // Level upgrades become visible only when their target's current level
-  // is exactly one less than the entry's targetLevel — see
-  // `isLevelUpgradeAvailable`. We touch the stores in the reactive scope
-  // so Svelte re-runs the filter on every level change.
+  // Re-evaluate the visible entries whenever cell/pipe levels or
+  // comprehension change. Phase 6 β.1 adds the comp-tier filter (one
+  // next-unowned comp entry visible); β.2 adds the comp-requirement
+  // filter (pipes hidden until comp climbs past their magnitude).
   $: visibleEntries = (() => {
     // Touch the stores so reactivity tracks changes (no-op reads).
     void $cellLevels;
-    void $pipeLevels;
-    return LITERATURE_ENTRIES.filter((e) => isLevelUpgradeAvailable(e));
+    void $comprehension;
+    // pipeLevels store dropped in γ.1 — pipe leveling dissolved.
+    return LITERATURE_ENTRIES.filter(
+      (e) =>
+        isLevelUpgradeAvailable(e) &&
+        isComprehensionEntryAvailable(e) &&
+        isCompRequirementMet(e),
+    );
   })();
 
   function tryPurchase(entry: LiteratureEntry): void {
@@ -39,9 +46,13 @@
     if (isCellEntry(entry)) {
       // Rule-warehouse entries (`placementCellType` set) carry both the
       // CellType and the `ruleId` to install; ordinary cell entries use
-      // their id directly as the CellType.
+      // their id directly as the CellType. Phase 6 δ.1: decomposer-bot
+      // entries also carry a `botRating` for the placed bot.
       const type = (entry.placementCellType ?? entry.id) as CellType;
-      getController().beginCellPlacement(type, { ruleId: entry.ruleId });
+      getController().beginCellPlacement(type, {
+        ruleId: entry.ruleId,
+        botRating: entry.botRating,
+      });
     } else if (entry.kind === 'pipe' && entry.pipeMagnitude) {
       getController().beginPipePlacement(entry.pipeMagnitude, entry.pipeCooldownMs ?? 1000);
     }

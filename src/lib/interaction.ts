@@ -28,12 +28,16 @@ import {
 } from './pixi/warehouse-cell';
 import {
   drawArithmeticCell,
+  drawFactorialCell,
   drawFibonacciCell,
   drawGeometricCell,
+  drawHarmonicCell,
+  drawPolynomialCell,
   updateCultivationBadge,
 } from './pixi/cultivation-cell';
-import { captureSeed, setCultivationBlockInteractionAttach } from './cultivation';
+import { setCultivationBlockInteractionAttach } from './cultivation';
 import { drawCleanupBot, getBotHandles } from './pixi/cleanup-bot';
+import { drawDecomposerBot } from './pixi/decomposer-bot';
 import { fadeAndDestroy } from './pixi/micro-anim';
 import { drawFilterCell } from './pixi/filter-cell';
 import { routeViaFilter, setFilterBlockInteractionAttach } from './filter';
@@ -64,6 +68,8 @@ import {
   findCellPortAt,
   fuelPortIndex,
   increaseStack,
+  isCellJammed,
+  warehouseCapacity,
   markDirty,
   operandPending,
   operandsFilled,
@@ -75,7 +81,7 @@ import {
   type PlacedCell,
   type PlacedPipe,
 } from './world';
-import { computationalCost, isCultivationType, operate, type CellType } from './cell-types';
+import { computationalCost, cultivationEmit, isCultivationType, operate, type CellType } from './cell-types';
 import { getWarehouseRule } from './warehouse-rules';
 import { PENCIL_ACTIVE_CURSOR_URL, PENCIL_CURSOR_URL } from './cursors';
 import { showMarginalia } from './marginalia';
@@ -96,7 +102,7 @@ import {
   setPipeBlockInteractionAttach,
 } from './pipe';
 import {
-  valueExceeds,
+  valueComprehensible,
   valueIsOne,
   valueLabel,
   type Value,
@@ -134,7 +140,7 @@ type InteractionMode =
 
 export interface DragController {
   beginDragFromRiver(event: FederatedPointerEvent, value: Value): void;
-  beginCellPlacement(type: CellType, options?: { ruleId?: string }): void;
+  beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number }): void;
   /** Two-click pipe placement: source then destination. */
   beginPipePlacement(magnitude: number, cooldownMs?: number): void;
   /** Rect-drag a region; on release, prompt for a name and save as
@@ -172,6 +178,7 @@ export interface DragController {
       botWorkerY?: number;
       botSpeed?: number;
       botCarried?: Value | null;
+      botRating?: number;
     },
     ruleWarehouseState?: {
       ruleId: string;
@@ -282,16 +289,11 @@ export function createDragController(app: Application, canvasLayer: Container): 
       return ok;
     }
 
-    if (isCultivationType(cell.type)) {
-      if (cell.seed !== null && cell.seed !== undefined) {
-        showMarginalia(
-          'This cultivation cell already has a seed. Place another cell for a new sequence.',
-          'cultivation_already_seeded',
-        );
-        return false;
-      }
-      return captureSeed(cell, value);
-    }
+    // Phase 6 ε.1: cultivators are no longer seed-based timer cells.
+    // They take an INPUT each firing (consumed) and emit f(input, step),
+    // advancing an internal step counter per firing. The drop-onto-input
+    // flow is therefore identical to a unary operator's — fall through
+    // to the standard pending-input path below.
 
     if (cell.pending[portIndex] !== null) return false;
 
@@ -336,13 +338,35 @@ export function createDragController(app: Application, canvasLayer: Container): 
     // capacity before paying fuel (Slice 5.7). One distinct port-target
     // is checked per port; multi-emit at the same port fans within-firing
     // and reuses the first emit's planned anchor.
-    const result = operate(cell.type, operands);
+    //
+    // Phase 6 ε.1: cultivators short-circuit `operate` — their output
+    // is `f(input, step)` and the step counter advances per firing.
+    // The transform formula lives in `cultivationEmit` (cost.ts);
+    // the increment happens AFTER fuel + spawn checks succeed.
+    let result;
+    if (isCultivationType(cell.type)) {
+      const step = cell.cultivationStep ?? 0;
+      const output = cultivationEmit(cell.type, operands[0], step);
+      result = { emits: [{ portIndex: 0, value: output }] };
+    } else {
+      result = operate(cell.type, operands);
+    }
 
     const portsChecked = new Set<number>();
     for (const ev of result.emits) {
       if (portsChecked.has(ev.portIndex)) continue;
       portsChecked.add(ev.portIndex);
       const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
+      if (plan === 'jammed') {
+        // Phase 6 β.3 (DESIGN §9): an uncomprehended block at the
+        // output port jams the cell. No fuel burn, no input
+        // consumption — pending operands stay in their slots.
+        showMarginalia(
+          `${cellLabel(cell.type)} output exceeds your present Comprehension. The cell will wait.`,
+          `cell_jammed_${cell.id}`,
+        );
+        return;
+      }
       if (plan === 'clogged') {
         showMarginalia(
           `${cellLabel(cell.type)} output is clogged — clear the port before this cell can fire again.`,
@@ -395,7 +419,14 @@ export function createDragController(app: Application, canvasLayer: Container): 
     }
     updateCostBadge(cell, cellLevel(cell.type));
 
-    if (result.marginalia) {
+    // Phase 6 ε.1: cultivators advance their step counter per firing.
+    // The new step is reflected in the cell badge on next render.
+    if (isCultivationType(cell.type)) {
+      cell.cultivationStep = (cell.cultivationStep ?? 0) + 1;
+      updateCultivationBadge(cell);
+    }
+
+    if ('marginalia' in result && result.marginalia) {
       showMarginalia(result.marginalia.text, result.marginalia.key);
     }
 
@@ -419,7 +450,8 @@ export function createDragController(app: Application, canvasLayer: Container): 
 
       if (fanIndex === 0) {
         const plan = planSpawnAtPort(cell, ev.portIndex, ev.value);
-        if (plan === 'clogged') continue; // pre-check should have caught this
+        // pre-check should have caught these; treat as no-ops defensively.
+        if (plan === 'clogged' || plan === 'jammed') continue;
         if (plan.kind === 'new') {
           portAnchors.set(ev.portIndex, { x: plan.x, y: plan.y });
         } else {
@@ -528,10 +560,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
       if (mode !== 'idle') return;
       if (block.count <= 0) return;
 
-      // Comprehension gate: the player can only manually lift numbers up
-      // to their current level. Anything larger must travel by automation.
+      // Phase 6 β.2 universal comp gate (DESIGN §9): the player can
+      // only manually lift numbers within their current Comprehension.
+      // Anything larger must travel by automation (pipe / T-bot) — and
+      // those are themselves capped at comp.
       const cap = comprehensionLevel();
-      if (valueExceeds(block.value, cap)) {
+      if (!valueComprehensible(block.value, cap)) {
         showMarginalia(
           `${valueLabel(block.value)} exceeds your current Comprehension (${cap}). Build automation, or earn a Comprehension upgrade.`,
           'comprehension_blocked',
@@ -584,6 +618,17 @@ export function createDragController(app: Application, canvasLayer: Container): 
       if (mode !== 'idle') return;
       const c = screenToCanvas(event.global.x, event.global.y);
       if (clickIsOnPort(cell, c.x, c.y)) return;
+      // Phase 6 β.3 (DESIGN §9): a jammed cell is pinned in place by
+      // the uncomprehended block at its port. The factory must
+      // engineer *around* it — re-route consumers, route the `?`-block
+      // to a Factor cell via pipe, or wait for Comp to catch up.
+      if (isCellJammed(cell, comprehensionLevel())) {
+        showMarginalia(
+          'This cell is pinned by an uncomprehended output. Clear the `?`-block before relocating it.',
+          `cell_jammed_drag_${cell.id}`,
+        );
+        return;
+      }
       // Past the gate — this is a body-drag. Stop propagation so the
       // window-level `onOutputClick` listener (warehouse withdraw,
       // shift-click pipe delete) doesn't double-fire on the same press.
@@ -686,13 +731,28 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return 'Geometric cultivation';
       case 'cultivation-fibonacci':
         return 'Fibonacci cultivation';
+      case 'cultivation-harmonic':
+        return 'Harmonic cultivation';
+      case 'cultivation-polynomial':
+        return 'Polynomial cultivation';
+      case 'cultivation-factorial':
+        return 'Factorial cultivation';
       case 'cleanup-bot':
         return 'Translation Operator';
+      case 'factor-bot':
+        return 'Factor Operator';
+      case 'decrement-bot':
+        return 'Decrement Operator';
+      case 'inversion-bot':
+        return 'Inversion Operator';
     }
   }
 
   function installWarehouseRefresh(cell: PlacedCell): void {
-    cell.refreshBadge = () => updateWarehouseBadge(cell);
+    // γ.3: capacity is dynamic — fetch it on each refresh (the
+    // comprehension.subscribe pass in setup.ts calls refreshBadge on
+    // every comp upgrade, so the cap stays in sync).
+    cell.refreshBadge = () => updateWarehouseBadge(cell, warehouseCapacity());
     cell.refreshBadge();
   }
 
@@ -742,8 +802,20 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return drawGeometricCell(0, 0);
       case 'cultivation-fibonacci':
         return drawFibonacciCell(0, 0);
+      case 'cultivation-harmonic':
+        return drawHarmonicCell(0, 0);
+      case 'cultivation-polynomial':
+        return drawPolynomialCell(0, 0);
+      case 'cultivation-factorial':
+        return drawFactorialCell(0, 0);
       case 'cleanup-bot':
         return drawCleanupBot(0, 0);
+      case 'factor-bot':
+        return drawDecomposerBot(0, 0, { glyph: 'F' });
+      case 'decrement-bot':
+        return drawDecomposerBot(0, 0, { glyph: 'D' });
+      case 'inversion-bot':
+        return drawDecomposerBot(0, 0, { glyph: '1/x' });
     }
   }
 
@@ -824,23 +896,53 @@ export function createDragController(app: Application, canvasLayer: Container): 
         };
       case 'cultivation-arithmetic':
         return {
-          text: 'Arithmetic cultivation: drop a seed, watch the linear march.',
+          text: 'Arithmetic cultivation: each input emerges as a + n where n advances per firing.',
           key: 'first_cultivation_arithmetic',
         };
       case 'cultivation-geometric':
         return {
-          text: 'Geometric cultivation: a seed and a doubling. Grows quickly.',
+          text: 'Geometric cultivation: each input is doubled n times. Grows quickly.',
           key: 'first_cultivation_geometric',
         };
       case 'cultivation-fibonacci':
         return {
-          text: 'Fibonacci cultivation: each emission is the sum of the previous two, scaled by the seed.',
+          text: 'Fibonacci cultivation: each input scales by the n-th Fibonacci number.',
           key: 'first_cultivation_fibonacci',
+        };
+      case 'cultivation-harmonic':
+        return {
+          text: 'Harmonic cultivation: each input scales by Hₙ — the n-th harmonic sum. Painfully slow.',
+          key: 'first_cultivation_harmonic',
+        };
+      case 'cultivation-polynomial':
+        return {
+          text: 'Polynomial cultivation: each input scales by (n+1)². Quadratic growth.',
+          key: 'first_cultivation_polynomial',
+        };
+      case 'cultivation-factorial':
+        return {
+          text: 'Factorial cultivation: each input scales by (n+1)!. Terrifying.',
+          key: 'first_cultivation_factorial',
         };
       case 'cleanup-bot':
         return {
           text: 'A Translation Operator. The worker fetches loose blocks within reach and carries them to a matching warehouse.',
           key: 'first_cleanup_bot',
+        };
+      case 'factor-bot':
+        return {
+          text: 'A Factor Operator. The worker walks to a loose block within its rating and splits it into prime factors in place. Reads what you cannot.',
+          key: 'first_factor_bot',
+        };
+      case 'decrement-bot':
+        return {
+          text: 'A Decrement Operator. The worker walks to a loose block within its rating and removes one. Slow, brute-force salvage.',
+          key: 'first_decrement_bot',
+        };
+      case 'inversion-bot':
+        return {
+          text: 'An Inversion Operator. The worker walks to a loose block within its rating and replaces it with its reciprocal.',
+          key: 'first_inversion_bot',
         };
     }
   }
@@ -943,6 +1045,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         botWorkerY?: number;
         botSpeed?: number;
         botCarried?: Value | null;
+        botRating?: number;
       },
       ruleWarehouseState?: {
         ruleId: string;
@@ -1005,7 +1108,13 @@ export function createDragController(app: Application, canvasLayer: Container): 
           cultivationState.cultivationCooldownRemaining ?? cultivationState.cultivationCooldownMs;
         updateCultivationBadge(placed);
       }
-      if (type === 'cleanup-bot' && botState) {
+      if (
+        (type === 'cleanup-bot' ||
+          type === 'factor-bot' ||
+          type === 'decrement-bot' ||
+          type === 'inversion-bot') &&
+        botState
+      ) {
         placed.botRadius = botState.botRadius;
         placed.botCooldownMs = botState.botCooldownMs;
         placed.botCooldownRemaining = botState.botCooldownRemaining;
@@ -1020,6 +1129,8 @@ export function createDragController(app: Application, canvasLayer: Container): 
         placed.botWorkerY = botState.botWorkerY ?? placed.container.y;
         placed.botSpeed = botState.botSpeed ?? 100;
         placed.botCarried = botState.botCarried ?? null;
+        // Phase 6 δ.1: decomposer-bot rating (T-bots don't use this).
+        placed.botRating = botState.botRating;
         // Push the saved walk progress into the visual so a save loaded
         // mid-carry shows the worker where it was, with its block in
         // hand. The next tick keeps walking from here.
@@ -1372,11 +1483,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
       window.addEventListener('keydown', onKey);
     },
 
-    beginCellPlacement(type: CellType, options?: { ruleId?: string }): void {
+    beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number }): void {
       if (mode !== 'idle') return;
       mode = 'placing';
 
       const ruleId = options?.ruleId;
+      const botRating = options?.botRating;
       const rect = rectOf();
       const ghost = drawCellByType(type, ruleId);
       ghost.alpha = 0.7;
@@ -1407,6 +1519,17 @@ export function createDragController(app: Application, canvasLayer: Container): 
         }
         if (type === 'filter') {
           placed.ruleId = ruleId;
+        }
+        if (
+          (type === 'factor-bot' ||
+            type === 'decrement-bot' ||
+            type === 'inversion-bot') &&
+          botRating !== undefined
+        ) {
+          // Phase 6 δ.1: bot rating is pinned at placement, independent
+          // of player Comprehension. The bot will act on any block of
+          // magnitude ≤ this rating, even uncomprehended ones.
+          placed.botRating = botRating;
         }
         attachCellInteraction(placed);
 
@@ -1641,8 +1764,20 @@ export function createDragController(app: Application, canvasLayer: Container): 
         showMarginalia('Warehouse is empty.', `warehouse_empty_${cell.id}`);
         return;
       }
+      // Phase 6 β.2 universal comp gate (DESIGN §9): a manual withdraw is
+      // a lift. `withdrawFromWarehouse` already refuses values past comp,
+      // so a null return here can mean "empty" OR "all contents exceed
+      // comp." Distinguish with a marginalia note so the player isn't
+      // confused by a non-empty warehouse that refuses to give anything.
+      const cap = comprehensionLevel();
       const value = withdrawFromWarehouse(cell);
-      if (value === null) return;
+      if (value === null) {
+        showMarginalia(
+          `This warehouse holds nothing within your present Comprehension (${cap}).`,
+          `warehouse_uncomprehended_${cell.id}`,
+        );
+        return;
+      }
       beginDrag(value, e.clientX - rect.left, e.clientY - rect.top);
     }
   };

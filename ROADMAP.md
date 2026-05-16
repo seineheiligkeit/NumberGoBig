@@ -100,19 +100,52 @@ Tetration per the sim. See §2 *Phase 5 — Iteration Wave* for slice
 detail and DESIGN.md §6 *Inversion and the Negative-Fuel Pivot* for
 the design intent.
 
-**Next up — Phase 5 remaining:** 6.10 (Literature tabs UI — overdue
-now that Inversion + Negation + `wh: negative` added entries to a
-sidebar at ~60), then 6.8 (deferred level qualities), 6.9 (warehouse
-leveling), 6.3 (Prestige + Ancestral), 6.4 (ordinals + surreals),
-6.5 (named giants).
+**Phase 6 — Comprehension as Spine — SHIPPED.** All design, sim
+porting, and code slices complete. Comprehension is the singular
+pacing axis: power-of-2 ladder (Comp ≤ 2^N, infinite); universal
+magnitude gate on manual lift / pipes / warehouses / T-bots;
+cell-jam mechanic pins stuck cells in place and renders oversize
+outputs as `?`; reveal events on comp upgrades retroactively decode
+parked `?`-blocks; new decomposer bot family (F-bot / D-bot / I-bot)
+as the *delegated-comprehension* exception that can act on
+uncomprehended blocks; warehouse capacity scales geometrically with
+comp; pipe leveling dissolved into the comp ladder (single Literature
+entry per magnitude tier); cultivators rebuilt as input-driven
+transformer cells with internal step counter; three new cultivators
+deferred since Phase 2 (harmonic / polynomial / factorial) landed.
 
-**Cultivation cells flagged for redesign.** The arithmetic / geometric
-/ Fibonacci cells work mechanically but aren't yet pulling their
-conceptual weight in the larger economy. A future session will rethink
-them from the design level — probably alongside revisiting the
-Harmonic / polynomial / factorial cells deferred from Phase 2, which
-are blocked on this rethink. Don't pile new mechanics onto the
-existing cultivation cells until that conversation happens.
+**Save schema bumped twice** during Phase 6: v15 (β.1) collapses the
+old comp ladder into the power-of-2 model; v16 (γ.1) dissolves pipe
+leveling and remaps old pipe ids. Migrations are idempotent and
+cover every pre-v15 save.
+
+**Next up — Sim re-tuning (α.x extension).** The α.3 lock was made
+before decomposer bots, transformer cultivators, and warehouse-capacity
+scaling were modeled. Now that they ship in code, the simulator
+needs corresponding tick-time effects:
+
+  - **T-bot frontier throughput** — a working-class automation at the
+    [2^(N-1), 2^N] band, currently absent from sim production rates.
+  - **Decomposer-bot jam-clearing path** — alternative to comp upgrade
+    when a value is gated; the agent's decision tree should weigh
+    "buy bot vs. buy comp" by ROI.
+  - **Transformer cultivator production** — per-step formulas (linear /
+    quadratic / exponential / factorial) wired into the resource-cost
+    vector. Per-step fuel-cost escalation lives here too — currently
+    cultivators are free at every step in game code, throttled only by
+    the universal comp-jam.
+  - **Warehouse capacity** — dynamic per-comp tier; influences how much
+    stockpile the agent can hoard before re-routing.
+
+Once those models land, re-sweep the cost curves against the same
+~5h speedrun / ~10h casual target. Edit `sim/catalog.ts` first,
+verify, then port locked numbers back to `src/lib/literature.ts`.
+
+**Cultivation cells rework shipped.** Streaming cultivators
+(`cultivation-arithmetic` / `cultivation-geometric` /
+`cultivation-fibonacci`) are now input-driven transformers (ε.1).
+Three previously-deferred series (harmonic / polynomial / factorial)
+landed in ε.2. See DESIGN.md §6 *Cultivation Cells* for the design.
 
 ### Built and verified
 
@@ -549,7 +582,81 @@ After the wave: **6.10** (Literature tabs UI) becomes urgent because Inversion +
 
 **Deliverable achieved:** the canvas reads as a hand-arranged page that moves with the player. T-bots make automation visible (workers actually walk; you watch your factory). Pipes can be re-routed in place without delete-and-replace. The Inversion family closes the small-numbers economy — Subtraction's negatives and Division's tiny rationals finally have a productive role, powered by the new negative-fuel mechanic. The polish trio (consistency, micro-animations, typography) tightened every cell visual and gave block production a small visible exhale on every firing.
 
-**Phase 5 remaining (post-wave):** Literature tabs UI (6.10), deferred level qualities (6.8), warehouse leveling (6.9), prestige + Ancestral (6.3), ordinals + surreals (6.4), named giants (6.5).
+**Phase 5 remaining → folded into Phase 6.** The Literature tabs UI
+(was 6.10), warehouse leveling (was 6.9), and the cultivator design
+rethink all land inside Phase 6's slice list below. Deferred level
+qualities (was 6.8) defer further, behind a separate cell-leveling
+redesign. Prestige + Ancestral (6.3), ordinals + surreals (6.4),
+named giants (6.5) queue *behind* Phase 6.
+
+### Phase 6: Comprehension as Spine
+**Goal:** elevate Comprehension from a niche manual-handling limiter
+to the singular pacing axis of the economy. Production, transport,
+storage, and automation all bend to it. Pipe progression collapses
+into the Comprehension ladder. A new decomposer bot family handles
+in-place reduction of uncomprehended blocks. Cultivators are rebuilt
+as input-driven transformers under the universal rule. See
+DESIGN.md §9 for the complete design spec.
+
+This phase is large but unusually disciplined: the simulator does
+the parameter discovery before any code lands. Each implementation
+slice ends in a buildable state.
+
+#### Phase 6.α — Design and simulation (no code)
+
+| Slice | Content | Status |
+|---|---|---|
+| **α.1** | **Sim port.** Power-of-2 Comprehension ladder in `sim/catalog.ts`; universal magnitude check on lift/pipe/warehouse/T-bot wired into `steadyStateRate` and `bottleneckResource`; `compRequirement` enforced in `purchase`; agent's `pursueCompUpgrade` branch routes comp-gated production through comp tiers; pipe leveling dissolved (cell leveling preserved); decomposer-bot / T-bot / transformer-cultivator entries land as catalog stubs (production effects deferred to a later α.x). | ✅ done |
+| **α.2** | **Sim tuning.** Four cost-curve iterations to land Tetration at 4h 44m (sim agent) and Pentation at 6h 38m — both within 5% of the ~5h / ~7h targets after accounting for real-player overhead. Levers swept: `compUpgradeCost(n)`, `pipeCost(n)`, multiplication / exponentiation / tetration / pentation costs. Pacing shape: one signature 3h Tetration cliff, one 1h 20m Pentation cliff, four mid-game 27–39 min operator gates, and 9 comp-tier intermediates ≤10 min each. | ✅ done |
+| **α.3** | **Lock the catalog.** Added an `α.3 LOCK` header to `sim/catalog.ts` distinguishing locked sections (comp / pipe / operator costs, level ladders, recipes) from α.1 stubs (bot ladders, cultivator entries). Captured the locked unlock curve in `sim/PACING_LOCKED.md` and `sim/pacing-locked.csv` for reference. Code slices β–ζ port from the locked sections; the stubs unlock again when their simulator models land in a future α.x iteration. | ✅ done |
+
+#### Phase 6.β — Comp engine and jam rule
+
+| Slice | Content | Status |
+|---|---|---|
+| **β.1** | **Power-of-2 comp ladder.** New `comprehension` engine in `world.ts` (Decimal-valued cap). New Literature kind `comprehension-upgrade` auto-generates the next-tier entry; cost from sim catalog. Header readout updated to `Comp ≤ 2^N (= V)`. Save schema v15 with migration: existing v14 saves map their comp tier to the new ladder (round up to nearest 2^N). Baseline starts at Comp ≤ 2; first paid Literature entry after Successor is the upgrade to ≤ 4. | not started |
+| **β.2** | **Universal comp check.** `valueComprehensible(v, comp)` in `value.ts`. Wired into manual lift (existing), pipe placement (new — gates by comp), pipe runtime accept (new), warehouse deposit + withdraw (new), T-bot pickup (new). Pipe-rating gate enforces strict one-tier lag (`pipe rating < comp`). | not started |
+| **β.3** | **Cell-jam mechanic.** Output port back-pressure check extends to `valueComprehensible`. Stuck cells: pinned drag, dashed-red outline, `?`-block rendering via new tier in `pixi/value-label.ts`, one-shot marginalia per cell. Pipes attached to a stuck cell remain editable. Shift-click delete destroys cell and its `?`-block together. | not started |
+| **β.4** | **Reveal events.** Subscribe to the `comprehension` store: on upgrade, walk all blocks, re-render those that just became comprehensible (small pencil-fill-in animation). Fire Gallery and Theorem hooks on reveal, not on production. | not started |
+
+#### Phase 6.γ — Infrastructure re-rating
+
+| Slice | Content | Status |
+|---|---|---|
+| **γ.1** | **Pipe catalog regenerated.** One Literature entry per power-of-2 magnitude tier, auto-generated from sim data. Unlock gated by comp. Per-placement cost from sim catalog (recursive bootstrap preserved). The existing `pipeLevels` reactive store and lvl I–V upgrade entries are removed. Save migration converts pipe-level state to plain magnitude tiers. | not started |
+| **γ.2** | **T-bot catalog regenerated.** T-bot rating tracks the current comp ceiling. Per-bot rating field already exists in `botState`; pickup logic checks block magnitude against bot rating. Stockpile-priced Literature entries from sim catalog. | not started |
+| **γ.3** | **Warehouse capacity scales with comp.** Capacity is a derived value: `baseCount * f(comp)`, with `f` geometric in comp tier per sim-tuned exponent. Visible in warehouse badge. Withdraw/deposit still gated by the universal comp rule. | not started |
+
+#### Phase 6.δ — Decomposer bots
+
+| Slice | Content | Status |
+|---|---|---|
+| **δ.1** | **Decomposer bot family.** New cell types: `factor-bot`, `decrement-bot`, `inversion-bot`. Each with independent magnitude rating. New `pixi/decomposer-bot.ts` visual variants (glyphs `F` / `D` / `1/x`). Tick logic: walk to nearest in-range loose block (regardless of player comp), apply transformation in place, leave outputs at the original position. Free fuel for F-bot / D-bot (matches static cell forms); I-bot inherits signed-fuel mechanic. | not started |
+| **δ.2** | **Decomposer bot Literature catalog.** Stockpile-denominated costs from sim catalog. No comp prerequisite — the bot is *delegated comprehension*. First-encounter narrator marginalia per bot type. | not started |
+
+#### Phase 6.ε — Cultivator rework
+
+| Slice | Content | Status |
+|---|---|---|
+| **ε.1** | **Transformer cultivators.** Streaming variants (`cultivation-arithmetic` / `cultivation-geometric` / `cultivation-fibonacci`) reshaped to input-driven transformers. Each firing consumes one input, advances an internal `cultivationStep`, emits `f(input, step)` at the output port via the standard fire path. `tickCultivation` retired; cultivators flow through `fireCell` and `fireCellViaPipe` like any operator. Seed capture and the "one seed per cell" lifetime are gone — cultivators accept inputs normally, including via pipes. Per-step fuel cost deferred to a future sim-tuning iteration; the universal comp-jam (β.3) is the throttle today. Legacy `cell.seed` field retained on `PlacedCell` for save back-compat. Badge readout now shows `step N` instead of `seed: V`. | ✅ done |
+| **ε.2** | **Missing cultivators land.** Three new transformer cells deferred from Phase 2 (DESIGN §6): `cultivation-harmonic` (f(x, n) = x · Hₙ₊₁), `cultivation-polynomial` (f(x, n) = x · (n+1)²), `cultivation-factorial` (f(x, n) = x · (n+1)!). Each its own Literature entry, formula in `cost.ts:cultivationEmit`, glyph (`a·Hₙ` / `a·n²` / `a·n!`) on the shared cultivation-cell renderer. Costs placeholder pending sim α.x tuning. | ✅ done |
+
+#### Phase 6.ζ — Polish and save migration
+
+| Slice | Content | Status |
+|---|---|---|
+| **ζ.1** | **Literature tabs UI** (carry-over from the deferred 6.10). With the new comp ladder + decomposer bots + transformer cultivators, the catalog will exceed 80 entries. Tabs: Operators / Comprehension / Pipes / Bots / Warehouses / Discovery / Theorems. Greyed-out locked entries become visible so the player sees the road ahead. | not started |
+| **ζ.2** | **Save schema v15 polish.** Covers: new comp value (as `2^N`), removed pipeLevels, decomposer bot state, transformer cultivator state (`step` instead of `seed`), warehouse capacity tied to comp. Pre-v15 saves get a clean migration path. | not started |
+
+**Architectural notes (Phase 6):**
+
+- **Pipe leveling dissolves.** The `pipeLevels` reactive store and all level-related code paths for pipes go away in γ.1. Cell leveling stays in place at its current cap of 5; a separate redesign session revisits cell leveling on its own terms.
+- **Decomposer bot exception, narrowly scoped.** `valueComprehensible(v, comp)` is the universal gate; only the bot tick for `factor-bot` / `decrement-bot` / `inversion-bot` bypasses it. Single exception, tightly contained.
+- **Cultivator transformer pattern.** Each transformer cultivator carries a `formula(input, step)` and a `costFormula(step)` — both pure functions on the cell type. No per-cell tuning, no seed state. Step counter persists per-cell across saves.
+- **Sim discipline.** All numeric tuning happens in `sim/catalog.ts`. The `src/lib/` slices consume from a locked data file; no hand-tuning post-port. Same pattern that closed the 6.6 retro.
+- **No new visual primitives.** `?`-block reuses existing `pencilText` infrastructure; cell-jam reuses `JAM_TINT`; decomposer bots reuse the cleanup-bot visual chassis with new glyphs. Phase 6 is mechanically deep, visually conservative.
+
+After Phase 6: cell-leveling redesign (its own session), prestige + Ancestral (was 6.3), ordinals + surreals (was 6.4), named giants (was 6.5).
 
 ---
 
@@ -612,7 +719,7 @@ Deliberately uncommitted, to be settled by playtesting or experimentation:
 - **Mobile support** — desktop-first; mobile is a re-skin question deferred to post-Phase 3.
 - **Computational cost balance** — only known after playtesting Phase 2
 - **Gallery scope** — how many special-number categories? Capped or open-ended?
-- **Cultivation cells need a fundamental rethink.** The current arithmetic / geometric / Fibonacci implementations work in code but aren't pulling their conceptual weight in the larger economy. The Harmonic / polynomial / factorial cells deferred from Phase 2 are blocked on this rethink. Defer new cultivation work until the design is reopened in a dedicated session. See DESIGN.md §20.
+- ~~Cultivation cells need a fundamental rethink.~~ Resolved by the Phase 6 Comprehension Spine rework. Cultivators become input-driven transformer cells under the universal Comprehension rule. See DESIGN.md §6 *Cultivation Cells* and §9 *Comprehension — Spine of the Economy*; implementation in slices ε.1–ε.2.
 
 ---
 

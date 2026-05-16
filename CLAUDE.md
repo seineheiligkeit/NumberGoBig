@@ -97,24 +97,41 @@ and a typography hierarchy in `typography.ts` (`BADGE` / `HINT` /
 `ROADMAP.md` §1 for slice-by-slice notes.
 
 **Pacing target:** ~5h optimal-play speedrun / ~10h casual to
-Tetration. Per the sim, the leveling system makes the climb from
-Pipe ≤100 onward actually reachable; without it the player would
-stall on hundreds-production. Slices 6.8 (deferred level qualities),
-6.9 (warehouse leveling), 6.10 (Literature tabs) are still pending —
-the game is end-to-end playable without them.
+Tetration. Phase 6 sim slices α.1–α.3 locked the curve at the design
+level (Tetration ~4h 44m / Pentation ~6h 38m, sim agent). Now that
+Phase 6 game code shipped — adding decomposer bots, transformer
+cultivators, warehouse capacity scaling, and the universal comp gate
+in ways the α.3 sim didn't model — the sim needs an α.x extension
+pass before the next pacing port.
 
-**Next:** 6.10 (Literature tabs UI — overdue now that Inversion +
-Negation + `wh: negative` added entries to a sidebar at ~60), then
-6.8 (deferred level qualities), 6.9 (Warehouse leveling), 6.3
-(Prestige + Ancestral), 6.4 (ordinals + surreals), 6.5 (named
-giants). See ROADMAP.md §2 for slice detail.
+**Phase 6 — SHIPPED end-to-end.** All 14 code slices (β.1, β.2, β.3,
+β.4, γ.1, γ.2, γ.3, δ.1, δ.2, ε.1, ε.2) are live. Save schema is v16.
+Build clean, type-check clean.
 
-**Cultivation cells flagged for redesign.** The arithmetic / geometric
-/ Fibonacci implementations work in code but their conceptual role in
-the larger economy isn't settled — the user wants to rethink them in a
-future session. Don't add new cultivation mechanics until that
-happens. The Harmonic / polynomial / factorial cells deferred from
-Phase 2 are blocked on this rethink. See DESIGN.md §20.
+**Next: Sim α.x extension + re-tune.** The α.3 lock predates the
+decomposer-bot family, the transformer cultivator model, and the
+dynamic warehouse-capacity rule. The sim needs:
+
+  1. T-bots modeled as frontier-throughput automation.
+  2. Decomposer-bot jam-clearing as an alternative to comp upgrade
+     in the agent decision tree.
+  3. Transformer cultivator per-step production + per-step fuel cost
+     (currently free at every step in game code).
+  4. Warehouse capacity scaling with comp tier.
+
+Then re-sweep cost curves against the same ~5h/~10h target. Edit
+`sim/catalog.ts` first, verify, port locked numbers back. After
+that, manual playtest is the only thing left between Phase 6 and a
+post-Phase-6 design (Prestige + Ancestral, ordinals + surreals,
+named giants). See `sim/PACING_LOCKED.md` for the α.3 baseline and
+ROADMAP.md §2 Phase 6 for the slice-by-slice trail.
+
+**Cultivation cells rework shipped.** Streaming cultivators are now
+input-driven transformer cells (`cultivationStep` per cell; output =
+`f(input, step)`; fire path goes through the standard `fireCell` and
+`fireCellViaPipe`). `tickCultivation` retired; `captureSeed` removed.
+Three previously-deferred series landed: harmonic, polynomial,
+factorial. See DESIGN.md §6 *Cultivation Cells*.
 
 ## Pacing simulator
 
@@ -423,9 +440,17 @@ The dev server is `npm run dev` (auto-opens on port 5173).
   whether the underlying approach is wrong before tuning numbers.
 - Don't drift from the design pillars in `DESIGN.md` §2 — they were
   established through extensive brainstorming.
-- **Cultivators are due for a design rethink.** Arithmetic / geometric
-  / Fibonacci cells work in code; their conceptual role doesn't.
-  Avoid extending cultivation until the user reopens that design.
+- **Cultivators are input-driven transformer cells** (Phase 6 ε.1).
+  Each firing consumes one operand; output = `f(input, step)` per
+  `cost.ts:cultivationEmit`; step persists per cell. No seed concept,
+  no auto-firing — they flow through `fireCell` / `fireCellViaPipe`
+  like any operator. Per-step fuel cost is a future sim-tuning
+  iteration; the universal comp-jam is the throttle today.
+- **Comprehension is the spine.** Phase 6 (DESIGN.md §9) makes the
+  comp ceiling govern lift, pipe, T-bot, and warehouse — not just
+  manual handling. Any new cell or infrastructure touching block
+  transport must check `valueComprehensible(v, comp)` once that
+  helper lands. Decomposer bots are the one exception.
 - **Inversion (`1/x`) introduces "negative fuel"** — signed costs paid
   by negative blocks. When working on it, see DESIGN.md §6 *Inversion
   and the Negative-Fuel Pivot* and ROADMAP.md slice 6.15. The mechanic

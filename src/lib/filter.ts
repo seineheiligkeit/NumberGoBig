@@ -43,7 +43,11 @@ export function routeViaFilter(
 
   const portIndex = rule.test(value) ? 0 : 1;
   const target = planSpawnAtPort(cell, portIndex, value);
-  if (target === 'clogged') return false;
+  // Phase 6 β.3: 'jammed' (uncomprehended block at the port) refuses
+  // the route the same way 'clogged' (fan full) does. Filters silently
+  // hold the input pending — the upstream pipe deliver_dest will retry
+  // when the jam/clog clears.
+  if (target === 'clogged' || target === 'jammed') return false;
   commitSpawn(target, value, canvasLayer);
   return true;
 }

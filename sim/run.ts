@@ -1,55 +1,86 @@
 // sim/run.ts
 //
-// CLI entry point for the pacing simulator.
+// CLI entry point for the pacing simulator (Phase 6 model — Comprehension
+// as Spine; see DESIGN.md §9, ROADMAP §2 Phase 6).
 //
 // Usage:
 //   node sim/run.ts                     # default roadmap, console summary
 //   node sim/run.ts --csv pacing.csv    # also write per-unlock CSV
 //   node sim/run.ts --verbose           # print every purchase event
 //   node sim/run.ts --to tetration      # stop at a specific roadmap entry
-//
-// The default roadmap walks Successor through Tetration, hitting every
-// pacing-relevant unlock along the way.
 
 import { writeFileSync } from 'node:fs';
 import { simulate, newAgent, type SimulationResult } from './simulator.ts';
 import { LITERATURE_BY_ID } from './catalog.ts';
 
 // ---------------------------------------------------------------------------
-// Default roadmap — the order an optimal-play agent unlocks things
+// Default roadmap (Phase 6 ordering)
 // ---------------------------------------------------------------------------
+//
+// The roadmap is a list of unlocks the agent pursues *and* the table
+// of pacing milestones the report displays. The agent will also
+// auto-buy comp upgrades on demand when comp gates a production path
+// (via the comp-bottleneck branch in decide()), so this list doesn't
+// need to be exhaustive — but listing the comp tiers explicitly
+// surfaces them in the unlock table.
+//
+// Comp tier reference:
+//   comp_1 → ≤2     comp_5 → ≤32      comp_9  → ≤512    comp_13 → ≤8192
+//   comp_2 → ≤4     comp_6 → ≤64      comp_10 → ≤1024   comp_14 → ≤16384
+//   comp_3 → ≤8     comp_7 → ≤128     comp_11 → ≤2048   comp_17 → ≤131072
+//   comp_4 → ≤16    comp_8 → ≤256     comp_12 → ≤4096   comp_20 → ≤1M
+//
+// Pipe tier reference:
+//   pipe_N → magnitude 2^N (requires Comp ≥ 2^(N+1))
+//   pipe_0 → ≤1     pipe_4 → ≤16     pipe_8  → ≤256
+//   pipe_1 → ≤2     pipe_5 → ≤32     pipe_9  → ≤512
+//   pipe_2 → ≤4     pipe_6 → ≤64     pipe_10 → ≤1024
+//   pipe_3 → ≤8     pipe_7 → ≤128
 
 const DEFAULT_ROADMAP: string[] = [
+  // -- Stage A: opening, Comp ≤ 2 baseline ----------------------------------
   'successor',
-  'pipe_1',
+  'pipe_0', // Pipe ≤1 — only pipe available at Comp ≤2 baseline
   'addition',
-  'comprehension_25',
+  'comp_2', // ≤4 — first paid Literature entry teaches the mechanic
+
+  // -- Stage B: combinators -------------------------------------------------
   'subtraction',
+  'comp_3', // ≤8
   'multiplication',
-  'pipe_10',
+  'comp_4', // ≤16 — unlocks pipe_2
+  'pipe_2', // ≤4
   'division',
-  // Slice 6.14: negation lands here — player just unlocked rationals via
-  // division and negatives via subtraction; negation makes producing
-  // negatives systematic, in anticipation of Inversion.
   'negation',
-  'comprehension_100',
+  'comp_5', // ≤32 — unlocks pipe_3
+  'pipe_3', // ≤8
+
+  // -- Stage C: exponentiation + comp climb to hundreds --------------------
+  'comp_6', // ≤64 — unlocks pipe_4
+  'pipe_4', // ≤16
+  'comp_7', // ≤128 — unlocks pipe_5; enables exp production (needs comp ≥ 100)
   'exponentiation',
-  // Slice 6.14: inversion arrives once the full operator hierarchy is in
-  // hand. It's the bridge that turns the previously-decorative small-
-  // number outputs (negatives, tiny rationals) into productive raw
-  // material — even if the sim's agent doesn't pick it as a shortcut.
+  'pipe_5', // ≤32
   'inversion',
-  'comprehension_250',
   'square-root',
-  'comprehension_1k',
-  'cultivation-arithmetic',
-  'pipe_100',
-  'comprehension_10k',
-  'comprehension_100k',
-  'pipe_1k',
-  'comprehension_1m',
+
+  // -- Stage D: comp climb through thousands -------------------------------
+  'comp_8', // ≤256
+  'pipe_6', // ≤64
+  'comp_9', // ≤512
+  'pipe_7', // ≤128
+  'comp_10', // ≤1024 — unlocks pipe_9; enables 1000-magnitude production
+  'pipe_8', // ≤256
+
+  // -- Stage E: tetration --------------------------------------------------
   'tetration',
-  'comprehension_1b',
+  'comp_11', // ≤2048
+  'pipe_9', // ≤512
+
+  // -- Stage F: climb to pentation magnitudes ------------------------------
+  'comp_14', // ≤16384 (intermediate tiers comp_12, comp_13 auto-bought as needed)
+  'comp_17', // ≤131072
+  'comp_20', // ≤1048576 — enables 1M-magnitude production
   'pentation',
 ];
 
@@ -91,7 +122,7 @@ function parseArgs(): CliArgs {
 }
 
 function printHelp(): void {
-  console.log(`Numbers Go Big — pacing simulator
+  console.log(`Numbers Go Big — pacing simulator (Phase 6 model)
 
 Usage:
   node sim/run.ts [options]
@@ -103,9 +134,10 @@ Options:
   --max-ticks <n>    Maximum ticks to simulate (default: 200000)
   -h, --help         Show this help
 
-The roadmap walks: successor → pipe_1 → addition → subtraction →
-multiplication → division → exponentiation → pipe_10 → pipe_100 →
-comprehension tiers → tetration → pentation.
+Phase 6 model: Comprehension is the spine. Power-of-2 ladder
+(comp_1..comp_30); production of value V requires comp ≥ V.
+Pipes lag manual by one tier (pipe_N needs comp ≥ 2^(N+1)).
+See DESIGN.md §9 and sim/README.md for details.
 
 Edit sim/catalog.ts to tune costs, recipes, and tier coefficients.
 `);
@@ -129,7 +161,7 @@ function printUnlockTable(result: SimulationResult, roadmap: string[]): void {
   console.log('\n=== Unlock pacing ===');
   console.log('');
   console.log(
-    '  tick  |  time      |  gap      |  unlock'.padEnd(70),
+    '  tick    |  time         |  gap         |  unlock'.padEnd(70),
   );
   console.log('-'.repeat(70));
 
@@ -138,13 +170,13 @@ function printUnlockTable(result: SimulationResult, roadmap: string[]): void {
     const tick = result.unlocks.get(id);
     if (tick === undefined) {
       console.log(
-        `  ----  |  ---       |  ---      |  ${id} (not reached)`,
+        `  ------  |  ---          |  ---         |  ${id} (not reached)`,
       );
       continue;
     }
     const gap = tick - prevTick;
     console.log(
-      `  ${String(tick).padStart(4)}  |  ${formatTicks(tick).padEnd(8)}  |  +${formatTicks(gap).padEnd(7)} |  ${id}`,
+      `  ${String(tick).padStart(6)}  |  ${formatTicks(tick).padEnd(11)}  |  +${formatTicks(gap).padEnd(10)} |  ${id}`,
     );
     prevTick = tick;
   }
@@ -163,18 +195,18 @@ function printRepurchaseCounts(result: SimulationResult): void {
     (a, b) => a[0] - b[0],
   );
   for (const [mag, count] of sortedPipes) {
-    const level = result.finalWorld.pipeLevels.get(mag) ?? 1;
-    const lvlSuffix = level > 1 ? `  (lvl ${level})` : '';
-    console.log(`  pipe ≤${String(mag).padEnd(22)} × ${count}${lvlSuffix}`);
+    // Phase 6: pipes don't level. Single count.
+    console.log(`  pipe ≤${String(mag).padEnd(22)} × ${count}`);
   }
-  console.log(`  comprehension                ${result.finalWorld.comprehension}`);
+  console.log(
+    `  comprehension                ${result.finalWorld.comprehension} (= 2^${Math.round(Math.log2(result.finalWorld.comprehension))})`,
+  );
 }
 
 function printBottleneckSummary(result: SimulationResult, roadmap: string[]): void {
   console.log('\n=== Pacing analysis ===');
   console.log('');
 
-  // Compute gaps between consecutive unlocks; flag any abnormally large.
   const gaps: { from: string; to: string; gap: number }[] = [];
   let prevTick = 0;
   let prev = 'start';
@@ -186,7 +218,6 @@ function printBottleneckSummary(result: SimulationResult, roadmap: string[]): vo
     prev = id;
   }
 
-  // Sort gaps by size; identify outliers.
   const sortedByGap = [...gaps].sort((a, b) => b.gap - a.gap);
   console.log('  Largest gaps (likely cliffs):');
   for (const g of sortedByGap.slice(0, 5)) {
@@ -200,7 +231,6 @@ function printBottleneckSummary(result: SimulationResult, roadmap: string[]): vo
     console.log(`    ${formatTicks(g.gap).padEnd(10)}  ${g.from} → ${g.to}`);
   }
 
-  // Geometric-mean baseline: if every gap was identical, what would it be?
   if (gaps.length > 0) {
     const totalTicks = gaps.reduce((s, g) => s + g.gap, 0);
     const meanGap = totalTicks / gaps.length;
@@ -211,7 +241,7 @@ function printBottleneckSummary(result: SimulationResult, roadmap: string[]): vo
     );
     if (ratio > 5) {
       console.log(
-        '  ⚠  Largest gap is >5× the mean — likely a brutal cliff. Consider lowering its currency cost or unlocking a pre-requisite operator earlier.',
+        '  ⚠  Largest gap is >5× the mean — likely a brutal cliff. Consider lowering its currency cost or moving an unlock earlier.',
       );
     }
   }
@@ -223,7 +253,7 @@ function printFinalPool(result: SimulationResult): void {
     .filter(([, n]) => n > 0)
     .sort((a, b) => a[0] - b[0]);
   for (const [value, count] of entries) {
-    console.log(`  ${String(value).padStart(8)} : ${count.toFixed(1)}`);
+    console.log(`  ${String(value).padStart(10)} : ${count.toFixed(1)}`);
   }
 }
 
@@ -262,7 +292,6 @@ function main(): void {
     roadmap = roadmap.slice(0, idx + 1);
   }
 
-  // Sanity-check that every roadmap entry exists in the catalog.
   for (const id of roadmap) {
     if (!LITERATURE_BY_ID.has(id)) {
       console.error(`Roadmap entry "${id}" is not in the catalog. Add it to sim/catalog.ts.`);
@@ -270,7 +299,7 @@ function main(): void {
     }
   }
 
-  console.log(`Running pacing simulator…`);
+  console.log(`Running pacing simulator (Phase 6 model)…`);
   console.log(`  Roadmap: ${roadmap.length} unlocks`);
   console.log(`  Max ticks: ${args.maxTicks}`);
 

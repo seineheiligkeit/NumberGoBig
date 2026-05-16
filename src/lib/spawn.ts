@@ -26,6 +26,7 @@ import type { Container } from 'pixi.js';
 import {
   MERGE_EMIT_RADIUS,
   addBlock,
+  comprehensionLevel,
   findBlockAt,
   increaseStack,
   type PlacedBlock,
@@ -33,7 +34,7 @@ import {
 } from './world';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import { spawnEmitScribble } from './pixi/micro-anim';
-import { type Value } from './value';
+import { valueComprehensible, type Value } from './value';
 
 let _attachInteraction: ((b: PlacedBlock) => void) | null = null;
 export function setSpawnBlockInteractionAttach(fn: (b: PlacedBlock) => void): void {
@@ -44,27 +45,51 @@ export type SpawnTarget =
   | { kind: 'merge'; block: PlacedBlock }
   | { kind: 'new'; x: number; y: number };
 
+/** Phase 6 β.3 (DESIGN §9): planSpawnAtPort can also return `'jammed'`
+ *  when an uncomprehended block sits at the port. Distinguished from
+ *  `'clogged'` so callers can fire a comp-jam marginalia instead of a
+ *  fan-full one. */
+export type SpawnPlan = SpawnTarget | 'clogged' | 'jammed';
+
 const FAN_STEP = 40;
 const MAX_FAN = 12;
 
 /**
- * Plans where an emission of `value` should land at the given port —
- * merging into a same-value stack if one sits at the port, otherwise
- * fanning right through up to MAX_FAN distinct slots. Returns
- * `'clogged'` when every slot in the fan is occupied.
+ * Plans where an emission of `value` should land at the given port:
+ *   - **merge** — a same-value block sits at the port; the emission
+ *     joins its stack.
+ *   - **new (x, y)** — first free fan slot.
+ *   - **clogged** — every fan slot is occupied with a (different-value
+ *     comprehended) block. Classic back-pressure.
+ *   - **jammed** (β.3) — any uncomprehended block sits in the port's
+ *     fan range. The cell stalls — no fuel burn, no input consumption —
+ *     until the offending `?`-block is cleared (by Comp upgrade, a
+ *     pipe, a T-bot, a decomposer bot, or shift-click delete).
  *
- * Pure: doesn't mutate world state. Call before fuel-spend so a
- * back-pressured cell doesn't burn fuel it can't deliver against.
+ * Pure: doesn't mutate world state. Call before fuel-spend.
  */
 export function planSpawnAtPort(
   cell: PlacedCell,
   portIndex: number,
   value: Value,
-): SpawnTarget | 'clogged' {
+): SpawnPlan {
   const port = cell.outputs[portIndex];
   if (!port) return 'clogged';
   const baseX = cell.container.x + port.offsetX;
   const baseY = cell.container.y + port.offsetY;
+
+  // Phase 6 β.3 — comp gate. Any uncomprehended block in the port's
+  // fan range jams the cell. Checked BEFORE the merge fast-path so
+  // a stuck `?`-block can't silently grow by absorbing same-value
+  // emissions.
+  const cap = comprehensionLevel();
+  for (let i = 0; i < MAX_FAN; i++) {
+    const x = baseX + i * FAN_STEP;
+    const existing = findBlockAt(x, baseY, MERGE_EMIT_RADIUS);
+    if (existing && !valueComprehensible(existing.value, cap)) {
+      return 'jammed';
+    }
+  }
 
   const existingSame = findBlockAt(baseX, baseY, MERGE_EMIT_RADIUS, value);
   if (existingSame) return { kind: 'merge', block: existingSame };

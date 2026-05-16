@@ -69,8 +69,15 @@ export function tickRiverTapSuccessors(
       continue;
     }
 
-    // Plan the spawn; if the output port is clogged, defer.
+    // Plan the spawn; if the output port is clogged or comp-jammed, defer.
     const plan = planSpawnAtPort(cell, 0, VALUE_ONE);
+    if (plan === 'jammed') {
+      // River-tap produces 1s — which are always within comp ≥ 2 baseline.
+      // This branch is effectively unreachable but kept for defensive
+      // exhaustiveness on the SpawnPlan union.
+      cooldowns.set(cell.id, RIVER_TAP_PERIOD_MS);
+      continue;
+    }
     if (plan === 'clogged') {
       showMarginalia(
         `Successor output clogged — river-tap idle.`,
