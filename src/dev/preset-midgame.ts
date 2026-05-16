@@ -343,16 +343,5 @@ export function installMidgamePreset(): void {
   }
 }
 
-export function maybeInstallDevPreset(): void {
-  (window as unknown as { devLoadMidgame: () => void }).devLoadMidgame = () => {
-    installMidgamePreset();
-    window.location.reload();
-  };
-
-  const url = new URL(window.location.href);
-  if (url.searchParams.get('preset') === 'midgame') {
-    installMidgamePreset();
-    url.searchParams.delete('preset');
-    window.history.replaceState({}, '', url.toString());
-  }
-}
+// URL + console-helper wiring moved to `presets.ts` (Slice presets-menu).
+// `installMidgamePreset` above is the one the registry calls.

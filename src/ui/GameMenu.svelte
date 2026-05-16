@@ -1,28 +1,41 @@
 <script lang="ts">
   /**
-   * Game options menu — small pencil-style menu button in the top-left
-   * corner. Currently offers a "new game" reset for playtest purposes.
+   * Game options menu — small pencil-style menu button in the bottom-
+   * left corner. Offers reset (soft + hard) plus preset loading for
+   * playtest purposes.
    *
    * Future home for: prestige (when Slice 6.3 lands), audio toggle,
    * settings, etc.
    */
 
   import { suppressAutosave } from '../lib/persistence';
+  import { PRESETS, loadPreset, type PresetId } from '../dev/presets';
 
   let open = false;
   let confirming: 'soft' | 'hard' | null = null;
+  let presetConfirming: PresetId | null = null;
 
   function toggle(): void {
     open = !open;
-    if (!open) confirming = null;
+    if (!open) {
+      confirming = null;
+      presetConfirming = null;
+    }
   }
 
   function requestReset(kind: 'soft' | 'hard'): void {
     confirming = kind;
+    presetConfirming = null;
   }
 
-  function cancelReset(): void {
+  function requestPreset(id: PresetId): void {
+    presetConfirming = id;
     confirming = null;
+  }
+
+  function cancelConfirm(): void {
+    confirming = null;
+    presetConfirming = null;
   }
 
   function confirmReset(): void {
@@ -44,12 +57,26 @@
     window.location.reload();
   }
 
+  function confirmPreset(): void {
+    if (!presetConfirming) return;
+    // Same autosave-suppression dance: `loadPreset` writes to
+    // localStorage then reloads, but the `beforeunload` handler would
+    // otherwise overwrite our preset with the current in-memory world.
+    suppressAutosave();
+    loadPreset(presetConfirming);
+  }
+
   function onKeydown(e: KeyboardEvent): void {
     if (e.key === 'Escape' && open) {
       open = false;
       confirming = null;
+      presetConfirming = null;
     }
   }
+
+  $: presetMeta = presetConfirming
+    ? PRESETS.find((p) => p.id === presetConfirming)
+    : null;
 </script>
 
 <svelte:window on:keydown={onKeydown} />
@@ -67,21 +94,8 @@
   {#if open}
     <div class="panel" role="menu">
       <div class="panel-title">Notebook options</div>
-      <p class="hint">
-        Resets are unrecoverable. Make a copy of <code>localStorage</code>
-        first if you want to come back.
-      </p>
 
-      {#if !confirming}
-        <button class="action" type="button" on:click={() => requestReset('soft')}>
-          New game
-          <span class="action-note">clears save · keeps blueprints</span>
-        </button>
-        <button class="action" type="button" on:click={() => requestReset('hard')}>
-          Hard reset
-          <span class="action-note">clears everything · including blueprints</span>
-        </button>
-      {:else}
+      {#if confirming}
         <div class="confirm">
           <div class="confirm-text">
             {#if confirming === 'soft'}
@@ -94,11 +108,52 @@
             <button class="confirm-yes" type="button" on:click={confirmReset}>
               Yes, reset
             </button>
-            <button class="confirm-no" type="button" on:click={cancelReset}>
+            <button class="confirm-no" type="button" on:click={cancelConfirm}>
               Cancel
             </button>
           </div>
         </div>
+      {:else if presetConfirming && presetMeta}
+        <div class="confirm">
+          <div class="confirm-text">
+            Replace your current factory with the <em>{presetMeta.label}</em> preset?
+            <span class="preset-desc">{presetMeta.description}</span>
+          </div>
+          <div class="confirm-row">
+            <button class="confirm-yes" type="button" on:click={confirmPreset}>
+              Yes, load preset
+            </button>
+            <button class="confirm-no" type="button" on:click={cancelConfirm}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      {:else}
+        <p class="hint">
+          Resets and preset loads are unrecoverable. Make a copy of
+          <code>localStorage</code> first if you want to come back.
+        </p>
+
+        <button class="action" type="button" on:click={() => requestReset('soft')}>
+          New game
+          <span class="action-note">clears save · keeps blueprints</span>
+        </button>
+        <button class="action" type="button" on:click={() => requestReset('hard')}>
+          Hard reset
+          <span class="action-note">clears everything · including blueprints</span>
+        </button>
+
+        <div class="section-title">Load preset (dev)</div>
+        {#each PRESETS as preset (preset.id)}
+          <button
+            class="action"
+            type="button"
+            on:click={() => requestPreset(preset.id)}
+          >
+            {preset.label}
+            <span class="action-note">{preset.description}</span>
+          </button>
+        {/each}
       {/if}
     </div>
   {/if}
@@ -197,6 +252,25 @@
     font-size: 11px;
     opacity: 0.6;
     font-style: italic;
+  }
+
+  .section-title {
+    font-size: 12px;
+    font-weight: 500;
+    opacity: 0.75;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px dashed rgba(58, 58, 58, 0.22);
+    letter-spacing: 0.02em;
+  }
+
+  .preset-desc {
+    display: block;
+    font-size: 12px;
+    opacity: 0.7;
+    font-style: italic;
+    margin-top: 4px;
+    line-height: 1.4;
   }
 
   .confirm {
