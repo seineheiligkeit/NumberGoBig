@@ -2,9 +2,11 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
-// Phase 6 ε.1: the magnitude-based emission-cost helpers are no longer
-// consulted by the badge — cultivators now report their step counter.
-// Per-step fuel-cost preview lands in a later sim iteration.
+import { cultivationEmissionCost, cultivationEmit } from '../cost';
+import Decimal from 'break_eternity.js';
+// α.4b.2: per-step fuel cost is back — every firing pays
+// `cultivationEmissionCost(emission)`, so the cost-preview badge
+// reads the next emission's magnitude when an input is pending.
 
 /**
  * Cultivation cells — seed-driven number streams.
@@ -185,13 +187,22 @@ export function updateCultivationBadge(cell: PlacedCell): void {
     readout.style.fill = GRAPHITE;
   }
 
-  // Cost-preview readout is currently silent under the new model —
-  // the per-step fuel-cost formula will land in a later sim-tuning
-  // iteration. The Text node stays in the DOM for that future use.
+  // α.4b.2: per-firing cost preview. The next emission's cost is the
+  // magnitude of f(input, step) — known once an input is pending, else
+  // an estimate at step alone (treating input as 1 — the lower bound).
   const costBadge = tagged.__cultivationCostPreview;
   if (costBadge) {
-    costBadge.text = '';
-    costBadge.alpha = 0;
+    const step = cell.cultivationStep ?? 0;
+    const input = cell.pending[0];
+    if (input) {
+      const nextOutput = cultivationEmit(cell.type, input, step);
+      const cost = cultivationEmissionCost(nextOutput);
+      costBadge.text = cost.gt(Decimal.dZero) ? `fuel ≥ ${cost.toString()}` : '';
+      costBadge.alpha = cost.gt(Decimal.dZero) ? 0.85 : 0;
+    } else {
+      costBadge.text = '';
+      costBadge.alpha = 0;
+    }
   }
 }
 

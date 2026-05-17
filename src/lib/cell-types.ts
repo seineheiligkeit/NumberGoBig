@@ -155,20 +155,11 @@ const BINARY_OUTPUT_X = BINARY_CELL_WIDTH / 2 + 56;
 // hanging off the bottom-centre. Sitting outside the main cell rect makes
 // it visually distinct from the operand ports and gives pipes from below
 // a natural docking line.
-const BINARY_HALF_H = 54; // = BINARY_CELL_HEIGHT / 2 (hand-rolled to keep
-// this expression a literal — importing the constant would bind it through
-// a runtime cycle).
-const BINARY_FUEL_PORT_OFFSET_Y = BINARY_HALF_H + 18;
+// α.5c: binary fuel port removed from tier-1+ cells (ladder pulls from
+// pool automatically). The half-W/H constants survive because the
+// UNARY_FUEL_INPUT below (inversion's signed-fuel slot) reuses them.
 const BINARY_FUEL_PORT_HALF_W = 22;
 const BINARY_FUEL_PORT_HALF_H = 14;
-
-const BINARY_FUEL_INPUT = {
-  offsetX: 0,
-  offsetY: BINARY_FUEL_PORT_OFFSET_Y,
-  halfWidth: BINARY_FUEL_PORT_HALF_W,
-  halfHeight: BINARY_FUEL_PORT_HALF_H,
-  kind: 'fuel' as const,
-};
 
 // Unary cells (Decrement, Factor) — single drop-zone on the left.
 const UNARY_INPUT_X = -UNARY_CELL_WIDTH / 2 + 32;
@@ -208,20 +199,21 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
+  // α.5c: tier-1+ binary operators no longer have fuel ports. The
+  // Ladder Rule pulls fuel from loose pool + warehouses automatically;
+  // no per-cell wiring required. Inversion (below) keeps its fuel port
+  // for the signed-fuel single-block contract.
   multiplication: {
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
-      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
   division: {
-    // a ÷ b. Dividend on top, divisor on bottom.
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
-      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
@@ -229,28 +221,20 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
-      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
   tetration: {
-    // a ↑↑ b. Base on top, height on bottom. Same binary geometry as the
-    // other tier-1+ operators — the fuel port (Slice 3.5.5) becomes
-    // REQUIRED at tier 2+ per DESIGN §6: no global-pool fallback.
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
-      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
   pentation: {
-    // a ↑↑↑ b — repeated tetration (Slice 6.1b). Same shape as tetration;
-    // tier 8 makes the fuel cost roughly twice as steep per input order.
     inputs: [
       { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
       { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
-      BINARY_FUEL_INPUT,
     ],
     outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
@@ -261,7 +245,6 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
   // 36-px vertical spacing between rows.
   'variadic-arrow': (() => {
     const halfW = VARIADIC_ARROW_CELL_WIDTH / 2;
-    const halfH = VARIADIC_ARROW_CELL_HEIGHT / 2;
     const portX = -halfW + 32;
     return {
       inputs: [
@@ -271,14 +254,7 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
         { offsetX: portX, offsetY: 0, halfWidth: 24, halfHeight: 18 },
         // Input 2: height `b` (bottom row)
         { offsetX: portX, offsetY: 36, halfWidth: 24, halfHeight: 18 },
-        // Input 3: fuel (below cell)
-        {
-          offsetX: 0,
-          offsetY: halfH + 18,
-          halfWidth: 22,
-          halfHeight: 14,
-          kind: 'fuel' as const,
-        },
+        // α.5c: fuel port removed. Ladder pulls from pool automatically.
       ],
       outputs: [{ offsetX: halfW + 56, offsetY: 0 }],
     };
@@ -804,5 +780,6 @@ export { computationalCost } from './cost';
 // `cultivationEmit` moved to `./cost.ts` in Slice 3.5.6 so the renderer's
 // next-emission preview can import it without threading a runtime cycle
 // (pixi/cultivation-cell → cell-types → pixi/cultivation-cell). Re-exported
-// from here so existing imports stay valid.
-export { cultivationEmit } from './cost';
+// from here so existing imports stay valid. `cultivationEmissionCost`
+// likewise re-exported for fire paths (α.4b.2 / Slice 6.x).
+export { cultivationEmit, cultivationEmissionCost, fuelLadder } from './cost';

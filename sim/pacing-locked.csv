@@ -1,34 +1,34 @@
 tick,time,gap_ticks,unlock
 20,20s,20,successor
-30,30s,10,pipe_0
-145,2m 25s,115,addition
-165,2m 45s,20,comp_2
-315,5m 15s,150,subtraction
-355,5m 55s,40,comp_3
-2687,44m 47s,2332,multiplication
-547,9m 07s,-2140,comp_4
-2689,44m 49s,2142,pipe_2
-2744,45m 44s,55,division
-2761,46m 01s,17,negation
-2798,46m 38s,37,comp_5
-2802,46m 42s,4,pipe_3
-2866,47m 46s,64,comp_6
-2872,47m 52s,6,pipe_4
-3112,51m 52s,240,comp_7
-4745,1h 19m 05s,1633,exponentiation
-4750,1h 19m 10s,5,pipe_5
-4834,1h 20m 34s,84,inversion
-4919,1h 21m 59s,85,square-root
-5099,1h 24m 59s,180,comp_8
-5108,1h 25m 08s,9,pipe_6
-5468,1h 31m 08s,360,comp_9
-5486,1h 31m 26s,18,pipe_7
-6062,1h 41m 02s,576,comp_10
-6098,1h 41m 38s,36,pipe_8
-17065,4h 44m 25s,10967,tetration
-17321,4h 48m 41s,256,comp_11
-17329,4h 48m 49s,8,pipe_9
-18148,5h 02m 28s,819,comp_14
-18710,5h 11m 50s,562,comp_17
-19128,5h 18m 48s,418,comp_20
-23877,6h 37m 57s,4749,pentation
+40,40s,20,pipe_0
+565,9m 25s,525,addition
+567,9m 27s,2,comp_2
+599,9m 59s,32,subtraction
+608,10m 08s,9,comp_3
+831,13m 51s,223,multiplication
+622,10m 22s,-209,comp_4
+835,13m 55s,213,pipe_2
+1191,19m 51s,356,division
+1207,20m 07s,16,negation
+861,14m 21s,-346,comp_5
+1253,20m 53s,392,pipe_3
+952,15m 52s,-301,comp_6
+1325,22m 05s,373,pipe_4
+1099,18m 19s,-226,comp_7
+1666,27m 46s,567,exponentiation
+1810,30m 10s,144,pipe_5
+1913,31m 53s,103,inversion
+1999,33m 19s,86,square-root
+2126,35m 26s,127,comp_8
+2588,43m 08s,462,pipe_6
+3009,50m 09s,421,comp_9
+3418,56m 58s,409,pipe_7
+3999,1h 06m 39s,581,comp_10
+4818,1h 20m 18s,819,pipe_8
+15046,4h 10m 46s,10228,tetration
+15766,4h 22m 46s,720,comp_11
+15999,4h 26m 39s,233,pipe_9
+20310,5h 38m 30s,4311,comp_14
+27833,7h 43m 53s,7523,comp_17
+38568,10h 42m 48s,10735,comp_20
+42484,11h 48m 04s,3916,pentation

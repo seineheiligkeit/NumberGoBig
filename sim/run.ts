@@ -198,6 +198,14 @@ function printRepurchaseCounts(result: SimulationResult): void {
     // Phase 6: pipes don't level. Single count.
     console.log(`  pipe ≤${String(mag).padEnd(22)} × ${count}`);
   }
+  const sortedWarehouses = Array.from(result.finalWorld.warehouses.entries()).sort(
+    (a, b) => a[0] - b[0],
+  );
+  for (const [val, count] of sortedWarehouses) {
+    if (count > 0) {
+      console.log(`  warehouse(${String(val).padEnd(17)}) × ${count}`);
+    }
+  }
   console.log(
     `  comprehension                ${result.finalWorld.comprehension} (= 2^${Math.round(Math.log2(result.finalWorld.comprehension))})`,
   );

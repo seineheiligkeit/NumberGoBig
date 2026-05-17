@@ -15,6 +15,7 @@ import {
   valueIsZero,
   valueKey,
   valueMagnitude,
+  valueOf,
   valueSnapshot,
   type Value,
   type ValueSnapshot,
@@ -319,8 +320,10 @@ export function raiseComprehension(level: number): void {
 // Same for pipes (per-magnitude). Level 1 is the implicit default; only
 // non-default levels are stored. Throughput multiplier is `2^(level-1)`
 // — applied to cell output count and pipe cooldown speed. Qualities at
-// specific tiers (river-tap on Successor lvl 3, fuel discount on Mult/Exp
-// lvl 3 and 5) are gated by checking the level directly in firing code.
+// specific tiers (fuel discount on Mult/Exp lvl 3 and 5) are gated by
+// checking the level directly in firing code. (Successor lvl 3
+// river-tap was removed in α.5; the level is now a pure throughput
+// bump and zeros still flow through pipe ≤1.)
 //
 // Cap is 5. Future iterations may extend.
 
@@ -815,6 +818,38 @@ export function spendFuel(cost: Decimal): boolean {
 }
 
 /**
+ * α.5c — consume a per-firing fuel ladder. For each `(value, count)`
+ * entry in the ladder, pulls exactly `count` blocks of exactly that
+ * value from loose pool + warehouses + rule-warehouses (combined).
+ *
+ * Atomic: verifies every entry is payable BEFORE consuming any.
+ * Returns true if the full ladder was consumed, false otherwise (no
+ * blocks spent).
+ *
+ * Used by tier-1+ cells under the Ladder Rule. Inversion (signed
+ * single-block fuel) uses `spendFuel` / `consumeFuelOrFail` instead.
+ */
+export function consumeFuelLadder(ladder: Map<number, number>): boolean {
+  if (ladder.size === 0) return true;
+
+  // Phase 1: verify availability of every ladder entry.
+  for (const [v, count] of ladder) {
+    if (count <= 0) continue;
+    const target = valueOf(v);
+    const available = countMatching((val) => valueEq(val, target));
+    if (available < count) return false;
+  }
+
+  // Phase 2: actually spend. Each spendValue is itself atomic per
+  // value; since we verified above, none should fail.
+  for (const [v, count] of ladder) {
+    if (count <= 0) continue;
+    if (!spendValue(valueOf(v), count)) return false;
+  }
+  return true;
+}
+
+/**
  * Removes one of the named value from a rule-based warehouse. Used by the
  * fuel-spend path to consume the specific qualifying block its search
  * found, rather than the smallest item the warehouse happens to hold.
@@ -1254,52 +1289,60 @@ function disposePendingDisplay(display: Container): void {
  * fuel block (manual or pipe-delivered) is consumed exactly once on
  * success; nothing is touched on failure.
  */
+/**
+ * α.5c — Ladder Rule supersedes the old single-fuel-block model. For
+ * ladder cells (every tier-1+ cell EXCEPT inversion), `cost` is the
+ * Decimal SUM of the ladder; the real consumption happens via the
+ * ladder map. Callers in the fire path should call `fuelLadder` to
+ * get the ladder and pass it here via the overload, OR just call
+ * `consumeFuelLadder(ladder)` directly.
+ *
+ * **Inversion** keeps the old signed-Decimal contract: a single
+ * sign-aware block from the wired fuel port (or, if no port, from the
+ * global pool). The fuel-port slot still exists on inversion's
+ * CELL_SHAPES entry for that reason.
+ *
+ * For non-inversion cells called with a single Decimal cost, we treat
+ * `cost` as the total fuel magnitude (back-compat for tier-0 free
+ * firings — they early-return 'paid').
+ */
 export function consumeFuelOrFail(cell: PlacedCell, cost: Decimal): FuelOutcome {
   if (cost.eq(Decimal.dZero)) return 'paid';
-  const fuelIdx = fuelPortIndex(cell);
 
-  // Cells without a fuel port — addition, subtraction, future tier-0 ops.
-  // (Negation also lives here; its cost is always 0 so we early-returned.)
-  if (fuelIdx < 0) {
+  // Inversion's signed-fuel contract — unchanged.
+  if (cell.type === 'inversion') {
+    const fuelIdx = fuelPortIndex(cell);
+    if (fuelIdx < 0) {
+      // No port: fall through to global signed-fuel scan.
+      return spendFuel(cost) ? 'paid' : 'no-fuel';
+    }
+    const slotValue = cell.pending[fuelIdx];
+    if (slotValue !== null && slotValue !== undefined) {
+      const wantsNegative = cost.lt(Decimal.dZero);
+      if (valueIsNegative(slotValue) !== wantsNegative) return 'too-small';
+      const fuelMag = valueMagnitude(slotValue);
+      if (fuelMag.lt(cost.abs())) return 'too-small';
+      cell.pending[fuelIdx] = null;
+      const display = cell.pendingDisplays[fuelIdx];
+      if (display) {
+        disposePendingDisplay(display);
+        cell.pendingDisplays[fuelIdx] = null;
+      }
+      return 'paid';
+    }
+    // Slot empty: fall through to global pool (no required-port rule
+    // for inversion under α.5c — the ladder system replaced fuel-port
+    // routing for everything except inversion's signed-fuel quirk).
+    if (hasFuelPipeAttached(cell)) return 'awaiting-pipe';
     return spendFuel(cost) ? 'paid' : 'no-fuel';
   }
 
-  const slotValue = cell.pending[fuelIdx];
-  if (slotValue !== null && slotValue !== undefined) {
-    // Sign-aware match (Slice 6.15). The slot fuel must share the cost's
-    // sign — a `wh: negative` warehouse can't fuel a positive-cost
-    // multiplication, and conversely a positive block can't fuel an
-    // "uphill" inversion.
-    const wantsNegative = cost.lt(Decimal.dZero);
-    if (valueIsNegative(slotValue) !== wantsNegative) return 'too-small';
-    const fuelMag = valueMagnitude(slotValue);
-    if (fuelMag.lt(cost.abs())) return 'too-small';
-    // Consume the fuel block — visual ghost in the slot fades out via
-    // the registered display-disposer (Slice 6.17). The hook lets
-    // world.ts stay pixi-free at the import level; the renderer wires
-    // a fade animation in setup.ts. Falls back to instant destroy if no
-    // hook is registered (e.g. tests).
-    cell.pending[fuelIdx] = null;
-    const display = cell.pendingDisplays[fuelIdx];
-    if (display) {
-      disposePendingDisplay(display);
-      cell.pendingDisplays[fuelIdx] = null;
-    }
-    return 'paid';
-  }
-
-  // Slot empty. Where to fall through depends on tier (Slice 6.1a — DESIGN
-  // §6 promotes tetration and higher to "required fuel port"):
-  //
-  //   - tier 1 (mul / div / exp): optional. Pipe wired → wait for delivery;
-  //     no pipe → fall through to the global spendFuel pool (safety net).
-  //   - tier 2+ (tetration, …):   required. Never dip into the global
-  //     pool. Whether the pipe is wired or not, the only legal supply is
-  //     the slot. Both branches surface as 'awaiting-pipe' so the narrator
-  //     beat ("awaits fuel ≥ N from its dedicated pipe") nudges the
-  //     player toward explicit routing.
-  if (costTier(cell.type) >= 2) return 'awaiting-pipe';
-  if (hasFuelPipeAttached(cell)) return 'awaiting-pipe';
+  // α.5c: ladder cells. `cost` here is the total magnitude (a back-
+  // compat sum). The real consumption uses the ladder map directly —
+  // callers should use `consumeFuelLadder` on the fire path. For
+  // robustness, if we got a positive cost without a ladder context,
+  // fall through to single-block spending (legacy paths during the
+  // migration window).
   return spendFuel(cost) ? 'paid' : 'no-fuel';
 }
 

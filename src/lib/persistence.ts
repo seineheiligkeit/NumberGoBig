@@ -110,7 +110,7 @@ import { valueRestore, type ValueSnapshot } from './value';
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 16;
+const SAVE_VERSION = 17;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -306,10 +306,15 @@ export function loadFromStorage(): SaveData | null {
       parsed.version === 13 ||
       parsed.version === 14
     ) {
-      return migratePipeLadderToV16(migrateCompLadderToV15(parsed as SaveData));
+      return migrateLadderRuleToV17(
+        migratePipeLadderToV16(migrateCompLadderToV15(parsed as SaveData)),
+      );
     }
     if (parsed.version === 15) {
-      return migratePipeLadderToV16(parsed as SaveData);
+      return migrateLadderRuleToV17(migratePipeLadderToV16(parsed as SaveData));
+    }
+    if (parsed.version === 16) {
+      return migrateLadderRuleToV17(parsed as SaveData);
     }
     console.warn(
       `Save version mismatch: got ${parsed.version}, expected ${SAVE_VERSION}. Ignoring save.`,
@@ -448,6 +453,43 @@ function migratePipeLadderToV16(data: SaveData): SaveData {
     purchaseCounts: [...countsOut],
     pipeLevels: undefined, // strip
   };
+}
+
+/**
+ * v16 → v17: α.5c Ladder Rule. Tier-1+ cells (mult/div/exp/tet/pent/
+ * variadic-arrow) no longer have a fuel-port input slot — fuel is
+ * pulled automatically from the global pool as a multi-block ladder.
+ *
+ * Legacy cells have a 3rd (or 4th, variadic-arrow) `pending` entry
+ * that was the fuel slot. We trim the pending array to match the new
+ * cell shape; any pending fuel block in the slot is dropped silently
+ * (worst case is a single block per such cell — minor compared to
+ * the new system's benefits).
+ *
+ * Inversion keeps its fuel port (signed-fuel contract) — its pending
+ * shape is unchanged.
+ */
+function migrateLadderRuleToV17(data: SaveData): SaveData {
+  // Map cell type → new operand count (pending entries to keep).
+  const NEW_OPERAND_COUNT: Record<string, number> = {
+    multiplication: 2,
+    division: 2,
+    exponentiation: 2,
+    tetration: 2,
+    pentation: 2,
+    'variadic-arrow': 3, // base + arrows + height (no fuel)
+  };
+
+  const cells = (data.cells ?? []).map((c) => {
+    const newLen = NEW_OPERAND_COUNT[c.type];
+    if (newLen === undefined) return c;
+    if (!Array.isArray(c.pending)) return c;
+    if (c.pending.length <= newLen) return c;
+    // Trim trailing fuel-slot entry/entries.
+    return { ...c, pending: c.pending.slice(0, newLen) };
+  });
+
+  return { ...data, version: SAVE_VERSION, cells };
 }
 
 function migrateRiverEndpoints(data: SaveData): SaveData {

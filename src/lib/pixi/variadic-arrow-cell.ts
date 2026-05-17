@@ -101,24 +101,8 @@ export function drawVariadicArrowCell(x: number, y: number): Container {
   arrow.rotation = (Math.random() - 0.5) * 0.04;
   container.addChild(arrow);
 
-  // Fuel intake socket — same pattern as the binary cells. Required for
-  // tier-2+ ops; the variadic-arrow cell is always tier ≥ 2 (since arrows
-  // ≥ 1 means tier ≥ 2 in `costTier`).
-  drawDashedRect(container, 0, halfH + 18, 22, 14);
-  const fuelHintStyle = new TextStyle({
-    fontFamily: PENCIL_FONT_FAMILY,
-    fontSize: 11,
-    fontStyle: 'italic',
-    fontWeight: '400',
-    fill: GRAPHITE,
-  });
-  const fuelHint = new Text({ text: 'fuel', style: fuelHintStyle });
-  fuelHint.anchor.set(0.5);
-  fuelHint.x = 0;
-  fuelHint.y = halfH + 38;
-  fuelHint.alpha = 0.55;
-  fuelHint.rotation = (Math.random() - 0.5) * 0.05;
-  container.addChild(fuelHint);
+  // α.5c: fuel port removed. Ladder pulls from pool automatically;
+  // no socket needed. (The original "fuel" hint was here.)
 
   // Cost-preview badge — same shape as binary-cell.ts. The interaction
   // layer calls `updateVariadicArrowCostBadge` whenever pending state

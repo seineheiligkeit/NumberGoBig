@@ -160,17 +160,46 @@ export interface LiteratureEntry {
  */
 const COMP_MAX_TIER = 30;
 
+/**
+ * α.5c: ladder unlock cost — at hierarchy position L, demand
+ * `M × 2^(L-k)` of value k for k = 0..L. Mirrors
+ * `sim/catalog.ts:ladderUnlockCost`. Used for every operator unlock
+ * and re-used by the comp upgrade ladder below.
+ */
+function ladderUnlockCost(L: number, M: number): LiteratureCostItem[] {
+  const items: LiteratureCostItem[] = [];
+  for (let k = 0; k <= L; k++) {
+    items.push({ value: valueOf(k), count: M * Math.pow(2, L - k) });
+  }
+  return items;
+}
+
+/**
+ * α.5c: every comp tier follows the ladder pattern + a milestone
+ * puzzle. The milestone is `1 × 2^(N-1)` — the largest value
+ * comprehensible AFTER buying comp_(N-1) (= the previous ceiling).
+ * The player must engineer that number as proof of mastery before
+ * paying the comp_N cost.
+ *
+ * Mirrors `sim/catalog.ts:compUpgradeCost` after α.5c.
+ */
 function compUpgradeCost(n: number): LiteratureCostItem[] {
-  const ceiling = Math.pow(2, n);
-  if (ceiling <= 8) return [{ value: valueOf(1), count: ceiling * 20 }];
-  if (ceiling <= 64) return [{ value: valueOf(2), count: Math.ceil(ceiling * 12) }];
-  if (ceiling <= 512) return [{ value: valueOf(10), count: Math.ceil(ceiling * 2.5) }];
-  if (ceiling <= 4096) return [{ value: valueOf(100), count: Math.ceil(ceiling) }];
-  if (ceiling <= 32_768) return [{ value: valueOf(1000), count: Math.ceil(ceiling / 5) }];
-  if (ceiling <= 262_144) return [{ value: valueOf(10_000), count: Math.ceil(ceiling / 32) }];
-  if (ceiling <= 2_097_152) return [{ value: valueOf(100_000), count: Math.ceil(ceiling / 256) }];
-  if (ceiling <= 16_777_216) return [{ value: valueOf(1_000_000), count: Math.ceil(ceiling / 2048) }];
-  return [{ value: valueOf(1_000_000), count: Math.ceil(ceiling / 4096) }];
+  // Ladder depth: caps at 3 (zeros..threes). Beyond L=3 the bottleneck
+  // becomes specific small numbers (4s, 5s) that addition struggles
+  // to produce at scale, blowing up late-game pacing.
+  const L = Math.min(3, Math.floor(n / 3));
+  // Multiplier curve (sim-tuned):
+  //   - early geometric (1.4× per tier).
+  //   - linear past tier 10 to keep late game finite.
+  let M: number;
+  if (n <= 10) M = Math.ceil(6 * Math.pow(1.4, n - 1));
+  else M = Math.ceil(6 * Math.pow(1.4, 9) * (n - 9));
+  const cost = ladderUnlockCost(L, M);
+  // Milestone puzzle: construct 1 × 2^(N-1) before unlocking.
+  if (n >= 2) {
+    cost.push({ value: valueOf(Math.pow(2, n - 1)), count: 1 });
+  }
+  return cost;
 }
 
 /** Unicode superscript digits for the 2^N glyph notation. */
@@ -329,7 +358,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Successor Function',
     glyph: '{ }',
     description: 'Wraps a number. n → n + 1. The first theorem.',
-    cost: [{ value: valueOf(0), count: 10 }],
+    cost: ladderUnlockCost(0, 10), // 10 zeros
     unlockMessage: 'Result added to your literature: the Successor Function.',
   },
   {
@@ -338,7 +367,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Addition Operator',
     glyph: '+',
     description: 'Two summands enter, their sum emerges. a + b.',
-    cost: [{ value: valueOf(1), count: 900 }],
+    cost: ladderUnlockCost(1, 400), // 800 zeros + 400 ones
     unlockMessage: 'Result added to your literature: the Addition Operator.',
   },
   {
@@ -347,7 +376,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Subtraction Operator',
     glyph: '−',
     description: 'a − b. Minuend on top, subtrahend below. Negatives now admissible.',
-    cost: [{ value: valueOf(2), count: 200 }],
+    cost: ladderUnlockCost(1, 80), // 160 zeros + 80 ones
     unlockMessage:
       'Result added to your literature: Subtraction. The number line, henceforth, extends in both directions.',
   },
@@ -357,10 +386,15 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Multiplication Operator',
     glyph: '×',
     description:
-      'Repeated addition, formalised. a × b. Each firing burns one fuel block of magnitude ≥ the input order.',
-    cost: [{ value: valueOf(10), count: 200 }],
+      'Repeated addition, formalised. a × b. Each firing burns a ladder of small numbers (DESIGN §6).',
+    // α.5c: ladder unlock (L=2, M=100) + negative predicate + 1 × 10 puzzle.
+    cost: [
+      ...ladderUnlockCost(2, 100), // 400z + 200o + 100t
+      { ruleId: 'negative', count: 20 },
+      { value: valueOf(10), count: 1 }, // puzzle: construct a 10 via addition
+    ],
     unlockMessage:
-      'Result added to your literature: the Multiplication Operator. Fuel is paid in magnitude — one block per firing, overpay is wasted. Keep matched denominations.',
+      'Result added to your literature: the Multiplication Operator. Fuel is paid as a ladder — every firing pulls a pyramid of small numbers.',
   },
   {
     id: 'division',
@@ -368,8 +402,12 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Division Operator',
     glyph: '÷',
     description:
-      'a ÷ b. Exact rationals when the division does not divide evenly. Each firing burns one fuel block matched to the input order.',
-    cost: [{ value: valueOf(3), count: 200 }],
+      'a ÷ b. Exact rationals when the division does not divide evenly. Each firing burns a ladder of small numbers.',
+    // α.5c: ladder L=2 × M=40 + puzzle 1 × 100.
+    cost: [
+      ...ladderUnlockCost(2, 40),
+      { value: valueOf(100), count: 1 }, // puzzle: prove you can multiply
+    ],
     unlockMessage:
       'Result added to your literature: Division. The rationals are admitted, exact and unreduced where they belong.',
   },
@@ -379,10 +417,15 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Exponentiation Operator',
     glyph: '^',
     description:
-      'Repeated multiplication, formalised. a ^ b. Tier-2 fuel cost — grows twice as fast with input magnitude as multiplication.',
-    cost: [{ value: valueOf(100), count: 200 }],
+      'Repeated multiplication, formalised. a ^ b. Fuel ladder one tier deeper than mult — every firing pulls zeros through threes.',
+    // α.5c: ladder L=3 × M=50 + prime predicate + 1 × 100 puzzle.
+    cost: [
+      ...ladderUnlockCost(3, 50), // 400z + 200o + 100t + 50×3
+      { ruleId: 'prime', count: 30 },
+      { value: valueOf(100), count: 1 },
+    ],
     unlockMessage:
-      'Result added to your literature: Exponentiation. Tier-2 fuel cost — tetration, when it arrives, will be ruinous.',
+      'Result added to your literature: Exponentiation. Tetration, when it arrives, will be ruinous.',
   },
   {
     id: 'tetration',
@@ -390,14 +433,16 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Tetration Operator',
     glyph: '↑↑',
     description:
-      'A tower: a ↑↑ b is a stacked b copies of a. Tier-4 fuel cost — the fuel port is REQUIRED, no global fallback. Wire a dedicated supply.',
+      'A tower: a ↑↑ b is a stacked b copies of a. Each firing pulls a five-deep ladder: 16 zeros, 8 ones, 4 twos, 2 threes, 1 four (× the magnitude of inputs).',
+    // α.5c: ladder L=4 × M=950 + irrational predicate + 1 × 1024 puzzle.
     cost: [
-      { value: valueOf(1000), count: 4000 },
-      { value: valueOf(100), count: 200 },
+      ...ladderUnlockCost(4, 950), // 15200z + 7600o + 3800t + 1900×3 + 950×4
+      { ruleId: 'irrational', count: 10 },
+      { value: valueOf(1024), count: 1 }, // puzzle: 2^10
     ],
     costScale: 1.8,
     unlockMessage:
-      'Result added to your literature: Tetration. We told you it would be ruinous. Wire fuel — this operator will not improvise.',
+      'Result added to your literature: Tetration. We told you it would be ruinous.',
   },
   {
     id: 'pentation',
@@ -405,10 +450,11 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Pentation Operator',
     glyph: '↑↑↑',
     description:
-      'Repeated tetration. a ↑↑↑ b is a tower whose height is itself a tower. Tier-8 fuel cost — heights past 3 are catastrophic.',
+      'Repeated tetration. a ↑↑↑ b is a tower whose height is itself a tower. Each firing pulls a six-deep ladder through zeros up to fives.',
+    // α.5c: ladder L=5 × M=250 + 1 × 1M puzzle.
     cost: [
-      { value: valueOf(1000), count: 8500 },
-      { value: valueOf(1_000_000), count: 350 },
+      ...ladderUnlockCost(5, 250), // 8000z + 4000o + 2000t + 1000×3 + 500×4 + 250×5
+      { value: valueOf(1_000_000), count: 1 }, // puzzle: the 10^6 milestone
     ],
     costScale: 1.8,
     unlockMessage:
@@ -432,7 +478,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Decrement',
     glyph: '−1',
     description: 'n in, n−1 out one side, a 1 out the other. Liberates units.',
-    cost: [{ value: valueOf(10), count: 1 }],
+    cost: ladderUnlockCost(1, 10), // 20z + 10o
     unlockMessage:
       'Result added to your literature: Decrement. Numbers may now be undone, one step at a time.',
   },
@@ -442,7 +488,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Factor',
     glyph: 'p…',
     description: 'A composite in, its prime factorisation out. Costs Total Score.',
-    cost: [{ value: valueOf(10), count: 3 }],
+    cost: ladderUnlockCost(1, 30), // 60z + 30o
     unlockMessage:
       'Result added to your literature: Factor. The Fundamental Theorem of Arithmetic, mechanised.',
   },
@@ -452,7 +498,11 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Square Root',
     glyph: '√',
     description: 'A non-negative input in, its square root out. Non-squares surface as irrationals.',
-    cost: [{ value: valueOf(100), count: 50 }],
+    // α.5c: ladder L=3 × M=12 + puzzle 1 × 100.
+    cost: [
+      ...ladderUnlockCost(3, 12),
+      { value: valueOf(100), count: 1 },
+    ],
     unlockMessage:
       'Result added to your literature: the Square Root. The Pythagoreans send their belated apologies.',
   },
@@ -468,7 +518,7 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     name: 'Negation',
     glyph: '(−)',
     description: 'A unary sign flip — n becomes −n. A clean source of negative blocks without the awkward 0 − n dance.',
-    cost: [{ value: valueOf(3), count: 100 }],
+    cost: ladderUnlockCost(1, 40), // 80z + 40o
     costScale: 1.6,
     unlockMessage:
       'Result added to your literature: Negation. The minus sign now arrives on demand.',
@@ -478,8 +528,12 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
     kind: 'cell',
     name: 'Inversion',
     glyph: '1/x',
-    description: 'Maps n to 1/n. Tier 2 with a required fuel port — but the cost is signed, so tiny rationals invert into large numbers powered by negative fuel.',
-    cost: [{ value: valueOf(100), count: 100 }],
+    description: 'Maps n to 1/n. Cost is signed, so tiny rationals invert into large numbers powered by negative fuel.',
+    // α.5c: ladder L=3 × M=15 + puzzle 1 × 100.
+    cost: [
+      ...ladderUnlockCost(3, 15),
+      { value: valueOf(100), count: 1 },
+    ],
     costScale: 1.6,
     unlockMessage:
       'Result added to your literature: Inversion. The cost, regrettably, is sometimes negative. The cell will accept negative fuel. Do not ask why.',
@@ -1072,13 +1126,16 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
   // in the currency the primitive helps produce — self-amortizing.
   //
   // Qualities at specific levels:
-  //   - Successor lvl 3: river-tap (fires without a pipe ≤1)
   //   - Successor lvl 5: bundle output (deferred behaviour; not modeled in v1)
   //   - Addition lvl 4: variadic sum (deferred to a later slice)
   //   - Multiplication / Exponentiation lvl 3: fuel cost −1 (min 1)
   //   - Multiplication / Exponentiation lvl 5: fuel cost halved
   //   - Pipe lvl 3+: deferred jam-threshold quality
   //   - Pipe lvl 4+: deferred batched-transfer quality
+  //
+  // (Successor lvl 3 river-tap removed in α.5 — zeros must always flow
+  // through pipe ≤1, keeping zero supply a binding constraint at every
+  // factory scale.)
   //
   // Costs validated via the simulator in `sim/catalog.ts`. When tuning,
   // edit the sim first and port back here.
@@ -1099,16 +1156,14 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
   {
     id: 'successor_lvl3',
     kind: 'level',
-    name: 'Successor III — River-Tap',
+    name: 'Successor III',
     glyph: 'Ⅲ',
-    description:
-      'Levels every Successor to III. 4 ones per firing. Cells now draw zeros directly from the river — pipes ≤1 are optional.',
+    description: 'Levels every Successor to III. Each firing emits 4 ones.',
     cost: [{ value: valueOf(10), count: 200 }],
     isOnce: true,
     levelCellType: 'successor',
     targetLevel: 3,
-    unlockMessage:
-      'Successor III. The cells reach into the river of their own accord. The pipe is no longer required to feed them — convenient, if still tidy.',
+    unlockMessage: 'Successor levelled to III. Four ones from each firing.',
   },
   {
     id: 'successor_lvl4',

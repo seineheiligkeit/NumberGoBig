@@ -96,42 +96,60 @@ and a typography hierarchy in `typography.ts` (`BADGE` / `HINT` /
 `PENCIL_TEXT_RESOLUTION = 2` for crispness at max zoom). See
 `ROADMAP.md` §1 for slice-by-slice notes.
 
-**Pacing target:** ~5h optimal-play speedrun / ~10h casual to
-Tetration. Phase 6 sim slices α.1–α.3 locked the curve at the design
-level (Tetration ~4h 44m / Pentation ~6h 38m, sim agent). Now that
-Phase 6 game code shipped — adding decomposer bots, transformer
-cultivators, warehouse capacity scaling, and the universal comp gate
-in ways the α.3 sim didn't model — the sim needs an α.x extension
-pass before the next pacing port.
+**Pacing target (α.5c lock):** **~5h speedrun to Tetration / ~12h to
+Pentation.** The Pentation target grew from ~7h because every comp
+tier now carries an engineering puzzle — more decision-relevant
+moments at the cost of grind length. See `sim/PACING_LOCKED.md` for
+the locked unlock table.
 
-**Phase 6 — SHIPPED end-to-end.** All 14 code slices (β.1, β.2, β.3,
-β.4, γ.1, γ.2, γ.3, δ.1, δ.2, ε.1, ε.2) are live. Save schema is v16.
-Build clean, type-check clean.
+**Phase 6 — SHIPPED end-to-end.** All 14 code slices (β.1–ε.2) are
+live. Save schema is **v17**.
 
-**Next: Sim α.x extension + re-tune.** The α.3 lock predates the
-decomposer-bot family, the transformer cultivator model, and the
-dynamic warehouse-capacity rule. The sim needs:
+**α.5 Ladder Rule — SHIPPED (this session).** The fuel economy has
+been replaced wholesale by a **per-firing ladder** of small numbers:
 
-  1. T-bots modeled as frontier-throughput automation.
-  2. Decomposer-bot jam-clearing as an alternative to comp upgrade
-     in the agent decision tree.
-  3. Transformer cultivator per-step production + per-step fuel cost
-     (currently free at every step in game code).
-  4. Warehouse capacity scaling with comp tier.
+  * Each cell at hierarchy position L consumes `2^(L-k) × ⌈log₁₀(max input)⌉`
+    blocks of value k, for k=0..L. So successor draws 1 zero,
+    addition 2z + 1o, multiplication 4z + 2o + 1t, exponentiation
+    8z + 4o + 2t + 1×3, tetration 16z + 8o + 4t + 2×3 + 1×4,
+    pentation 32z + 16o + 8t + 4×3 + 2×4 + 1×5.
+  * **Fuel ports dropped** from tier-1+ binary cells (mult, div,
+    exp, tet, pent, variadic-arrow). The ladder pulls from loose
+    pool + warehouses automatically — no wiring required. Inversion
+    keeps its fuel port for the signed-fuel single-block contract.
+  * **Unlock-cost ladders** — every operator unlock follows the
+    same ladder pattern. Multiplication = `400z + 200o + 100t + 20 negatives + 1 × 10`.
+    Tetration = `15.2k z + 7.6k o + 3.8k t + 1.9k × 3 + 950 × 4 + 10 irrationals + 1 × 1024`.
+  * **Comp milestone puzzles** — every comp_N tier demands
+    `1 × 2^(N-1)` (the previous tier's ceiling) as an engineering
+    proof. Forces a "construct this number" moment at every step.
+  * **Operator construction puzzles** — multiplication demands a
+    1 × 10, exp/div/inv/sqrt demand 1 × 100, tetration demands
+    1 × 1024, pentation demands 1 × 1,000,000.
+  * **River-tap removed.** Successor lvl 3 is now a pure 4×
+    throughput bump. Zeros always flow via pipe ≤1.
+  * **Zero warehouses** are now meaningful — the agent buys them as
+    the pool stockpile grows. (Required because the ladder pulls
+    zeros at every firing.)
 
-Then re-sweep cost curves against the same ~5h/~10h target. Edit
-`sim/catalog.ts` first, verify, port locked numbers back. After
-that, manual playtest is the only thing left between Phase 6 and a
-post-Phase-6 design (Prestige + Ancestral, ordinals + surreals,
-named giants). See `sim/PACING_LOCKED.md` for the α.3 baseline and
-ROADMAP.md §2 Phase 6 for the slice-by-slice trail.
+Build is clean, type-check 0/0, save schema **v17** with full
+migration chain from v11.
+
+**`sim/analyze.ts` — the new metric tool.** Beyond the basic
+unlock-pacing table that `sim/run.ts` prints, `analyze.ts` reports
+per-value consumption-vs-production flow, bottleneck distribution
+over the run, focus-time distribution, and pool snapshots at every
+unlock event. Use it to see *where* zeros are binding (the answer
+is: 82% of ticks in the α.5c curve).
 
 **Cultivation cells rework shipped.** Streaming cultivators are now
 input-driven transformer cells (`cultivationStep` per cell; output =
 `f(input, step)`; fire path goes through the standard `fireCell` and
 `fireCellViaPipe`). `tickCultivation` retired; `captureSeed` removed.
 Three previously-deferred series landed: harmonic, polynomial,
-factorial. See DESIGN.md §6 *Cultivation Cells*.
+factorial. See DESIGN.md §6 *Cultivation Cells*. **Per-firing fuel
+cost** wired in α.4b.2 — cultivators now consume
+`cultivationEmissionCost(emission)` per firing.
 
 ## Pacing simulator
 
@@ -141,16 +159,21 @@ time-to-each-unlock. **It is the source of truth for pacing numbers.**
 
 - Run with `node sim/run.ts` (Node 22.6+ has native TS; nothing to install)
 - `sim/catalog.ts` mirrors `src/lib/literature.ts` and `src/lib/cost.ts`
-- Models leveling (incl. river-tap on Successor lvl 3, fuel-discount
-  on Mult/Exp lvl 3 and 5)
+- α.5c: models the **full ladder rule** (per-firing + unlock), comp
+  milestone puzzles, multi-currency comp tiers, predicate stocks
+  (prime/negative/irrational), and warehouse capacity scaling.
 - Flags: `--verbose`, `--csv pacing.csv`, `--to <entry>`, `--max-ticks <n>`
-- See `sim/README.md` for usage notes and current model limitations
+- **`sim/analyze.ts`** — richer report: consumption-vs-production
+  per value, bottleneck distribution, pool snapshots at each unlock.
+  Run with `node sim/analyze.ts`. Use this when investigating
+  "where is the agent really spending time."
+- See `sim/README.md` for usage notes and `sim/PACING_LOCKED.md` for
+  the locked α.5c baseline.
 
-**When changing Literature costs, edit `sim/catalog.ts` FIRST**, run the
-sim to confirm the curve still hits the pacing target (~5h speedrun /
-~10h casual to Tetration), THEN port the locked numbers to
-`src/lib/literature.ts`. The other direction is how we got into
-pacing trouble before.
+**When changing Literature costs, edit `sim/catalog.ts` FIRST**, run
+the sim to confirm the curve still hits the ~5h Tet / ~12h Pent
+target, THEN port the locked numbers to `src/lib/literature.ts`.
+The other direction is how we got into pacing trouble before.
 
 ## Tech stack
 
@@ -173,13 +196,15 @@ src/
 │   │                          zeroCount, countByValue, achievements, unlocks,
 │   │                          purchaseCounts, comprehension, dirtyTick).
 │   │                          spendValue / spendFuel scan loose + warehouses +
-│   │                          warehouse-rule items (Slice 3.5.3/7). spendFuel
-│   │                          and consumeFuelOrFail are sign-aware since 6.15:
-│   │                          a block qualifies iff valueIsNegative(b) ===
-│   │                          (cost < 0) AND |b| ≥ |cost|. recompute folds
+│   │                          warehouse-rule items (Slice 3.5.3/7). α.5c:
+│   │                          `consumeFuelLadder(ladder)` atomically pulls
+│   │                          each (value, count) pair from the combined pool
+│   │                          — used by tier-1+ ladder cells. spendFuel +
+│   │                          consumeFuelOrFail remain for inversion's
+│   │                          signed-fuel single-block path. recompute folds
 │   │                          warehouse contents into both Total Score and
 │   │                          countByValue. Fuel helpers (operandPending,
-│   │                          operandsFilled, fuelPortIndex, hasFuelPipeAttached,
+│   │                          operandsFilled, fuelPortIndex, consumeFuelLadder,
 │   │                          consumeFuelOrFail) used by the two fire paths.
 │   │                          setPendingDisplayDisposer (6.17) is the renderer
 │   │                          hook for fading consumed pending-input ghosts —
@@ -191,18 +216,19 @@ src/
 │   │                          inversion has a required fuel port at unary
 │   │                          geometry), operate() → { emits, marginalia? }.
 │   │                          Cost & cultivation math re-exported from `./cost`.
-│   ├── cost.ts                Pure math: magnitude-scaled computationalCost
-│   │                          (returns Decimal; variadic-arrow's `2^n` tier is
-│   │                          a special case). Since 6.15 inversion has a
-│   │                          SIGNED cost branch: `cost = -tier × ⌈log₁₀(|output|)⌉`
-│   │                          so uphill inversions (|input| < 1) return negative
-│   │                          Decimals and downhill return positive. cultivationEmit,
-│   │                          cultivationEmissionCost (also Decimal), costTier
-│   │                          (exported so consumeFuelOrFail can gate tier-2+
-│   │                          cells out of the global fuel pool).
-│   │                          Lives outside cell-types so renderers (binary-cell,
-│   │                          cultivation-cell) can import the formulas without
-│   │                          threading a runtime cycle back through cell-types.
+│   ├── cost.ts                Pure math. α.5c: `fuelLadder(type, inputs, level)`
+│   │                          returns `Map<value, count>` — the per-firing
+│   │                          ladder of small numbers (Successor: 1z, Add:
+│   │                          2z+1o, Mult: 4z+2o+1t, etc., scaled by
+│   │                          ⌈log₁₀(max input)⌉). `ladderPosition(type)` —
+│   │                          hierarchy L per cell type. `computationalCost`
+│   │                          retained as a Decimal sum of the ladder
+│   │                          (back-compat for cost-preview badges); for
+│   │                          inversion it returns the signed single-block
+│   │                          cost (`-tier × ⌈log₁₀(|output|)⌉`). Lives
+│   │                          outside cell-types so renderers (binary-cell,
+│   │                          cultivation-cell) can import without a
+│   │                          runtime cycle.
 │   ├── warehouse-rules.ts     WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
 │   │                          `prime`, `composite`, `negative` — 6.15) +
 │   │                          getWarehouseRule. Same predicate vocabulary Filters
@@ -388,22 +414,25 @@ src/
 ## Adding a new equation cell (recipe)
 
 1. Add the type to `CellType` in `cell-types.ts`.
-2. Add a `CELL_SHAPES` entry (port positions, output offset). Mark fuel
-   ports with `kind: 'fuel'`; operand ports leave it unset (the default).
-3. Add an `operate()` case (operate sees ONLY operand values — fuel slots
-   are filtered upstream via `operandPending`).
-4. Add a `draw<X>Cell` in `binary-cell.ts` (binary) or a new file (unary).
+2. Add a `CELL_SHAPES` entry (operand port positions, output offset).
+   α.5c: tier-1+ binary cells DO NOT have fuel ports — the ladder
+   pulls from pool. Only inversion still uses a `kind: 'fuel'`
+   port (for the signed-fuel single-block contract).
+3. Add an `operate()` case (operate sees ONLY operand values).
+4. Add a `draw<X>Cell` in `binary-cell.ts` (binary) or a new file
+   (unary). Pass `hasFuelPort: false` (only inversion/legacy passes true).
 5. Add `drawCellByType` and `placementMarginalia` cases in
    `interaction.ts`.
-6. Add a Literature entry in `literature.ts`.
-7. If it has computational cost, extend `costTier` in `cost.ts`. The
-   formula `tier · max(1, ⌈log₁₀(max(|a|, |b|))⌉)` runs automatically
-   and returns a `Decimal`; the fire path consumes the cost via
-   `consumeFuelOrFail`. **Tier ≥ 2 makes the fuel port REQUIRED** — no
-   global-pool fallback when the slot is empty and no pipe is wired.
-   For cost formulas that depend on runtime input (variadic-arrow),
-   special-case inside `computationalCost` itself instead of through
-   `costTier`.
+6. Add a Literature entry in `literature.ts`. Use `ladderUnlockCost(L, M)`
+   for the cost — the operator's hierarchy position L and per-entry
+   multiplier M, plus any predicate side demands (negatives / primes /
+   irrationals) and construction puzzles (`{ value: V, count: 1 }`).
+7. If it has per-firing fuel cost, extend `ladderPosition` in
+   `cost.ts` to return the new cell's L. The ladder runs automatically;
+   the fire path calls `consumeFuelLadder(ladder)` to consume the
+   per-firing pyramid of small numbers. For cost formulas that depend
+   on runtime input (variadic-arrow), special-case inside
+   `fuelLadder` itself.
 8. If it needs persistent state (warehouse-style), add fields to
    `PlacedCell`, snapshot in `snapshotCells`, restore in `rehydrateCell`.
 

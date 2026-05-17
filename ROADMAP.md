@@ -114,32 +114,55 @@ entry per magnitude tier); cultivators rebuilt as input-driven
 transformer cells with internal step counter; three new cultivators
 deferred since Phase 2 (harmonic / polynomial / factorial) landed.
 
-**Save schema bumped twice** during Phase 6: v15 (β.1) collapses the
-old comp ladder into the power-of-2 model; v16 (γ.1) dissolves pipe
-leveling and remaps old pipe ids. Migrations are idempotent and
-cover every pre-v15 save.
+**Save schema bumped three times** during Phase 6 + α.5:
+- v15 (β.1) collapses the old comp ladder into the power-of-2 model.
+- v16 (γ.1) dissolves pipe leveling and remaps old pipe ids.
+- **v17 (α.5c)** trims fuel-port slot from non-inversion cells.
+Migrations are idempotent and cover every pre-v15 save.
 
-**Next up — Sim re-tuning (α.x extension).** The α.3 lock was made
-before decomposer bots, transformer cultivators, and warehouse-capacity
-scaling were modeled. Now that they ship in code, the simulator
-needs corresponding tick-time effects:
+**α.5 Ladder Rule — SHIPPED.** Following a deep sim-side iteration
+the fuel economy was replaced wholesale:
 
-  - **T-bot frontier throughput** — a working-class automation at the
-    [2^(N-1), 2^N] band, currently absent from sim production rates.
-  - **Decomposer-bot jam-clearing path** — alternative to comp upgrade
-    when a value is gated; the agent's decision tree should weigh
-    "buy bot vs. buy comp" by ROI.
-  - **Transformer cultivator production** — per-step formulas (linear /
-    quadratic / exponential / factorial) wired into the resource-cost
-    vector. Per-step fuel-cost escalation lives here too — currently
-    cultivators are free at every step in game code, throttled only by
-    the universal comp-jam.
-  - **Warehouse capacity** — dynamic per-comp tier; influences how much
-    stockpile the agent can hoard before re-routing.
+  - **Per-firing ladder.** Every cell at hierarchy position L consumes
+    `2^(L-k) × ⌈log₁₀(max input)⌉` blocks of value k, for k=0..L.
+    Successor: 1 zero. Addition: 2z+1o. Multiplication: 4z+2o+1t.
+    Tetration: 16z+8o+4t+2×3+1×4 per firing.
+  - **Unlock-cost ladders.** Every operator unlock + every comp tier
+    cost follows the ladder pattern. `ladderUnlockCost(L, M)` in
+    literature.ts.
+  - **Comp milestone puzzles.** Every comp_N tier additionally
+    demands `1 × 2^(N-1)` — the previous tier's ceiling — as an
+    engineering construction proof.
+  - **Operator construction puzzles.** Multiplication demands a
+    1 × 10, exp/div/inv/sqrt demand 1 × 100, tetration demands
+    1 × 1024, pentation demands 1 × 1,000,000.
+  - **Fuel ports dropped** from tier-1+ cells (except inversion).
+    Ladder pulls from pool/warehouses automatically — no wiring.
+  - **River-tap removed.** Successor lvl 3 is now a pure throughput
+    bump; zeros always flow via pipe ≤1.
+  - **Zero warehouses** become meaningful — the agent buys them as
+    the pool stockpile grows. (Required because the ladder pulls
+    zeros at every firing.)
 
-Once those models land, re-sweep the cost curves against the same
-~5h speedrun / ~10h casual target. Edit `sim/catalog.ts` first,
-verify, then port locked numbers back to `src/lib/literature.ts`.
+  Locked at **~5h Tetration / ~12h Pentation** (sim agent). Pentation
+  grew significantly because every comp tier now carries a puzzle —
+  the design trade is more decision-relevant moments for more total
+  grind length. See `sim/PACING_LOCKED.md` for the unlock table.
+
+**`sim/analyze.ts` — richer metric tool.** Beyond `run.ts`'s basic
+unlock-pacing table, `analyze.ts` reports per-value consumption-vs-
+production flow, bottleneck distribution over the run, focus-time
+distribution, and pool snapshots at every unlock event. Use to
+investigate "where is the agent really spending time" — answer for
+α.5c is "82% of ticks bottlenecked on zero supply."
+
+**Sim coverage gaps that remain** (game features the speedrun model
+doesn't actively use, but they're catalog-stubbed):
+  - T-bot frontier-band throughput.
+  - Decomposer-bot jam-clearing as an alternative to comp upgrade.
+
+Those models can land later when a specific tuning question requires
+them.
 
 **Cultivation cells rework shipped.** Streaming cultivators
 (`cultivation-arithmetic` / `cultivation-geometric` /

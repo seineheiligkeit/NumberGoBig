@@ -109,6 +109,16 @@ export const WAREHOUSE_RULES: readonly WarehouseRule[] = [
     description: 'Accepts any negative-valued block — fuel for Inversion.',
     test: valueIsNegative,
   },
+  {
+    // α.4d: irrational predicate — natural sink for Square Root output
+    // on non-square inputs. Used as a predicate side-cost on Tetration
+    // (the pacing sim's variety-enforcement mechanism) so Square Root
+    // gains a productive role beyond mere unlock.
+    id: 'irrational',
+    label: '√',
+    description: 'Accepts irrational-valued blocks (produced by Square Root on non-squares).',
+    test: (v) => v.kind === 'irrational',
+  },
 ];
 
 const RULE_BY_ID = new Map(WAREHOUSE_RULES.map((r) => [r.id, r] as const));

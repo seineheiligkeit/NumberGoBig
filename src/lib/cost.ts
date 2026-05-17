@@ -57,10 +57,15 @@ import {
 } from './value';
 
 /**
- * Tier table for each cell type. Exposed (not module-private) so
- * `consumeFuelOrFail` can distinguish tier-1 (optional fuel port, falls
- * back to global pool when unwired) from tier-2+ (required fuel port,
- * never dips into the global pool).
+ * Tier table — retained for backward-compat callers (e.g.
+ * UI deciding whether a cell has a fuel port) and for the inversion
+ * special case (signed-fuel block, not a ladder).
+ *
+ * α.5c (Ladder Rule): tier-0 cells (successor, add, sub, neg, factor,
+ * decrement) have no fuel. Tier-1+ cells consume a per-firing ladder
+ * of small numbers, computed by `fuelLadder` below. Inversion is the
+ * one exception — its signed fuel cost (negative for uphill) doesn't
+ * fit the ladder shape; it keeps the old single-block model.
  */
 export function costTier(type: CellType): number {
   switch (type) {
@@ -69,25 +74,140 @@ export function costTier(type: CellType): number {
       return 1;
     case 'exponentiation':
     case 'inversion':
-      // Inversion is tier 2 — required fuel port. The cost is signed (see
-      // computationalCost below): negative for "uphill" inversions
-      // (|input| < 1 → |output| > 1, the small-numbers-into-big route)
-      // and positive for "downhill" (|input| > 1 → |output| < 1). The
-      // `consumeFuelOrFail` matcher checks sign before magnitude.
       return 2;
     case 'tetration':
       return 4;
     case 'pentation':
       return 8;
     case 'variadic-arrow':
-      // Variadic arrow's tier depends on the runtime arrows-count input;
-      // this baseline returns the minimum (=2) so `consumeFuelOrFail`
-      // correctly treats it as "required fuel port". The actual cost
-      // is computed below in `computationalCost` with full input context.
       return 2;
     default:
       return 0;
   }
+}
+
+/**
+ * α.5c Ladder Rule — hierarchy position L of a cell type. Returns -1
+ * for cells outside the ladder system (no per-firing fuel).
+ *
+ *   L=0  Successor                 (1 zero ladder)
+ *   L=1  Addition/Subtraction/Neg  (2 zeros + 1 one)
+ *   L=2  Multiplication/Division   (4z + 2o + 1t)
+ *   L=3  Exp/Sqrt                  (8z + 4o + 2t + 1×3)
+ *   L=4  Tetration                 (16z + 8o + 4t + 2×3 + 1×4)
+ *   L=5  Pentation                 (32z + 16o + 8t + 4×3 + 2×4 + 1×5)
+ *
+ * Successor's L=0 is "1 zero," matching its existing operand-input
+ * cost — successor already consumed a zero per firing under the old
+ * model, so the ladder doesn't add anything new for L=0.
+ *
+ * Variadic-arrow's L is runtime — defined by the arrows-count input
+ * (slot 1). Handled inside `fuelLadder` rather than here.
+ *
+ * Inversion is special-cased (signed single-block); returns -1 so
+ * `fuelLadder` falls through to its special path.
+ */
+export function ladderPosition(type: CellType): number {
+  switch (type) {
+    case 'successor':
+      return 0;
+    case 'addition':
+    case 'subtraction':
+    case 'negation':
+      return 1;
+    case 'multiplication':
+    case 'division':
+      return 2;
+    case 'exponentiation':
+    case 'square-root':
+      return 3;
+    case 'tetration':
+      return 4;
+    case 'pentation':
+      return 5;
+    default:
+      // variadic-arrow, inversion, cultivators, decomposer bots,
+      // utility cells: handled separately or no fuel ladder.
+      return -1;
+  }
+}
+
+/**
+ * α.5c: per-firing fuel ladder for a cell. Returns a Map<value, count>
+ * — the agent (or game) must consume `count` blocks of value `value`
+ * for each entry, in addition to the cell's operand inputs.
+ *
+ * Pattern: at position L, demand `2^(L-k)` of value k for k=0..L,
+ * scaled by `⌈log₁₀(max input)⌉` (the order-of-magnitude tax).
+ *
+ * Examples:
+ *   Mult 10×10  (L=2, order=1):  4 zeros + 2 ones + 1 two.
+ *   Mult 10⁶×10⁶ (L=2, order=6): 24 zeros + 12 ones + 6 twos.
+ *   Exp(10, 3) (L=3, order=1):  8 zeros + 4 ones + 2 twos + 1×3.
+ *
+ * Returns an empty Map for cells outside the ladder system
+ * (tier-0 ops have no per-firing fuel; inversion uses a signed
+ * single-block cost via `computationalCost`).
+ *
+ * Mult/Exp level discounts (lvl 3+ order−1, lvl 5 halved) apply.
+ */
+export function fuelLadder(
+  type: CellType,
+  inputs: readonly (Value | null)[] = [],
+  level: number = 1,
+): Map<number, number> {
+  let L: number;
+  if (type === 'variadic-arrow') {
+    // L equals the arrows-count input value (slot 1).
+    const arrowsInput = inputs[1];
+    if (!arrowsInput || !valueIsNonNegativeInteger(arrowsInput)) {
+      return new Map();
+    }
+    const arrowsN = valueToSafeNumber(arrowsInput);
+    if (arrowsN === null || arrowsN < 1) return new Map();
+    L = arrowsN;
+  } else {
+    L = ladderPosition(type);
+    if (L < 0) return new Map();
+  }
+
+  // Max input magnitude (excluding arrows slot for variadic-arrow).
+  let maxMag = new Decimal(0);
+  let any = false;
+  for (let i = 0; i < inputs.length; i++) {
+    const v = inputs[i];
+    if (v === null || v === undefined) continue;
+    if (type === 'variadic-arrow' && i === 1) continue;
+    any = true;
+    const m = valueMagnitude(v);
+    if (m.gt(maxMag)) maxMag = m;
+  }
+  if (!any || maxMag.lte(Decimal.dZero)) return new Map();
+
+  // Order = max(1, ceil(log10(maxMag))). Convert to plain number for
+  // ladder count arithmetic; cap if mag is huge.
+  const logD = maxMag.log10();
+  let order: number;
+  if (logD.lte(Decimal.dOne)) {
+    order = 1;
+  } else {
+    const logNum = logD.toNumber();
+    if (!isFinite(logNum)) order = 1e9; // sanity cap for unhinged input mags
+    else order = Math.max(1, Math.ceil(logNum));
+  }
+
+  // Level discount (Mult/Exp lvl 3+): reduce order by 1 (min 1) at
+  // lvl 3-4, halve at lvl 5.
+  if ((type === 'multiplication' || type === 'exponentiation') && level >= 3) {
+    if (level >= 5) order = Math.max(1, Math.floor(order / 2));
+    else order = Math.max(1, order - 1);
+  }
+
+  const ladder = new Map<number, number>();
+  for (let k = 0; k <= L; k++) {
+    ladder.set(k, Math.pow(2, L - k) * order);
+  }
+  return ladder;
 }
 
 /**
@@ -104,108 +224,44 @@ export function costTier(type: CellType): number {
  * empty array short-circuits to 0 (tier 0 anyway, but defends against
  * future tier-bumps that forget to update the call site).
  */
-/**
- * Applies the cell's level-based fuel discount (Slice 6.7):
- *   - Mult/Exp lvl 3+: fuel magnitude − 1 (floored at 1)
- *   - Mult/Exp lvl 5:  fuel magnitude halved (floored at 1)
- *
- * Other tiers/types pass through unchanged. The cap on the floor keeps
- * `× 1` and `× 0` operators from accidentally going below 1 fuel.
- */
-function applyLevelDiscount(
-  type: CellType,
-  level: number,
-  fuel: Decimal,
-): Decimal {
-  if (fuel.lte(Decimal.dOne)) return fuel;
-  const isDiscountable = type === 'multiplication' || type === 'exponentiation';
-  if (!isDiscountable || level < 3) return fuel;
-  let discounted: Decimal;
-  if (level >= 5) discounted = fuel.div(2).floor();
-  else discounted = fuel.sub(1);
-  return discounted.lt(Decimal.dOne) ? Decimal.dOne : discounted;
-}
+// `applyLevelDiscount` (Slice 6.7) was removed in α.5c — its
+// behaviour now lives inside `fuelLadder` where the order multiplier
+// is reduced before building the ladder.
 
+/**
+ * `computationalCost` is now a back-compat wrapper: for inversion it
+ * returns the signed-Decimal cost (single block). For all other cells
+ * it returns the SUM of `value × count` across the ladder — a single-
+ * number summary useful for cost-preview badges that want a magnitude
+ * reading.
+ *
+ * Fire paths should use `fuelLadder()` directly to know exactly what
+ * blocks to consume.
+ */
 export function computationalCost(
   type: CellType,
   inputs: readonly (Value | null)[] = [],
   level: number = 1,
 ): Decimal {
-  // Inversion (Slice 6.15) — `n ↦ 1/n`. The output's magnitude is the
-  // negative of the input's magnitude (in log space), so to stay
-  // honest with "cost ∝ operator magnitude" the cost must scale with
-  // |output|, not |input|:
-  //
-  //   cost = -tier × ⌈log₁₀(|output|)⌉ = -tier × ⌈-log₁₀(|input|)⌉
-  //
-  // The sign indicates the direction:
-  //   - |input| > 1  (downhill, output is small): cost > 0, needs positive fuel
-  //   - |input| < 1  (uphill,   output is big):   cost < 0, needs negative fuel
-  //   - |input| in [1, 10) is a small "free" zone (ceil rounds to 0) — an
-  //     onboarding affordance for the first few hand-inversions.
+  // Inversion: signed single-block fuel — kept on the original
+  // signed-Decimal contract (negative for uphill, positive downhill).
   if (type === 'inversion') {
     const input = inputs[0];
     if (!input) return Decimal.dZero;
     const mag = valueMagnitude(input);
     if (mag.lte(Decimal.dZero)) return Decimal.dZero;
-    // |output| = 1 / |input|; log₁₀(|output|) = -log₁₀(|input|).
     const logOutput = mag.log10().neg();
     const orderD = logOutput.ceil();
-    // No level discount on inversion in v1 — the discount qualities are
-    // bolted to mul/exp specifically (Slice 6.7). The negate flips sign
-    // so uphill inversions (logOutput > 0) yield cost < 0.
     return orderD.neg().mul(2);
   }
 
-  // Variadic arrow's tier is `2 ^ arrows`, where `arrows` is the cell's
-  // SECOND operand input (slot 1, between base and height). The `costTier`
-  // table can't express that without runtime context, so we special-case
-  // here. The base/height inputs contribute to the order calculation; the
-  // arrows input does NOT (it's the operator parameter, not an operand).
-  if (type === 'variadic-arrow') {
-    const arrowsInput = inputs[1];
-    if (!arrowsInput || !valueIsNonNegativeInteger(arrowsInput)) {
-      return Decimal.dZero;
-    }
-    const arrowsN = valueToSafeNumber(arrowsInput);
-    if (arrowsN === null || arrowsN < 1) return Decimal.dZero;
-    const tier = Math.pow(2, arrowsN);
-
-    let maxMag = new Decimal(0);
-    let any = false;
-    for (const idx of [0, 2]) {
-      const v = inputs[idx];
-      if (v === null || v === undefined) continue;
-      any = true;
-      const m = valueMagnitude(v);
-      if (m.gt(maxMag)) maxMag = m;
-    }
-    if (!any || maxMag.lte(Decimal.dZero)) return Decimal.dZero;
-    const logD = maxMag.log10();
-    const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
-    return applyLevelDiscount(type, level, orderD.mul(tier));
+  // All other cells: ladder-derived total magnitude.
+  const ladder = fuelLadder(type, inputs, level);
+  let total = Decimal.dZero;
+  for (const [v, c] of ladder) {
+    total = total.add(new Decimal(v).mul(c));
   }
-
-  const tier = costTier(type);
-  if (tier === 0) return Decimal.dZero;
-
-  let maxMag = new Decimal(0);
-  let any = false;
-  for (const v of inputs) {
-    if (v === null || v === undefined) continue;
-    any = true;
-    const m = valueMagnitude(v);
-    if (m.gt(maxMag)) maxMag = m;
-  }
-  if (!any) return Decimal.dZero;
-  if (maxMag.lte(Decimal.dZero)) return Decimal.dZero;
-
-  // ⌈log₁₀(max)⌉, floored at 1. For tetration outputs the log itself can
-  // exceed `Number.MAX_SAFE_INTEGER`, so we work in `Decimal` throughout —
-  // break_eternity's `log10` returns a Decimal that may itself be huge.
-  const logD = maxMag.log10();
-  const orderD = logD.lte(Decimal.dOne) ? Decimal.dOne : logD.ceil();
-  return applyLevelDiscount(type, level, orderD.mul(tier));
+  return total;
 }
 
 /**

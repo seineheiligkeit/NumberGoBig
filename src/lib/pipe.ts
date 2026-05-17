@@ -4,6 +4,7 @@ import {
   allCells,
   allPipes,
   cellLevel,
+  consumeFuelLadder,
   consumeFuelOrFail,
   decreaseStack,
   depositToWarehouse,
@@ -25,9 +26,10 @@ import {
 } from './world';
 import { getWarehouseRule } from './warehouse-rules';
 import type { Container } from 'pixi.js';
+import type Decimal from 'break_eternity.js';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import { updateCostBadge } from './pixi/binary-cell';
-import { computationalCost, cultivationEmit, isCultivationType, operate } from './cell-types';
+import { computationalCost, cultivationEmissionCost, cultivationEmit, fuelLadder, isCultivationType, operate } from './cell-types';
 import { updateCultivationBadge } from './pixi/cultivation-cell';
 // captureSeed removed in Phase 6 ε.1 — cultivators now use the standard
 // pending-input fire path (no seed concept).
@@ -510,16 +512,23 @@ function deliverDest(ep: PipeEndpoint, value: Value, canvasLayer: Container): bo
  */
 function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
   const operands = operandPending(cell).map((v) => v as Value);
-  const cost = computationalCost(cell.type, operands, cellLevel(cell.type));
-  // Phase 6 ε.1: cultivators short-circuit `operate` — output is
-  // `f(input, step)`. Step advances after a successful firing (below).
+  // α.5c: ladder cells pull multiple specific values per firing.
+  // Cultivators + inversion keep the single-block model.
   let result;
+  let cost: Decimal;
+  let ladder: Map<number, number> | null = null;
   if (isCultivationType(cell.type)) {
     const step = cell.cultivationStep ?? 0;
     const output = cultivationEmit(cell.type, operands[0], step);
     result = { emits: [{ portIndex: 0, value: output }] };
+    cost = cultivationEmissionCost(output);
+  } else if (cell.type === 'inversion') {
+    result = operate(cell.type, operands);
+    cost = computationalCost(cell.type, operands, cellLevel(cell.type));
   } else {
     result = operate(cell.type, operands);
+    ladder = fuelLadder(cell.type, operands, cellLevel(cell.type));
+    cost = computationalCost(cell.type, operands, cellLevel(cell.type));
   }
 
   // Pre-check every output port (Slice 5.7 + Phase 6 β.3). 'clogged'
@@ -537,7 +546,13 @@ function fireCellViaPipe(cell: PlacedCell, canvasLayer: Container): boolean {
     if (plan === 'clogged' || plan === 'jammed') return false;
   }
 
-  if (consumeFuelOrFail(cell, cost) !== 'paid') return false;
+  // α.5c: ladder cells consume the multi-block ladder atomically.
+  // Cultivators + inversion use the single-block path.
+  if (ladder !== null) {
+    if (!consumeFuelLadder(ladder)) return false;
+  } else if (consumeFuelOrFail(cell, cost) !== 'paid') {
+    return false;
+  }
 
   // Clear pending values AND any pending displays (the manual path may have
   // installed them before the cell switched to cost-blocked-then-retry state).

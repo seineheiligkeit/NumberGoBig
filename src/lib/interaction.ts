@@ -1,5 +1,23 @@
 import type { Application, Container, FederatedPointerEvent } from 'pixi.js';
 import { Graphics, Text, TextStyle } from 'pixi.js';
+import type Decimal from 'break_eternity.js';
+
+/** Render a per-firing ladder as a compact human label, e.g.
+ *  `4 zeros + 2 ones + 1 two`. */
+function describeLadder(ladder: Map<number, number>): string {
+  if (ladder.size === 0) return '—';
+  const NAMES: Record<number, string> = {
+    0: 'zero', 1: 'one', 2: 'two', 3: 'three', 4: 'four', 5: 'five',
+  };
+  const sorted = Array.from(ladder.entries()).sort((a, b) => a[0] - b[0]);
+  return sorted
+    .map(([v, c]) => {
+      const name = NAMES[v] ?? `value ${v}`;
+      const plural = c === 1 ? name : `${name}s`;
+      return `${c} ${plural}`;
+    })
+    .join(' + ');
+}
 import { drawBlock, updateStackBadge } from './pixi/block';
 import {
   drawSuccessorCell,
@@ -59,6 +77,7 @@ import {
   allCells,
   cellLevel,
   comprehensionLevel,
+  consumeFuelLadder,
   consumeFuelOrFail,
   levelMultiplier,
   decreaseStack,
@@ -81,7 +100,7 @@ import {
   type PlacedCell,
   type PlacedPipe,
 } from './world';
-import { computationalCost, cultivationEmit, isCultivationType, operate, type CellType } from './cell-types';
+import { computationalCost, cultivationEmissionCost, cultivationEmit, fuelLadder, isCultivationType, operate, type CellType } from './cell-types';
 import { getWarehouseRule } from './warehouse-rules';
 import { PENCIL_ACTIVE_CURSOR_URL, PENCIL_CURSOR_URL } from './cursors';
 import { showMarginalia } from './marginalia';
@@ -332,24 +351,29 @@ export function createDragController(app: Application, canvasLayer: Container): 
     // Operand-only inputs drive cost & operate; the fuel slot (if present)
     // is the payment, not part of the operation (Slice 3.5.5).
     const operands = operandPending(cell).map((v) => v as Value);
-    const cost = computationalCost(cell.type, operands, cellLevel(cell.type));
 
     // operate() is pure — call it now so we can pre-check output port
-    // capacity before paying fuel (Slice 5.7). One distinct port-target
-    // is checked per port; multi-emit at the same port fans within-firing
-    // and reuses the first emit's planned anchor.
-    //
-    // Phase 6 ε.1: cultivators short-circuit `operate` — their output
-    // is `f(input, step)` and the step counter advances per firing.
-    // The transform formula lives in `cultivationEmit` (cost.ts);
-    // the increment happens AFTER fuel + spawn checks succeed.
+    // capacity before paying fuel. α.5c: ladder cells consume a Map
+    // of (value, count) instead of a single fuel block. Inversion
+    // keeps the signed-Decimal contract; cultivators keep their
+    // per-emission single-block cost.
     let result;
+    let cost: Decimal; // single-block back-compat / inversion / cultivator
+    let ladder: Map<number, number> | null = null;
     if (isCultivationType(cell.type)) {
       const step = cell.cultivationStep ?? 0;
       const output = cultivationEmit(cell.type, operands[0], step);
       result = { emits: [{ portIndex: 0, value: output }] };
+      cost = cultivationEmissionCost(output);
+    } else if (cell.type === 'inversion') {
+      result = operate(cell.type, operands);
+      cost = computationalCost(cell.type, operands, cellLevel(cell.type));
     } else {
       result = operate(cell.type, operands);
+      ladder = fuelLadder(cell.type, operands, cellLevel(cell.type));
+      // Cost (single-magnitude sum) used only for cost-preview / error
+      // marginalia text. Real consumption uses the ladder.
+      cost = computationalCost(cell.type, operands, cellLevel(cell.type));
     }
 
     const portsChecked = new Set<number>();
@@ -376,32 +400,45 @@ export function createDragController(app: Application, canvasLayer: Container): 
       }
     }
 
-    const fuelOutcome = consumeFuelOrFail(cell, cost);
-    if (fuelOutcome !== 'paid') {
-      switch (fuelOutcome) {
-        case 'awaiting-pipe':
-          showMarginalia(
-            `${cellLabel(cell.type)} awaits fuel (≥ ${cost.toString()}) from its dedicated pipe.`,
-            `cell_cost_blocked_${cell.id}`,
-          );
-          break;
-        case 'too-small': {
-          const fuelIdx = fuelPortIndex(cell);
-          const slot = fuelIdx >= 0 ? cell.pending[fuelIdx] : null;
-          showMarginalia(
-            `Fuel block too small: ${slot ? valueLabel(slot) : '—'} cannot pay cost ${cost.toString()}. The block stays in the slot until cleared.`,
-            `cell_fuel_too_small_${cell.id}`,
-          );
-          break;
-        }
-        case 'no-fuel':
-          showMarginalia(
-            `${cellLabel(cell.type)} awaits fuel: one block of magnitude ≥ ${cost.toString()}.`,
-            `cell_cost_blocked_${cell.id}`,
-          );
-          break;
+    // α.5c: ladder consumption for tier-1+ non-inversion cells.
+    if (ladder !== null) {
+      if (!consumeFuelLadder(ladder)) {
+        const ladderStr = describeLadder(ladder);
+        showMarginalia(
+          `${cellLabel(cell.type)} awaits fuel ladder: ${ladderStr}.`,
+          `cell_cost_blocked_${cell.id}`,
+        );
+        return;
       }
-      return;
+    } else {
+      // Inversion + cultivators use the single-block path.
+      const fuelOutcome = consumeFuelOrFail(cell, cost);
+      if (fuelOutcome !== 'paid') {
+        switch (fuelOutcome) {
+          case 'awaiting-pipe':
+            showMarginalia(
+              `${cellLabel(cell.type)} awaits fuel (≥ ${cost.toString()}) from its dedicated pipe.`,
+              `cell_cost_blocked_${cell.id}`,
+            );
+            break;
+          case 'too-small': {
+            const fuelIdx = fuelPortIndex(cell);
+            const slot = fuelIdx >= 0 ? cell.pending[fuelIdx] : null;
+            showMarginalia(
+              `Fuel block too small: ${slot ? valueLabel(slot) : '—'} cannot pay cost ${cost.toString()}. The block stays in the slot until cleared.`,
+              `cell_fuel_too_small_${cell.id}`,
+            );
+            break;
+          }
+          case 'no-fuel':
+            showMarginalia(
+              `${cellLabel(cell.type)} awaits fuel: one block of magnitude ≥ ${cost.toString()}.`,
+              `cell_cost_blocked_${cell.id}`,
+            );
+            break;
+        }
+        return;
+      }
     }
 
     // Clear pending state. Slice 6.17: ghosts ease out via `fadeAndDestroy`

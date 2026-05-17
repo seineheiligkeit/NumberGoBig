@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import Decimal from 'break_eternity.js';
 import { drawDashedRect, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
-import { computationalCost } from '../cost';
+import { computationalCost, fuelLadder } from '../cost';
 import type { PlacedCell } from '../world';
 
 /**
@@ -166,31 +166,44 @@ export function drawBinaryCell(x: number, y: number, options: BinaryCellOptions)
 export function updateCostBadge(cell: PlacedCell, level: number = 1): void {
   const badge = (cell.container as Container & { __costBadge?: Text }).__costBadge;
   if (!badge) return;
-  // Only operand magnitudes drive cost — the fuel slot is the PAYMENT,
-  // not part of the operation (Slice 3.5.5). Inlined here (rather than
-  // calling world.ts's `operandPending`) to avoid a runtime import cycle:
-  // pixi/binary-cell → world → cell-types → pixi/binary-cell, which would
-  // try to read `BINARY_CELL_WIDTH` mid-init.
   const operands = cell.pending.filter(
     (_, i) => (cell.inputs[i].kind ?? 'operand') !== 'fuel',
   );
-  const cost = computationalCost(cell.type, operands, level);
-  if (cost.eq(Decimal.dZero)) {
+
+  // Inversion keeps the signed-Decimal single-block contract.
+  if (cell.type === 'inversion') {
+    const cost = computationalCost(cell.type, operands, level);
+    if (cost.eq(Decimal.dZero)) {
+      badge.text = '';
+      badge.alpha = 0;
+      return;
+    }
+    if (cost.lt(Decimal.dZero)) {
+      badge.text = `fuel ≤ ${cost.toString()}`;
+    } else {
+      badge.text = `fuel ≥ ${cost.toString()}`;
+    }
+    badge.alpha = 0.65;
+    return;
+  }
+
+  // α.5c: ladder cells — show the per-firing ladder as a compact
+  // "Nz + No + Nt" string.
+  const ladder = fuelLadder(cell.type, operands, level);
+  if (ladder.size === 0) {
     badge.text = '';
     badge.alpha = 0;
     return;
   }
-  // Slice 3.5.7 + 6.15: positive costs show "fuel ≥ N" (consume a block
-  // whose value is at least N); negative costs (Inversion's uphill path)
-  // show "fuel ≤ N" — the block's value must be at most N, i.e. more
-  // negative than N. Decimal `toString` emits `eXX` for tetration-tier
-  // costs; the negative-cost case stays human-readable since inversion
-  // costs cap around -6 or -7 in normal play.
-  if (cost.lt(Decimal.dZero)) {
-    badge.text = `fuel ≤ ${cost.toString()}`;
-  } else {
-    badge.text = `fuel ≥ ${cost.toString()}`;
-  }
+  const GLYPHS: Record<number, string> = {
+    0: 'z', 1: 'o', 2: 't', 3: '×3', 4: '×4', 5: '×5',
+  };
+  const sorted = Array.from(ladder.entries()).sort((a, b) => a[0] - b[0]);
+  const parts = sorted.map(([v, c]) => {
+    const g = GLYPHS[v] ?? `×${v}`;
+    return `${c}${g}`;
+  });
+  badge.text = parts.join(' + ');
   badge.alpha = 0.65;
 }
 
@@ -204,36 +217,39 @@ export function drawSubtractionCell(x: number, y: number): Container {
   return drawBinaryCell(x, y, { symbol: '−', symbolFontSize: 60 });
 }
 
+// α.5c: hasFuelPort dropped — fuel ports removed from tier-1+
+// binary cells. Ladder pulls from pool automatically.
+
 export function drawMultiplicationCell(x: number, y: number): Container {
   // `×` reads slightly larger than `+` at the same font-size; trim a few px
   // so the visual weight matches across the catalog.
-  return drawBinaryCell(x, y, { symbol: '×', symbolFontSize: 50, hasFuelPort: true });
+  return drawBinaryCell(x, y, { symbol: '×', symbolFontSize: 50, hasFuelPort: false });
 }
 
 export function drawDivisionCell(x: number, y: number): Container {
   // `÷` (U+00F7) — the obelus reads at the same visual weight as `×` and `+`.
-  return drawBinaryCell(x, y, { symbol: '÷', symbolFontSize: 52, hasFuelPort: true });
+  return drawBinaryCell(x, y, { symbol: '÷', symbolFontSize: 52, hasFuelPort: false });
 }
 
 export function drawExponentiationCell(x: number, y: number): Container {
   // `^` is rendered as a small superscript caret in most fonts — it floats
   // high and reads thin. Pump the font-size up and push it down so it sits
   // visually centered between the two ports.
-  return drawBinaryCell(x, y, { symbol: '^', symbolFontSize: 64, symbolYOffset: 12, hasFuelPort: true });
+  return drawBinaryCell(x, y, { symbol: '^', symbolFontSize: 64, symbolYOffset: 12, hasFuelPort: false });
 }
 
 export function drawTetrationCell(x: number, y: number): Container {
   // `↑↑` (Knuth's double up-arrow, U+2191 ×2) — the canonical notation for
   // tetration. Reads narrow but tall at the default glyph size; a small
   // bump keeps it visually weighty next to the other operator symbols.
-  return drawBinaryCell(x, y, { symbol: '↑↑', symbolFontSize: 44, hasFuelPort: true });
+  return drawBinaryCell(x, y, { symbol: '↑↑', symbolFontSize: 44, hasFuelPort: false });
 }
 
 export function drawPentationCell(x: number, y: number): Container {
   // `↑↑↑` (Knuth's triple up-arrow) — pentation, repeated tetration.
   // Three arrows side by side spread wide; we drop the font size a notch
   // versus tetration so the glyph still fits comfortably between ports.
-  return drawBinaryCell(x, y, { symbol: '↑↑↑', symbolFontSize: 36, hasFuelPort: true });
+  return drawBinaryCell(x, y, { symbol: '↑↑↑', symbolFontSize: 36, hasFuelPort: false });
 }
 
 // Slice 6.16: `drawDashedRect` moved to `pencil.ts` as a shared helper.

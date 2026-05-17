@@ -153,54 +153,68 @@ Different Cultivation cells implement different mathematical growth patterns, ea
 
 Cultivation respects the "one source" pillar (§2.1): every cultivated number derives ultimately from an input the player constructed from the river of zeros. The river remains the origin; cultivation only amplifies. Making cultivators input-driven rather than self-running renders the chain of provenance explicit at every emission.
 
-### Computational Cost
+### Computational Cost — the Ladder Rule (α.5c)
 
-Operators (and cultivators) have a **computational cost** in addition to their operand inputs: each firing consumes fuel. The cost is **proportional to the order of magnitude** of what the operator is working with — which mirrors how much information the operator is actually generating.
+Operators (and cultivators) have a **computational cost** in addition to their operand inputs: each firing consumes fuel. Fuel is **a structured pyramid of small numbers**, not a single magnitude-scaled block. The rule is:
 
-#### The cost rule
+> A cell at hierarchy position **L** consumes per firing:
+>
+> `2^L` zeros, `2^(L-1)` ones, `2^(L-2)` twos, …, `1` of value `L` — scaled by `⌈log₁₀(max input)⌉`.
 
-For binary operators, **cost ≈ tier · ⌈log₁₀(max(|a|, |b|) + 1)⌉**, where `tier` is:
+#### The hierarchy ladder
 
-| Operator | Tier | Cost per firing |
-|---|---|---|
-| Successor | 0 | 0 (free) |
-| Addition / Subtraction | 0 | 0 (free) |
-| Multiplication / Division | 1 | `⌈log₁₀(max + 1)⌉` |
-| Exponentiation | 2 | `2 · ⌈log₁₀(max + 1)⌉` |
-| Tetration | 4 | `4 · ⌈log₁₀(max + 1)⌉` |
-| Pentation and higher | 8, 16, … | escalating per tier |
+| Cell | L | Per-firing ladder (mag=1) | Total tokens |
+|---|---|---|---|
+| Successor | 0 | 1 zero | 1 |
+| Addition / Subtraction / Negation | 1 | 2 zeros + 1 one | 3 |
+| Multiplication / Division | 2 | 4z + 2o + 1t | 7 |
+| Exponentiation / Square Root / Inversion | 3 | 8z + 4o + 2t + 1×3 | 15 |
+| Tetration | 4 | 16z + 8o + 4t + 2×3 + 1×4 | 31 |
+| Pentation | 5 | 32z + 16o + 8t + 4×3 + 2×4 + 1×5 | 63 |
 
-Successor on a `0` is free; multiplication of two single-digit numbers costs `1`; multiplication by a `10⁶` costs `6`; exponentiation `2^10` costs `2`; tetration `2↑↑3` costs ~4. The framing is mathematically honest: the operator pays in proportion to the work it represents.
+Counts scale with `⌈log₁₀(max input)⌉`. A multiplication of 10×10 (mag=1) costs `4z + 2o + 1t`. The same cell firing on 10⁶×10⁶ (mag=6) costs `24z + 12o + 6t`. The magnitude tax preserves "operator pays in proportion to the work it represents" — the ladder distributes that cost across the lower-tier pyramid.
 
-For **cultivators** (now input-driven transformer cells, see *Cultivation Cells* above), each emission's cost escalates per step per a cell-type-specific formula (sim-tuned). Combined with the Cell Jam rule (§9), the chain throttles itself twice: cost grows per step, and output magnitude grows per step until it outruns Comprehension and the cell pins.
+**Mathematical intuition.** Each operation is built atop a doubled foundation of the operation below it. Tetration is a tower of tetrations is a tower of pentations… the doubling at each rung is the structural cost of the recursion.
 
-**Decomposition** (Decrement, Factor) is **free and refunds magnitude**: factoring a 144 returns three 2s and a 3 (small, useful fuel), at the cost of Total Score. Decomposition is the game's mid-game pressure release.
+**Why this works in service of the design pillars:**
 
-#### Fuel currency: magnitude, not denomination
+- **§2.1 *One river, one substrate*.** Zeros are demanded by every firing at every tier. Higher tiers demand more zeros, not fewer. The river of zeros stays mechanically central forever, not just in the opening.
+- **§2.2 *Production runs ahead of utilization*.** Each tier requires the entire lower ladder. To run pentation, you must be producing all of {zeros, ones, twos, threes, fours, fives} at scale. No "skipping" the small numbers once you reach the big ones.
+- **Routing becomes a continuous coordination puzzle.** A late-game pentation cell draws from six different value streams simultaneously. The factory's circulatory system spans every magnitude.
 
-Fuel is **paid in magnitude**, not in "ones". One block per firing, whose value is at least the cost — over-payment is wasted (the player learns to keep matched denominations: small change in `wh<10`, bigger units in `wh<1000`). A multiplication of cost 5 can pay with one `5` block, one `7` block (over-pays 2), or one `50` block (over-pays 45).
+#### Inversion: the signed-fuel exception
 
-This is what makes **rule-based warehouses** (§8) load-bearing — the player designs warehouses as fuel reservoirs at different denominations and wires them to operators that need them.
+Inversion (`n ↦ 1/n`) is the only operator whose output magnitude is **negative** in log space — small inputs produce large outputs and vice versa. Its cost can't fit the ladder shape cleanly. So Inversion **keeps the old single-block signed-fuel contract**:
 
-#### Tiered fuel ports
+> `cost = -2 × ⌈log₁₀(|output|)⌉` — negative for uphill (|input| < 1 → |output| > 1), positive for downhill, free in [1, 10).
 
-Where the fuel comes from depends on the operator's tier:
+A single block of magnitude ≥ |cost| with matching sign satisfies the cost. The natural fuel reservoir is `wh: negative` (§8) for uphill inversions. **Inversion is also the one tier-2+ cell that still has a fuel input port** — the wired-warehouse route is needed because the signed-block draw isn't symmetric with positive fuel.
 
-- **Tier 0** (Successor, Addition, Subtraction): no fuel port. Free, no wiring.
-- **Tier 1** (Multiplication, Division, Exponentiation): **optional fuel port**. If a pipe is wired to it, the operator pulls exclusively from that warehouse. If no pipe is wired, the operator falls back to scanning loose blocks and warehoused contents globally — a safety net that keeps early factories simple.
-- **Tier 2+** (Tetration, Pentation, Knuth arrow, …): **required fuel port**. Won't fire without explicit wiring. Late-game becomes a real fuel-pipeline logistics puzzle, with each high-tier operator demanding its own dedicated fuel route.
+#### Cultivators: per-emission cost
 
-The optional/required boundary is the player's onboarding ramp into resource management. Mid-game teaches the pattern; late-game requires it.
+Cultivators (input-driven transformer cells, see *Cultivation Cells* above) consume fuel proportional to the **magnitude of the emission they're about to produce**: `cost = ⌈log₁₀(|emission|)⌉` per firing, paid as a single block. The cell self-throttles as its step grows — a geometric chain producing `2^30` costs 9 fuel per emission; a factorial chain costs much more. Combined with the Cell Jam rule (§9), the chain throttles itself twice: cost grows per step, and output magnitude grows per step until it outruns Comprehension and the cell pins.
 
-**Consequences:**
+**Decomposition** (Decrement, Factor) remains **free and refunds magnitude**: factoring a 144 returns three 2s and a 3, at the cost of Total Score. Decomposition is the game's mid-game pressure release.
 
-- **Cultivators self-throttle.** A geometric chain producing `2^30` costs `9` per emission — sustainable only with serious fuel infrastructure.
-- **The small-number warehouse stays critical forever.** Cheap operations need cheap fuel; players hoard small denominations as small change.
-- **Decomposition gains sharp purpose.** Factoring a 10⁶ reclaims real fuel (six 1-magnitude units), not narrator commentary.
-- **Fuel routing is layout work.** Where you put your `wh<100` matters. The factory grows a circulatory system.
-- The high-tier operator's **net contribution to Total Score remains positive** — the output dwarfs the fuel — but the fuel must be earned, stored, and routed. Infrastructure depth without reward erosion.
+#### No fuel-port wiring (except inversion)
 
-**This replaces the rejected "Operator Fuel" pattern.** That earlier idea gave every operator its own fuel pool — pure bookkeeping. Here, fuel is one currency (magnitude), drawn from one kind of container (warehouses), with cost that scales naturally with what the operator is doing.
+Tier-1+ cells (mult, div, exp, tet, pent, variadic-arrow, sqrt) **have no fuel port**. The ladder pulls automatically from the global pool — loose blocks first, then warehouses, then rule warehouses. The player doesn't wire fuel pipes for these.
+
+The trade-off is mechanical simplicity: no more "this cell will not fire without a wired warehouse" friction. The cost of the simplification is that fuel routing is now diffuse — the factory must keep many small-number streams flowing into the shared pool, rather than dedicated pipes per cell. Routing is still layout work (§8 *Storage*), just at a higher abstraction — "is my zero supply keeping up with my factory's total demand?" instead of "did I wire the fuel port on this specific multiplication cell?"
+
+**This supersedes the earlier "tiered fuel ports" design** that gated tier-2+ operators behind required wired warehouses. The Ladder Rule replaces that mechanic with the structural small-number demand at every tier.
+
+#### Engineering puzzles
+
+Beyond the per-firing ladder, **every operator unlock and every comp tier carries a `1 × V` construction puzzle** — a specific number the player must actually engineer before paying the unlock cost:
+
+- Multiplication unlock demands a `1 × 10` (prove you can add).
+- Exp / Division / Inversion / Square Root demand `1 × 100` (prove you can multiply).
+- Tetration demands `1 × 1024` (= 2^10, prove you can exponentiate).
+- Pentation demands `1 × 1,000,000` (the million milestone).
+- **Every comp_N demands `1 × 2^(N-1)`** (the previous tier's ceiling — the largest number the player can comprehend NOW).
+
+These puzzles add agency to an otherwise grinding loop. Each one is a moment of "what cell do I need, where do I place it, where does the input come from, how do I wire it?" The bulk-grind ladder runs in the background while the player engineers each milestone block by hand.
 
 ### Equation Properties
 
@@ -656,7 +670,13 @@ guessing.
 | Milestone | Speedrun (optimal play) | Casual |
 |-----------|--------------------------|--------|
 | Tetration | ~5 hours | ~10 hours |
-| Pentation | ~7 hours | ~14 hours |
+| Pentation | ~12 hours | ~24 hours |
+
+**Pentation grew (was ~7h) with the α.5c Ladder Rule + per-tier comp
+puzzles.** Every comp tier now demands the construction of `1 × 2^(N-1)`
+as an engineering proof; that's eighteen additional puzzles on the
+path to pentation. The new shape trades a flatter final cliff for many
+small decision points — more agency, less idle waiting.
 
 These targets are stable across the Comprehension Spine rework (§9). The curve underneath will change — power-of-2 Comprehension tiers replace the eight-tier ladder, pipe leveling dissolves into Comprehension itself, cultivators move from streaming to transformer-with-escalating-cost — so the previous Stage A–G stage-by-stage outline is being re-derived from scratch. Phase 6's first move is to re-port the simulator and discover the new shape; the targets in this table are what the sim is solving for.
 

@@ -22,7 +22,6 @@ import { tickEquationCells, tickPipes } from '../pipe';
 // tickCultivation removed in Phase 6 ε.1 — cultivators now fire like
 // regular operator cells via fireCell / fireCellViaPipe.
 import { tickBots } from '../bots';
-import { tickRiverTapSuccessors } from '../river-tap';
 import {
   allCells,
   cellLevel,
@@ -227,9 +226,9 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // is hidden — autosave persists state on the way out via beforeunload.
   const advance = (dtMs: number): void => {
     // (cultivators are no longer tick-driven — Phase 6 ε.1)
-    // River-tap: lvl-3+ Successors emit on their own cadence even
-    // without a pipe attached (Slice 6.7).
-    tickRiverTapSuccessors(dtMs, canvasLayer);
+    // (river-tap removed in α.5 — Successor always requires a wired
+    // pipe ≤1 to feed it from the river. Zero supply is the universal
+    // bottleneck.)
     tickPipes(dtMs, canvasLayer);
     // Equation cells loaded but blocked on computational cost retry here.
     // Cheap when nothing is blocked.

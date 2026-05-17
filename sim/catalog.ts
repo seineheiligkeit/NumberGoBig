@@ -4,24 +4,24 @@
 // as Spine. See DESIGN.md §9 and ROADMAP §2 Phase 6 for the design.
 //
 // ===========================================================================
-// α.3 LOCK (2026-05-16) — these numbers are the source of truth for code
-// porting (Phase 6 slices β.1 onward).
+// α.4 TUNE (in progress, 2026-05-16) — reverse-porting the shipped game
+// numbers. Phase 6 game code shipped with operator costs significantly
+// lower than the α.3 lock (e.g. tetration 4000 thousands vs α.3's 19,000).
+// This slice ports those numbers back into the sim so the sim mirrors the
+// running game, then layers a warehouse-capacity model on top.
 // ===========================================================================
 //
-// LOCKED pacing curve (sim's optimal-play agent; real player ~5-15% slower):
-//
-//   Successor      → 20s         Tetration      → 4h 44m
-//   Addition       → 2m 25s      Pentation      → 6h 38m
-//   Multiplication → 44m
-//   Exponentiation → 1h 19m
+// PREVIOUS α.3 LOCK (2026-05-16) curve was:
+//   Successor → 20s  · Addition → 2m 25s  · Multiplication → 44m
+//   Exponentiation → 1h 19m  · Tetration → 4h 44m  · Pentation → 6h 38m
 //
 // LOCKED sections (cite this file when editing the game source):
-//   - `compUpgradeCost(n)`          ← THE spine
-//   - `pipeCost(n)`
-//   - `OPERATOR_AND_CELL_ENTRIES`   ← all operators
-//   - `LEVEL_LADDERS`               ← cell-only leveling
-//   - `RECIPES`
-//   - `costTier`, `computationalCost`
+//   - `compUpgradeCost(n)`          ← THE spine (unchanged from α.3)
+//   - `pipeCost(n)`                  (unchanged from α.3)
+//   - `OPERATOR_AND_CELL_ENTRIES`   ← α.4a: reverse-ported from src/lib/literature.ts
+//   - `LEVEL_LADDERS`               ← cell-only leveling (unchanged)
+//   - `RECIPES`                      (unchanged)
+//   - `costTier`, `computationalCost` (unchanged)
 //
 // STUB sections (catalog entries only — production effects not yet modeled
 // in `simulator.ts`; defer locking until tick-model lands in a later α.x):
@@ -95,12 +95,41 @@ export type BotType =
   | 'decrement-bot' // Decomposer: walks to a block, decrements in place
   | 'inversion-bot'; // Decomposer: walks to a block, replaces with 1/n
 
-export type EntryKind = 'cell' | 'pipe' | 'theorem' | 'comprehension' | 'bot';
+export type EntryKind =
+  | 'cell'
+  | 'pipe'
+  | 'theorem'
+  | 'comprehension'
+  | 'bot'
+  | 'warehouse';
 
-export interface CostItem {
-  value: number;
-  count: number;
+/**
+ * α.4c.4: Cost items come in two shapes:
+ *   - Value cost: N blocks of a specific value (the early-mid default).
+ *   - Predicate cost: N blocks satisfying a named predicate. Mirrors
+ *     the game's `LiteratureCostPredicate` (Slice 5.3) — used to force
+ *     variety in factory composition. Predicates draw from per-predicate
+ *     stocks the agent grows via specific cell-type firings.
+ */
+export type CostItem =
+  | { value: number; count: number }
+  | { predicate: PredicateId; count: number; magnitudeMin?: number };
+
+export function isValueCost(c: CostItem): c is { value: number; count: number } {
+  return 'value' in c;
 }
+export function isPredicateCost(
+  c: CostItem,
+): c is { predicate: PredicateId; count: number; magnitudeMin?: number } {
+  return 'predicate' in c;
+}
+
+/**
+ * Recognized predicates. Mirrors the game's warehouse-rule catalog
+ * minus the magnitude-band predicates (lt10/lt100/etc) which aren't
+ * variety-forcing.
+ */
+export type PredicateId = 'prime' | 'negative' | 'irrational';
 
 export interface LitEntry {
   id: string;
@@ -120,6 +149,10 @@ export interface LitEntry {
   botRating?: number;
   /** Minimum comprehension required to PURCHASE this entry. 0 = none. */
   compRequirement?: number;
+  /** For `warehouse` entries: which value this warehouse holds.
+   *  Each owned warehouse contributes warehouseCapacity(comp) units of
+   *  storage capacity for this value. */
+  warehouseValue?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -136,27 +169,45 @@ export const COMP_MAX_TIER = 30;
 /**
  * Cost curve for the comp upgrade to tier N (reaches Comp ≤ 2^N).
  *
- * α.2 iteration 1: cost roughly proportional to the new ceiling.
- * Each tier doubles the ceiling, so each tier roughly doubles its
- * cost relative to the previous — geometric in N. Currency tier
- * shifts as the ceiling climbs (small change → tens → hundreds →
- * thousands).
+ * α.5b — full ladder. Every comp tier follows the same ladder
+ * pattern as operator unlocks: M × `2^(L-k)` of value k for
+ * k=0..L. L grows with the comp tier (deeper ladder for higher
+ * tiers — late-game comp asks for the full small-number pyramid
+ * up through value 5 or so).
+ *
+ * Multiplier M(N) and depth L(N) are tuned to:
+ *   - Keep zeros + small numbers in continuous demand at every tier.
+ *   - Scale costs roughly with comp ceiling (geometric in N).
  *
  * Tier 1 (≤2) costs nothing — it's the baseline, not a purchase.
- * Tier 2 (≤4) is the first paid Literature after Successor.
  */
 function compUpgradeCost(n: number): CostItem[] {
-  const ceiling = Math.pow(2, n);
-  // Early tiers: pay in ones. The opening climb teaches the mechanic.
-  if (ceiling <= 8) return [{ value: 1, count: ceiling * 20 }];
-  if (ceiling <= 64) return [{ value: 2, count: Math.ceil(ceiling * 12) }];
-  if (ceiling <= 512) return [{ value: 10, count: Math.ceil(ceiling * 2.5) }];
-  if (ceiling <= 4096) return [{ value: 100, count: Math.ceil(ceiling) }];
-  if (ceiling <= 32_768) return [{ value: 1000, count: Math.ceil(ceiling / 5) }];
-  if (ceiling <= 262_144) return [{ value: 10_000, count: Math.ceil(ceiling / 32) }];
-  if (ceiling <= 2_097_152) return [{ value: 100_000, count: Math.ceil(ceiling / 256) }];
-  if (ceiling <= 16_777_216) return [{ value: 1_000_000, count: Math.ceil(ceiling / 2048) }];
-  return [{ value: 1_000_000, count: Math.ceil(ceiling / 4096) }];
+  // Ladder depth: caps at 3 (zeros..threes). Beyond L=3 the bottleneck
+  // becomes specific small numbers (4s, 5s) that addition struggles to
+  // produce at scale, blowing up late-game pacing without adding
+  // variety. Late tiers still demand the full lower pyramid; depth is
+  // capped so growth comes from M, not ladder size.
+  const L = Math.min(3, Math.floor(n / 3));
+  // Multiplier curve (sim-tuned α.5b):
+  //   - early geometric (1.4× per tier) for steady ramp.
+  //   - linear past tier 10 to keep late game finite.
+  // M(10) ≈ 60; M(20) ≈ 660. Late game still costly but reachable.
+  let M: number;
+  if (n <= 10) M = Math.ceil(6 * Math.pow(1.4, n - 1));
+  else M = Math.ceil(6 * Math.pow(1.4, 9) * (n - 9));
+  const cost = ladderUnlockCost(L, M);
+
+  // α.5c: every comp tier carries a milestone puzzle — construct
+  // 1 × 2^(N-1) (the ceiling of the PREVIOUS tier). At the moment
+  // of purchase the agent has just bought comp_(N-1), so comp =
+  // 2^(N-1), and the puzzle value is exactly at the comprehension
+  // boundary — comprehensible. The player must engineer this number
+  // before paying the comp_N cost. Per-tier "construct the largest
+  // number you can currently lift" is the gameplay philosophy.
+  if (n >= 2) {
+    cost.push({ value: Math.pow(2, n - 1), count: 1 });
+  }
+  return cost;
 }
 
 function generateCompLadder(): LitEntry[] {
@@ -203,6 +254,42 @@ function pipeCost(n: number): CostItem[] {
   return [{ value: 1_000_000, count: Math.max(5, Math.ceil(mag / 8_192)) }];
 }
 
+// ---------------------------------------------------------------------------
+// Warehouse ladder (α.4b.1 — typed warehouses per value)
+// ---------------------------------------------------------------------------
+//
+// Each warehouse the agent owns contributes `warehouseCapacity(comp)`
+// units of storage for ONE value (typed warehouse — value-bound). The
+// agent buys warehouses when pool[V] hits its current cap and the goal
+// needs more.
+//
+// Costs are PLACEHOLDER — α.4c tunes these against the curve. Initial
+// guess: each warehouse costs roughly 10 units of the value it holds
+// (recursive-bootstrap consistency: a thousand-warehouse is paid in
+// thousands).
+
+function warehouseCost(value: number): CostItem[] {
+  // Recursive-bootstrap: warehouse is paid in the value it stores.
+  // Zero warehouses paid in zeros (the river-block currency itself).
+  return [{ value, count: 10 }];
+}
+
+/** Values the simulator tracks warehouses for. Covers the full magnitude
+ *  spread from zeros to millions. α.5: zero warehouses added — every
+ *  ladder firing pulls zeros from the pool, so the player must hoard
+ *  zeros in warehouses just like any other currency. */
+const WAREHOUSE_VALUES = [0, 1, 2, 3, 10, 100, 1000, 10_000, 100_000, 1_000_000];
+
+function generateWarehouseLadder(): LitEntry[] {
+  return WAREHOUSE_VALUES.map((v) => ({
+    id: `warehouse_${v}`,
+    kind: 'warehouse' as const,
+    cost: warehouseCost(v),
+    costScale: 1.5,
+    warehouseValue: v,
+  }));
+}
+
 function generatePipeLadder(): LitEntry[] {
   const entries: LitEntry[] = [];
   // Pipe ≤2^0 = 1 is the introductory pipe (paid at Comp ≤ 2 baseline).
@@ -223,31 +310,47 @@ function generatePipeLadder(): LitEntry[] {
 }
 
 // ---------------------------------------------------------------------------
-// Hand-curated operator and special-cell Literature
+// Unlock-cost ladder helper (α.5b)
 // ---------------------------------------------------------------------------
 //
-// Costs are PLACEHOLDERS — α.2 sweeps. These are roughly in the right
-// order of magnitude to make the sim runnable in α.1.
+// Every operator unlock cost follows the ladder pattern: at hierarchy
+// position L, demand `M × 2^(L-k)` of value k for k = 0..L. M is the
+// per-entry tuning multiplier. This makes zero/one/two/... demand
+// EXPLICIT for every operator — the agent grinds the small-number
+// pyramid, not just a single main currency.
+
+function ladderUnlockCost(L: number, M: number): CostItem[] {
+  const items: CostItem[] = [];
+  for (let k = 0; k <= L; k++) {
+    items.push({ value: k, count: M * Math.pow(2, L - k) });
+  }
+  return items;
+}
+
+// ---------------------------------------------------------------------------
+// Hand-curated operator and special-cell Literature
+// ---------------------------------------------------------------------------
 
 const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
-  // α.2 iteration 1: operator costs scaled so each unlock is a real
-  // gate against the new comp curve.
+  // α.4a: reverse-ported from src/lib/literature.ts. The game shipped
+  // Phase 6 with these numbers; the sim now mirrors them so we can
+  // measure the live pacing curve and tune from a true baseline.
 
   // -- Successor: free opener. -----------------------------------------
   {
     id: 'successor',
     kind: 'cell',
     cellType: 'successor',
-    cost: [{ value: 0, count: 10 }],
+    cost: ladderUnlockCost(0, 10), // 10 zeros
     costScale: 1.6,
   },
 
-  // -- Addition: first real grind (~5 min target). ---------------------
+  // -- Addition: first real grind. -------------------------------------
   {
     id: 'addition',
     kind: 'cell',
     cellType: 'addition',
-    cost: [{ value: 1, count: 200 }],
+    cost: ladderUnlockCost(1, 400), // 800z + 400o
     costScale: 1.6,
   },
 
@@ -256,16 +359,25 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'subtraction',
     kind: 'cell',
     cellType: 'subtraction',
-    cost: [{ value: 2, count: 150 }],
+    cost: ladderUnlockCost(1, 80), // 160z + 80o
     costScale: 1.6,
   },
 
   // -- Multiplication: introduces tier-1 fuel + the 10-magnitude grind.
+  //
+  // α.4c.4: predicate-cost side demand — 20 negatives — forces the
+  // player to USE Subtraction or Negation productively, not just
+  // unlock them. Without this, the family-exploration cells are
+  // bought once and abandoned.
   {
     id: 'multiplication',
     kind: 'cell',
     cellType: 'multiplication',
-    cost: [{ value: 10, count: 1100 }],
+    cost: [
+      ...ladderUnlockCost(2, 100), // 400z + 200o + 100t
+      { predicate: 'negative', count: 20 },
+      { value: 10, count: 1 }, // puzzle: construct a 10 via addition
+    ],
     costScale: 1.6,
   },
 
@@ -274,7 +386,10 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'division',
     kind: 'cell',
     cellType: 'division',
-    cost: [{ value: 3, count: 300 }],
+    cost: [
+      ...ladderUnlockCost(2, 40),
+      { value: 100, count: 1 }, // puzzle: prove the player can multiply
+    ],
     costScale: 1.6,
   },
 
@@ -283,16 +398,25 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'negation',
     kind: 'cell',
     cellType: 'negation',
-    cost: [{ value: 3, count: 100 }],
+    cost: ladderUnlockCost(1, 40), // 80z + 40o
     costScale: 1.6,
   },
 
   // -- Exponentiation: tier-2 fuel + the 100-magnitude grind. ----------
+  //
+  // α.4c.4: predicate-cost side demand — 30 primes — forces Factor
+  // cell or sustained small-prime production. Pre-exponentiation is
+  // the natural place: the player has just unlocked Factor (often at
+  // this tier) and needs a reason to USE it.
   {
     id: 'exponentiation',
     kind: 'cell',
     cellType: 'exponentiation',
-    cost: [{ value: 100, count: 1400 }],
+    cost: [
+      ...ladderUnlockCost(3, 50), // 400z + 200o + 100t + 50×3
+      { predicate: 'prime', count: 30 },
+      { value: 100, count: 1 }, // puzzle: 100 produced via mult
+    ],
     costScale: 1.6,
   },
 
@@ -301,7 +425,10 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'inversion',
     kind: 'cell',
     cellType: 'inversion',
-    cost: [{ value: 100, count: 150 }],
+    cost: [
+      ...ladderUnlockCost(3, 15),
+      { value: 100, count: 1 }, // puzzle: a 100 to invert
+    ],
     costScale: 1.6,
   },
 
@@ -310,7 +437,10 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'square-root',
     kind: 'cell',
     cellType: 'square-root',
-    cost: [{ value: 100, count: 150 }],
+    cost: [
+      ...ladderUnlockCost(3, 12),
+      { value: 100, count: 1 }, // puzzle: a perfect square to root
+    ],
     costScale: 1.6,
   },
 
@@ -319,40 +449,47 @@ const OPERATOR_AND_CELL_ENTRIES: LitEntry[] = [
     id: 'decrement',
     kind: 'cell',
     cellType: 'decrement',
-    cost: [{ value: 1, count: 30 }],
+    cost: ladderUnlockCost(1, 10), // 20z + 10o
     costScale: 1.6,
   },
   {
     id: 'factor',
     kind: 'cell',
     cellType: 'factor',
-    cost: [{ value: 2, count: 30 }],
+    cost: ladderUnlockCost(1, 30), // 60z + 30o
     costScale: 1.6,
   },
 
   // -- Tetration: tier-4 fuel, the signature late-game gate. -----------
-  // Demands thousand-stockpile production at scale.
+  //
+  // α.5: ladder model cascades small-number demand through every
+  // recipe → each "thousand" produced is significantly more expensive
+  // than under the single-fuel-block model. Tetration cost reduced
+  // proportionally (18000 → 3000 thousands) to keep the ~5h target.
   {
     id: 'tetration',
     kind: 'cell',
     cellType: 'tetration',
     cost: [
-      { value: 1000, count: 19_000 },
-      { value: 100, count: 3_500 },
+      ...ladderUnlockCost(4, 950), // 15200z + 7600o + 3800t + 1900×3 + 950×4
+      { predicate: 'irrational', count: 10 },
+      { value: 1024, count: 1 }, // puzzle: 2^10 — the first power-of-2 tower
     ],
     costScale: 1.8,
   },
 
   // -- Pentation: tier-8 fuel. The 10⁶-class payoff. -------------------
-  // The hyperoperator boss gate — should feel meaningfully heavier
-  // than Tetration's cliff.
+  //
+  // α.5: ladder cascades make millions extremely expensive to produce.
+  // Cost reduced (50k → 8k thousands, 1500 → 200 millions) for the
+  // ~7h target under the new cost model.
   {
     id: 'pentation',
     kind: 'cell',
     cellType: 'pentation',
     cost: [
-      { value: 1000, count: 70_000 },
-      { value: 1_000_000, count: 1_200 },
+      ...ladderUnlockCost(5, 250), // 8000z + 4000o + 2000t + 1000×3 + 500×4 + 250×5
+      { value: 1_000_000, count: 1 }, // puzzle: a million — the 10^6 milestone
     ],
     costScale: 1.8,
   },
@@ -501,6 +638,7 @@ export const LITERATURE: LitEntry[] = [
   ...OPERATOR_AND_CELL_ENTRIES,
   ...generateCompLadder(),
   ...generatePipeLadder(),
+  ...generateWarehouseLadder(),
   ...CULTIVATOR_ENTRIES,
   ...generateTBotLadder(),
   ...generateFBotLadder(),
@@ -511,36 +649,112 @@ export const LITERATURE: LitEntry[] = [
 export const LITERATURE_BY_ID = new Map(LITERATURE.map((e) => [e.id, e] as const));
 
 // ---------------------------------------------------------------------------
-// Cost tier table (mirror of src/lib/cost.ts:65 `costTier`)
+// Ladder fuel model (α.5 — DESIGN §6 evolution)
 // ---------------------------------------------------------------------------
+//
+// Per-firing fuel is no longer a single magnitude-scaled block. Each
+// cell at hierarchy position L consumes a LADDER of small numbers:
+//
+//   2^L zeros + 2^(L-1) ones + 2^(L-2) twos + ... + 1 of value L
+//
+// scaled by ⌈log₁₀(max input)⌉ (preserves magnitude tax on big ops).
+//
+// Hierarchy positions:
+//   L=0  successor
+//   L=1  addition, subtraction, negation
+//   L=2  multiplication, division
+//   L=3  exponentiation, square-root, inversion
+//   L=4  tetration
+//   L=5  pentation
+//
+// At each tier the ladder requires the ENTIRE pyramid below it. Zero
+// production stays load-bearing forever — every firing draws zeros.
+// Late-game ops draw from many different value streams simultaneously,
+// turning fuel routing into a continuous coordination puzzle rather
+// than a single-port wiring task.
 
-export function costTier(type: CellType): number {
+/** Hierarchy position of a cell type (0 = successor, 5 = pentation). */
+export function ladderPosition(type: CellType): number {
   switch (type) {
+    case 'successor':
+      return 0;
+    case 'addition':
+    case 'subtraction':
+    case 'negation':
+      return 1;
     case 'multiplication':
     case 'division':
-      return 1;
-    case 'exponentiation':
-    case 'inversion':
       return 2;
+    case 'exponentiation':
+    case 'square-root':
+    case 'inversion':
+      return 3;
     case 'tetration':
       return 4;
     case 'pentation':
-      return 8;
+      return 5;
     default:
-      // Includes negation (free), successor / addition / subtraction (free),
-      // square-root / decrement / factor (free), cultivators (their per-
-      // step cost is modeled separately in α.2).
-      return 0;
+      // Cultivators, decomposers, factor, decrement: no ladder model
+      // for now (treat as L=0 with empty ladder).
+      return -1;
   }
 }
 
+/**
+ * Per-firing ladder for a cell type, given the firing's max input
+ * magnitude. Returns a value→count map representing all blocks the
+ * cell consumes as FUEL per firing (operand inputs are separate and
+ * tracked by the recipe's `inputs` field).
+ *
+ * Pattern: at position L, consume 2^(L-k) blocks of value k for
+ * k = 0..L. Counts scale by ⌈log₁₀(max input)⌉ (floored at 1).
+ *
+ * Examples (with maxInput=10, mag=1):
+ *   - Successor    L=0: { 0: 1 }
+ *   - Addition     L=1: { 0: 2, 1: 1 }
+ *   - Multiplication L=2: { 0: 4, 1: 2, 2: 1 }
+ *   - Exponentiation L=3: { 0: 8, 1: 4, 2: 2, 3: 1 }
+ *   - Tetration    L=4: { 0:16, 1: 8, 2: 4, 3: 2, 4: 1 }
+ *   - Pentation    L=5: { 0:32, 1:16, 2: 8, 3: 4, 4: 2, 5: 1 }
+ *
+ * With maxInput=1M, mag=6, multiplication's ladder is
+ * {0: 24, 1: 12, 2: 6} — the 4z/2o/1t shape scaled 6×.
+ */
+export function ladderFor(type: CellType, maxInput: number): Map<number, number> {
+  const L = ladderPosition(type);
+  const ladder = new Map<number, number>();
+  if (L < 0) return ladder;
+  // Magnitude tax: ⌈log₁₀(max input)⌉, floored at 1. Successor's
+  // input is zero (log undefined) — treat as mag=1.
+  const absMax = Math.abs(maxInput);
+  const mag = absMax > 0 ? Math.max(1, Math.ceil(Math.log10(absMax))) : 1;
+  for (let k = 0; k <= L; k++) {
+    const baseCount = Math.pow(2, L - k);
+    ladder.set(k, baseCount * mag);
+  }
+  return ladder;
+}
+
+/**
+ * Legacy single-magnitude cost API — retained as a derived helper for
+ * compat with anything that wants a "total fuel magnitude" reading.
+ * Returns the sum of (value × count) across the ladder.
+ */
 export function computationalCost(type: CellType, maxInput: number): number {
-  const tier = costTier(type);
-  if (tier === 0) return 0;
-  if (maxInput <= 0) return 0;
-  const log = Math.log10(maxInput);
-  const order = Math.max(1, Math.ceil(log));
-  return tier * order;
+  let total = 0;
+  for (const [v, c] of ladderFor(type, maxInput)) {
+    total += v * c;
+  }
+  return total;
+}
+
+/** Backwards-compat cost tier — derived from ladder position so call
+ *  sites that branch on tier (e.g. fuel-port-required vs optional)
+ *  keep something to consult. tier 0 still means "free" since L<0 is
+ *  the marker for cells outside the ladder system. */
+export function costTier(type: CellType): number {
+  const L = ladderPosition(type);
+  return L < 0 ? 0 : L;
 }
 
 // ---------------------------------------------------------------------------
@@ -551,17 +765,13 @@ export interface Recipe {
   produces: number;
   cell: CellType;
   inputs: number[];
-  fuelMagnitude: number;
+  /** Convenience: max |input| for ladder magnitude scaling. */
+  maxInput: number;
 }
 
 function recipe(produces: number, cell: CellType, inputs: number[]): Recipe {
   const maxInput = inputs.length > 0 ? Math.max(...inputs.map(Math.abs)) : 0;
-  return {
-    produces,
-    cell,
-    inputs,
-    fuelMagnitude: computationalCost(cell, maxInput),
-  };
+  return { produces, cell, inputs, maxInput };
 }
 
 /**
@@ -599,6 +809,46 @@ export const RECIPES: Recipe[] = [
   recipe(100_000, 'exponentiation', [10, 5]),
   recipe(1_000_000, 'exponentiation', [10, 6]),
   recipe(1_000_000_000, 'exponentiation', [10, 9]),
+
+  // α.5c: puzzle values — specific numbers demanded at unlock
+  // milestones. Every comp_N unlock demands 1 × 2^(N-1) (the ceiling
+  // of the previous tier), so every power of 2 in the comp range
+  // needs a recipe.
+  //
+  // Mixed strategy: addition doubling for early powers (≤ 64, before
+  // exponentiation is unlocked in roadmap order), exp(2, N) for
+  // 128 and up. Each new exp recipe pulls in any missing
+  // exponent-input addition recipe.
+
+  // -- Addition intermediates (exp operand inputs needed below). ------
+  recipe(11, 'addition', [5, 6]),
+  recipe(12, 'addition', [6, 6]),
+  recipe(13, 'addition', [6, 7]),
+  recipe(14, 'addition', [7, 7]),
+  recipe(16, 'addition', [8, 8]),
+  recipe(17, 'addition', [8, 9]),
+  recipe(18, 'addition', [9, 9]),
+  recipe(19, 'addition', [9, 10]),
+
+  // -- Powers of 2 via addition doubling (comp_2..comp_6 puzzles). ---
+  // (2, 4, 8, 16 already exist via the small-values block.)
+  recipe(32, 'addition', [16, 16]),
+  recipe(64, 'addition', [32, 32]),
+
+  // -- Powers of 2 via exp(2, N) (comp_7+ puzzles). ------------------
+  recipe(128, 'exponentiation', [2, 7]),
+  recipe(256, 'exponentiation', [2, 8]),
+  recipe(512, 'exponentiation', [2, 9]),
+  recipe(1024, 'exponentiation', [2, 10]),
+  recipe(2048, 'exponentiation', [2, 11]),
+  recipe(4096, 'exponentiation', [2, 12]),
+  recipe(8192, 'exponentiation', [2, 13]),
+  recipe(16_384, 'exponentiation', [2, 14]),
+  recipe(32_768, 'exponentiation', [2, 15]),
+  recipe(65_536, 'exponentiation', [2, 16]),
+  recipe(131_072, 'exponentiation', [2, 17]),
+  recipe(262_144, 'exponentiation', [2, 18]),
+  recipe(524_288, 'exponentiation', [2, 19]),
 ];
 
 export const RECIPE_BY_VALUE = new Map(RECIPES.map((r) => [r.produces, r] as const));
@@ -646,7 +896,8 @@ export const LEVEL_LADDERS: LevelEntry[] = [
     level: 3,
     multiplier: 4,
     cost: [{ value: 10, count: 200 }],
-    quality: 'river-tap: fires without a pipe ≤1',
+    // α.5: river-tap removed. Successor lvl 3 is a pure 4× throughput
+    // bump; zeros still flow through pipe ≤1.
   },
   {
     id: 'successor_lvl4',
