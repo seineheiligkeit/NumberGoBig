@@ -16,7 +16,7 @@
 
 import { Container, Text } from 'pixi.js';
 import { pencilText, pencilTextStyle } from './typography';
-import type { CellType } from '../cell-types';
+import type { CellType } from '../../../core/cell-types';
 
 const ROMAN: readonly string[] = ['', 'Ⅰ', 'Ⅱ', 'Ⅲ', 'Ⅳ', 'Ⅴ'];
 

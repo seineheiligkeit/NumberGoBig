@@ -19,8 +19,8 @@ import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
  * comfortable row.
  */
 
-export const VARIADIC_ARROW_CELL_WIDTH = 220;
-export const VARIADIC_ARROW_CELL_HEIGHT = 140;
+import { VARIADIC_ARROW_CELL_WIDTH, VARIADIC_ARROW_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { VARIADIC_ARROW_CELL_WIDTH, VARIADIC_ARROW_CELL_HEIGHT };
 
 export function drawVariadicArrowCell(x: number, y: number): Container {
   const container = new Container();

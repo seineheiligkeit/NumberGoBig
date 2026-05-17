@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
-import { cultivationEmissionCost, cultivationEmit } from '../cost';
+import { cultivationEmissionCost, cultivationEmit } from '../../../core/cost';
 import Decimal from 'break_eternity.js';
 // α.4b.2: per-step fuel cost is back — every firing pays
 // `cultivationEmissionCost(emission)`, so the cost-preview badge
@@ -19,8 +19,8 @@ import Decimal from 'break_eternity.js';
  * on a timer.
  */
 
-export const CULTIVATION_CELL_WIDTH = 168;
-export const CULTIVATION_CELL_HEIGHT = 104;
+import { CULTIVATION_CELL_WIDTH, CULTIVATION_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { CULTIVATION_CELL_WIDTH, CULTIVATION_CELL_HEIGHT };
 
 export interface CultivationOptions {
   symbol: string;

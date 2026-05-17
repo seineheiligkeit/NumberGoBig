@@ -28,7 +28,7 @@ import {
   cellLevels,
 } from '../world';
 import { applyLevelBadge, cellLevelBadgeOffset } from './level-badge';
-import { VALUE_ZERO, valueExceeds } from '../value';
+import { VALUE_ZERO, valueExceeds } from '../../../core/value';
 import { family } from '../family';
 import { valueLabelTier } from './value-label';
 

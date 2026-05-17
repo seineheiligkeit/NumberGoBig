@@ -14,8 +14,8 @@
 
 import type { Container } from 'pixi.js';
 import { type PlacedBlock, type PlacedCell } from './world';
-import { getWarehouseRule } from './warehouse-rules';
-import { type Value } from './value';
+import { getWarehouseRule } from '../../core/warehouse-rules';
+import { type Value } from '../../core/value';
 import { commitSpawn, planSpawnAtPort } from './spawn';
 
 // Shared spawn-block-interaction-attach hook lives in `./spawn`. The

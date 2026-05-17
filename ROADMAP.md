@@ -11,6 +11,9 @@ north star is `DESIGN.md`. This file is the execution plan.
 + rendering legs of Phase 5 (Slices 6.1a/b/c + 6.2a/b/c), the
 Phase 5.6 pacing overhaul + leveling system (Slices 6.6 + 6.7), and
 the Phase 5 Iteration Wave (Slices 6.11–6.18) are complete.**
+Plus an **architectural refactor (Phase A + B, 2026-05-17)** —
+`core/` module shared between game + sim, `interaction/` split into
+five mode files. See *Architectural refactor* below for details.
 
 The pacing overhaul rebalanced every operator, pipe, and comprehension
 cost against a standalone simulator (`sim/`) that models optimal play
@@ -170,6 +173,71 @@ them.
 Three previously-deferred series (harmonic / polynomial / factorial)
 landed in ε.2. See DESIGN.md §6 *Cultivation Cells* for the design.
 
+**Architectural refactor — Phase A + B (2026-05-17).** No gameplay
+change; structural cleanup that pays off long-term iteration:
+
+- **Phase A — `core/` unification.** Game and sim now share a
+  `core/` module for the cost math + Literature catalog. Files moved
+  out of `src/lib/` into `core/`: `value.ts`, `cell-types.ts`,
+  `cost.ts`, `warehouse-rules.ts`, `classify.ts`, plus
+  `core/cell-geometry.ts` (cell widths, extracted to break the old
+  `cell-types ↔ pixi/*` import cycle). New `core/catalog/` houses
+  the Literature types (`types.ts`), cost formulas (`costs.ts` —
+  `ladderUnlockCost`, `compUpgradeCost`, `pipeCost`,
+  `generateComprehensionLadder`, `generatePipeLadder`), and the full
+  entries data table (`entries.ts`). Sim's `ladderUnlockCost` /
+  `compUpgradeCost` / `pipeCost` are now thin number-shape adapters
+  over the core versions — editing the formula in core/ flows to
+  both sides automatically. `tsconfig.json` gained
+  `allowImportingTsExtensions: true` + `noEmit: true` so the same
+  `core/*.ts` files work in both Vite (game) and Node native TS (sim).
+
+- **Phase B.1 — `world.ts` split.** `src/lib/world.ts` →
+  `src/lib/world/{index,types.ts}`. Entity + persistence types
+  (`PlacedBlock`, `PlacedCell`, `PlacedPipe`, `PipeEndpoint`,
+  `BlockSnapshot`, `CellSnapshot`, `PipeSnapshot`, `FuelOutcome`)
+  extracted to `types.ts`. The rest of world (registries, stores,
+  mutators, snapshots) stayed in `index.ts` because the module-private
+  mutable state is too tightly coupled to split further without a
+  shared-state-object refactor.
+
+- **Phase B.3 — `interaction.ts` split + ctx-pattern rewrite.** The
+  1840-line closure-factory at `src/lib/interaction.ts` was replaced
+  with a `ControllerCtx` pattern (no class — just an explicit
+  `{ app, canvasLayer, state: { mode } }` passed as first arg to
+  every helper). Then split into five files under
+  `src/lib/interaction/`: `index.ts` (controller wiring + public
+  `DragController` interface), `helpers.ts` (pure helpers —
+  drawing, hit-tests, narrator labels), `attach.ts` (the
+  mutually-recursive drag/fire/attach cluster: `beginDrag`,
+  `attachBlockInteraction`, `attachCellInteraction`, `beginCellMove`,
+  `tryFeedPort`, `fireCell`), `modes.ts` (entry-mode functions +
+  persistent output-click listener), `rehydration.ts` (save/load).
+  Acyclic dependency graph: `helpers → attach → modes`,
+  `attach → rehydration`. Mode functions are now extractable and
+  testable in isolation.
+
+- **Phase A.7 polish.** All import sites updated to point at `core/`
+  directly; re-export shims at the old `src/lib/*.ts` paths deleted.
+  Imports from `src/lib/*.ts` go to `'../../core/X'` (depth 2),
+  from `src/lib/{pixi,world,interaction}/*.ts` go to
+  `'../../../core/X'` (depth 3).
+
+**Verification.** Every slice verified with `npm run check` 0 errors,
+`npm run build` clean Vite bundle, `node sim/run.ts --csv` →
+byte-identical to `sim/pacing-locked.csv`. Phase B.3 also playtested
+in-browser: cell placement, pipe placement entry + ESC cancel,
+blueprint selection entry + ESC cancel, pipe reroute priority,
+warehouse withdrawal (drag → drop → addBlock), drop-on-cell-port
+(`tryFeedPort` → `fireCell` → ladder consumption → operate → emit),
+30 simulated ticks (cell-firing + pipe-tick + bot-tick paths). 8/8
+mode entries pass.
+
+**Net result.** No gameplay change. Cost formulas have one home
+shared between game and sim. The interaction layer is navigable
+file-by-file instead of one 1840-line closure. Future cell types,
+mode types, and pacing tuning iterations all touch fewer lines.
+
 ### Built and verified
 
 **Aesthetic and rendering**
@@ -180,18 +248,20 @@ landed in ε.2. See DESIGN.md §6 *Cultivation Cells* for the design.
 - Stack `×N` badges with hand-lettered tally style
 - Successor cell rendering: scribbled `{ }` with dashed drop-zone
 
-**Simulation core (`src/lib/world.ts`)**
+**Simulation core (`src/lib/world/`)**
 - `PlacedBlock` registry with reactive Svelte stores (`totalScore`, `zeroCount`, `blockCount`)
 - `PlacedCell` registry with axis-aligned hit-testing
 - Achievement and unlock sets (Svelte stores + imperative helpers)
 - `addBlock`, `increaseStack`, `findNearbyMatching`, `findCellAt`, `spendZeros`
 - `onBlockChange` listener pattern so renderer reacts without circular imports
+- Phase B.1: entity + snapshot types extracted to `world/types.ts`
 
-**Interaction (`src/lib/interaction.ts`)**
+**Interaction (`src/lib/interaction/`)**
 - River-zero pickup → ghost follows cursor → drop resolution
 - Drop resolution order: **cell drop-target → stack-merge → new placement**
 - Cell-placement mode (post-purchase ghost cell follows cursor → commit on click)
 - Singleton accessor so UI components can trigger placement
+- Phase B.3: `ControllerCtx` pattern; split into `index.ts` + `helpers.ts` + `attach.ts` + `modes.ts` + `rehydration.ts`
 
 **UI (`src/ui/`)**
 - `ScoreHeader.svelte` — top-right `Σ N` display, italic zero-count subtitle

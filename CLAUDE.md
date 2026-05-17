@@ -158,7 +158,6 @@ optimal-play agent through the Literature roadmap and reports
 time-to-each-unlock. **It is the source of truth for pacing numbers.**
 
 - Run with `node sim/run.ts` (Node 22.6+ has native TS; nothing to install)
-- `sim/catalog.ts` mirrors `src/lib/literature.ts` and `src/lib/cost.ts`
 - α.5c: models the **full ladder rule** (per-firing + unlock), comp
   milestone puzzles, multi-currency comp tiers, predicate stocks
   (prime/negative/irrational), and warehouse capacity scaling.
@@ -170,10 +169,21 @@ time-to-each-unlock. **It is the source of truth for pacing numbers.**
 - See `sim/README.md` for usage notes and `sim/PACING_LOCKED.md` for
   the locked α.5c baseline.
 
-**When changing Literature costs, edit `sim/catalog.ts` FIRST**, run
-the sim to confirm the curve still hits the ~5h Tet / ~12h Pent
-target, THEN port the locked numbers to `src/lib/literature.ts`.
-The other direction is how we got into pacing trouble before.
+**Cost formulas are unified (Phase A).** `ladderUnlockCost`,
+`compUpgradeCost`, `pipeCost`, and the Literature entries data table
+live in `core/catalog/` — imported by both the game (`src/lib/literature.ts`)
+and the sim (`sim/catalog.ts`) so edits flow into both automatically.
+Sim's same-named functions are thin number-shape adapters around
+core's Value-shape versions. **When changing a ladder formula, edit
+`core/catalog/costs.ts`** and the change reaches game + sim together.
+The per-entry M values (e.g. `multiplication`'s M=100) for sim's
+operator roadmap are still hand-curated in `sim/catalog.ts` —
+that's intentional drift surface for sim tuning. After any change,
+verify pacing identity with:
+
+```bash
+node sim/run.ts --csv /tmp/after.csv && diff /tmp/after.csv sim/pacing-locked.csv
+```
 
 ## Tech stack
 
@@ -185,56 +195,67 @@ The other direction is how we got into pacing trouble before.
 
 ## Architecture at a glance
 
+The repo has **three top-level TypeScript trees** (Phase A, 2026-05-17):
+`core/` (shared pure rules), `src/` (game runtime — Pixi + Svelte),
+`sim/` (pacing CLI). Both `src/` and `sim/` import from `core/` for
+the cost math + Literature catalog; neither imports from the other.
+See [project_core_module memory](../../.claude/projects/.../memory/) for
+the unification details and verification protocol.
+
 ```
-src/
-├── main.ts                    Svelte 5 mount() entry
-├── App.svelte                 Root: canvas + ScoreHeader + Literature + Marginalia
-├── app.css                    Pencil-notebook palette as CSS variables
+core/                          Pure rules + catalog — shared by game + sim.
+                               No Pixi, no Svelte, no world state.
+├── value.ts                   `Value` discriminated union (real / rational /
+│                              irrational / complex) backed by break_eternity
+│                              Decimal. Pure math + snapshot/restore.
+├── cell-geometry.ts           *_CELL_WIDTH / *_CELL_HEIGHT constants
+│                              (extracted A.2 — broke the cell-types ↔ pixi
+│                              width cycle).
+├── cell-types.ts              CellType union, CELL_SHAPES (port positions +
+│                              `kind: 'operand'|'fuel'`), operate() →
+│                              { emits, marginalia? }.
+├── cost.ts                    Per-firing fuel ladder: `fuelLadder` returns
+│                              `Map<value, count>`. `ladderPosition`, `costTier`,
+│                              `computationalCost` (Decimal sum for badges).
+│                              `cultivationEmit` + `cultivationEmissionCost`.
+├── warehouse-rules.ts         WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
+│                              `prime`, `composite`, `negative`) + getWarehouseRule.
+│                              Same predicate vocabulary Filters and
+│                              predicate-cost Literature entries use.
+├── classify.ts                Gallery-side classifiers — isPrime, isPerfect,
+│                              FAMOUS_NUMBERS catalog, integerFromKey.
+└── catalog/
+    ├── types.ts               LiteratureCost*, LiteratureKind, LiteratureEntry
+    │                          types + isValueItem / isPredicateItem guards.
+    ├── costs.ts               ladderUnlockCost, compUpgradeCost, pipeCost,
+    │                          generateComprehensionLadder, generatePipeLadder.
+    │                          **The single source of truth for cost formulas.**
+    └── entries.ts             LITERATURE_ENTRIES — the full Shop data table +
+                               isCellEntry type guard.
+
+src/                           Game runtime — Pixi rendering, Svelte UI,
+                               localStorage persistence, drag interaction.
+├── main.ts                    Svelte 5 mount() entry.
+├── App.svelte                 Root: canvas + ScoreHeader + Literature + Marginalia.
+├── app.css                    Pencil-notebook palette as CSS variables.
 ├── lib/
-│   ├── world.ts               Pure data model — PlacedBlock, PlacedCell, PlacedPipe
-│   │                          registries; reactive Svelte stores (totalScore,
-│   │                          zeroCount, countByValue, achievements, unlocks,
-│   │                          purchaseCounts, comprehension, dirtyTick).
-│   │                          spendValue / spendFuel scan loose + warehouses +
-│   │                          warehouse-rule items (Slice 3.5.3/7). α.5c:
-│   │                          `consumeFuelLadder(ladder)` atomically pulls
-│   │                          each (value, count) pair from the combined pool
-│   │                          — used by tier-1+ ladder cells. spendFuel +
-│   │                          consumeFuelOrFail remain for inversion's
-│   │                          signed-fuel single-block path. recompute folds
-│   │                          warehouse contents into both Total Score and
-│   │                          countByValue. Fuel helpers (operandPending,
-│   │                          operandsFilled, fuelPortIndex, consumeFuelLadder,
-│   │                          consumeFuelOrFail) used by the two fire paths.
-│   │                          setPendingDisplayDisposer (6.17) is the renderer
-│   │                          hook for fading consumed pending-input ghosts —
-│   │                          keeps world.ts pixi-free at the import level.
-│   │                          Snapshot/reset/restore mutators for persistence
-│   ├── cell-types.ts          CellType union, CELL_SHAPES (multi-port outputs,
-│   │                          with `kind: 'operand'|'fuel'` on inputs since 3.5.5;
-│   │                          since 6.15 includes `negation` and `inversion` —
-│   │                          inversion has a required fuel port at unary
-│   │                          geometry), operate() → { emits, marginalia? }.
-│   │                          Cost & cultivation math re-exported from `./cost`.
-│   ├── cost.ts                Pure math. α.5c: `fuelLadder(type, inputs, level)`
-│   │                          returns `Map<value, count>` — the per-firing
-│   │                          ladder of small numbers (Successor: 1z, Add:
-│   │                          2z+1o, Mult: 4z+2o+1t, etc., scaled by
-│   │                          ⌈log₁₀(max input)⌉). `ladderPosition(type)` —
-│   │                          hierarchy L per cell type. `computationalCost`
-│   │                          retained as a Decimal sum of the ladder
-│   │                          (back-compat for cost-preview badges); for
-│   │                          inversion it returns the signed single-block
-│   │                          cost (`-tier × ⌈log₁₀(|output|)⌉`). Lives
-│   │                          outside cell-types so renderers (binary-cell,
-│   │                          cultivation-cell) can import without a
-│   │                          runtime cycle.
-│   ├── warehouse-rules.ts     WAREHOUSE_RULES catalog (`lt10`, `lt100`, `lt1000`,
-│   │                          `prime`, `composite`, `negative` — 6.15) +
-│   │                          getWarehouseRule. Same predicate vocabulary Filters
-│   │                          and predicate-cost Literature entries use.
-│   ├── classify.ts            Gallery-side classifiers — isPrime, isPerfect,
-│   │                          FAMOUS_NUMBERS catalog, integerFromKey.
+│   ├── world/                 Pure data model (Phase B.1 split — types peeled out).
+│   │   ├── index.ts           PlacedBlock / PlacedCell / PlacedPipe registries;
+│   │   │                      reactive Svelte stores (totalScore, zeroCount,
+│   │   │                      countByValue, achievements, unlocks, purchaseCounts,
+│   │   │                      comprehension, cellLevels, dirtyTick).
+│   │   │                      spendValue / spendFuel / consumeFuelLadder scan
+│   │   │                      loose + warehouses + warehouse-rule items.
+│   │   │                      consumeFuelOrFail for inversion's signed-fuel
+│   │   │                      path. recompute folds warehouse contents into
+│   │   │                      Total Score AND countByValue. Snapshot / restore /
+│   │   │                      resetWorld mutators for persistence.
+│   │   │                      setPendingDisplayDisposer (6.17) is the renderer
+│   │   │                      hook for fading consumed pending-input ghosts —
+│   │   │                      keeps world.ts pixi-free at the import level.
+│   │   └── types.ts           PlacedBlock, PlacedCell, PlacedPipe, PipeEndpoint,
+│   │                          BlockSnapshot, CellSnapshot, PipeSnapshot,
+│   │                          FuelOutcome — all entity + persistence types.
 │   ├── filter.ts              routeViaFilter — Filter cells' route path,
 │   │                          mirroring the warehouse polymorphism pattern.
 │   ├── blueprints.ts          Blueprint data model + reactive store. Captures
@@ -247,52 +268,68 @@ src/
 │   │                          Every fire path uses these — cultivation,
 │   │                          operators, filters — so back-pressure is
 │   │                          uniform across the canvas.
-│   ├── literature.ts          Shop catalog (cell / theorem / comprehension / pipe
-│   │                          kinds) + purchase() + multi-item cost + currentCost
-│   │                          geometric scaling + canAfford
+│   ├── literature.ts          Game-runtime layer: purchase() + canAfford() +
+│   │                          currentCost() + formatCost / formatCostItem +
+│   │                          isLevelUpgradeAvailable / isComprehensionEntryAvailable /
+│   │                          isCompRequirementMet. Catalog data + cost helpers
+│   │                          re-exported from `core/catalog/` (Phase A.4 split).
 │   ├── marginalia.ts          Narrator-note store + showMarginalia (key-dedup);
-│   │                          snapshot/restoreSeenMarginalia for persistence
-│   ├── persistence.ts         Versioned SaveData (v14) — blocks, cells (with
-│   │                          warehouse/rule-warehouse/cultivation/bot state;
-│   │                          bot state now carries optional T-bot phase fields
-│   │                          since 6.11), pipes (with cooldownRemaining),
-│   │                          achievements, unlocks, purchaseCounts, cellLevels,
-│   │                          pipeLevels, seenMarginalia, camera, comprehension,
-│   │                          discoveries. Debounced autosave + beforeunload.
-│   │                          Structural typeguard on load. v1→v14 migration chain.
-│   ├── camera.ts              Pan (mid-mouse / right-mouse drag) + zoom (wheel to
-│   │                          cursor). screenToCanvas helper drives every
-│   │                          hit-test in the interaction layer
+│   │                          snapshot/restoreSeenMarginalia for persistence.
+│   ├── persistence.ts         Versioned SaveData (v17) — blocks, cells (with
+│   │                          warehouse/rule-warehouse/cultivation/bot state),
+│   │                          pipes (with cooldownRemaining), achievements,
+│   │                          unlocks, purchaseCounts, cellLevels, seenMarginalia,
+│   │                          camera, comprehension, discoveries. Debounced
+│   │                          autosave + beforeunload. v1→v17 migration chain.
+│   ├── camera.ts              Pan (mid-mouse / right-mouse drag) + zoom (wheel
+│   │                          to cursor). screenToCanvas helper drives every
+│   │                          hit-test in the interaction layer.
 │   ├── pipe.ts                Pipe simulation tick (peek/pull source, dest accepts,
 │   │                          transit). Stall timer + setJammed visualisation.
 │   │                          findPipeAt / deletePipe for shift-click removal.
-│   │                          Slice 6.12: findPipeEndpointAt + previewPipeEndpoint
-│   │                          + setPipeEndpoint + refreshPipeVisual for the
-│   │                          re-route flow. Slice 6.13: pipeEndpointDirection
-│   │                          (river: (0,-1); cell ports: outward axis from port
-│   │                          offset) for port-aware bezier tangents.
+│   │                          findPipeEndpointAt + previewPipeEndpoint +
+│   │                          setPipeEndpoint + refreshPipeVisual for the
+│   │                          re-route flow. pipeEndpointDirection for
+│   │                          port-aware bezier tangents.
 │   │                          Equation-cell retry pass for cost-blocked cells.
-│   │                          fireCellViaPipe is the canonical fire path
-│   ├── cultivation.ts         Per-tick cultivation cell emission; captureSeed()
-│   ├── bots.ts                Translation Operator (T-bot) tick (Slice 6.11) —
-│   │                          four-phase state machine per bot: idle → search
-│   │                          for unclaimed loose block + matching warehouse;
-│   │                          approaching → walk worker toward target, on
-│   │                          arrival pick up and decreaseStack; returning →
-│   │                          walk toward destination warehouse, on arrival
-│   │                          deposit (or drop loose if full); going-home →
-│   │                          walk back to station, then idle. Claim system
-│   │                          (botTargetBlockId) prevents two bots fighting
-│   │                          over the same block. The walk is the throttle —
-│   │                          legacy botCooldownMs retained only for save
-│   │                          back-compat. Internal type name stays
-│   │                          `cleanup-bot`; user-visible name is
-│   │                          "Translation Operator".
-│   ├── cursors.ts             Pencil-style SVG cursor URLs
-│   ├── interaction.ts         Drag controller (singleton): drag, cell placement,
-│   │                          pipe placement (two-click), warehouse output click,
-│   │                          shift-click pipe delete, rehydrate* methods for
-│   │                          save restoration
+│   │                          fireCellViaPipe is the canonical fire path.
+│   ├── cultivation.ts         Per-tick cultivation cell emission (legacy entry
+│   │                          point; cultivators are now input-driven via the
+│   │                          standard fire path, Phase 6 ε.1).
+│   ├── bots.ts                Translation Operator (T-bot) tick — four-phase
+│   │                          state machine per bot: idle → approaching →
+│   │                          returning → going-home. Claim system
+│   │                          (botTargetBlockId) prevents two bots fighting over
+│   │                          the same block. The walk is the throttle.
+│   │                          Internal type name stays `cleanup-bot`;
+│   │                          user-visible name is "Translation Operator".
+│   ├── cursors.ts             Pencil-style SVG cursor URLs.
+│   ├── family.ts              valueColor — picks the pencil tint per Value
+│   │                          variant (real / negative / rational / irrational /
+│   │                          complex).
+│   ├── interaction/           Drag controller — split into mode files (Phase B.3).
+│   │   ├── index.ts           DragController public interface + ControllerCtx +
+│   │   │                      createDragController factory. The factory builds
+│   │   │                      the ctx, installs the persistent output-click
+│   │   │                      listener, wires the spawn/pipe/cultivation/filter
+│   │   │                      block-interaction-attach hooks, and exposes the
+│   │   │                      8 public methods that delegate to sibling modules.
+│   │   ├── helpers.ts         Pure helpers — drawCellByType, makePendingDisplay,
+│   │   │                      cellLabel, clickIsOnPort, installWarehouseRefresh,
+│   │   │                      placementMarginalia, endpointsEqual,
+│   │   │                      resolvePipeEndpoint, describeLadder, rectOf.
+│   │   ├── attach.ts          The mutually-recursive drag/fire/attach cluster:
+│   │   │                      beginDrag, attachBlockInteraction, beginCellMove,
+│   │   │                      attachCellInteraction, tryFeedPort, fireCell.
+│   │   ├── modes.ts           Entry-mode functions — beginCellPlacement,
+│   │   │                      beginPipePlacement, beginBlueprintSelection,
+│   │   │                      beginBlueprintPlacement, stampBlueprint,
+│   │   │                      beginPipeReroute, installOutputClickListener
+│   │   │                      (the persistent listener handling shift-click
+│   │   │                      pipe delete + warehouse withdrawal + endpoint
+│   │   │                      drag).
+│   │   └── rehydration.ts     rehydrateBlock / rehydrateCell / rehydratePipe
+│   │                          for save-load restoration.
 │   └── pixi/
 │       ├── setup.ts           Bootstraps the scene + camera + load/autosave +
 │       │                      app.ticker(cultivation, pipes, equation retry, bots)
@@ -413,44 +450,54 @@ src/
 
 ## Adding a new equation cell (recipe)
 
-1. Add the type to `CellType` in `cell-types.ts`.
+1. Add the type to `CellType` in **`core/cell-types.ts`**.
 2. Add a `CELL_SHAPES` entry (operand port positions, output offset).
    α.5c: tier-1+ binary cells DO NOT have fuel ports — the ladder
    pulls from pool. Only inversion still uses a `kind: 'fuel'`
    port (for the signed-fuel single-block contract).
 3. Add an `operate()` case (operate sees ONLY operand values).
-4. Add a `draw<X>Cell` in `binary-cell.ts` (binary) or a new file
-   (unary). Pass `hasFuelPort: false` (only inversion/legacy passes true).
+4. Add a `draw<X>Cell` in `src/lib/pixi/binary-cell.ts` (binary) or a new
+   file (unary). Pass `hasFuelPort: false` (only inversion/legacy
+   passes true). If your visual needs a fixed canvas footprint, add
+   the width/height to `core/cell-geometry.ts` and re-export from your
+   pixi file.
 5. Add `drawCellByType` and `placementMarginalia` cases in
-   `interaction.ts`.
-6. Add a Literature entry in `literature.ts`. Use `ladderUnlockCost(L, M)`
-   for the cost — the operator's hierarchy position L and per-entry
-   multiplier M, plus any predicate side demands (negatives / primes /
-   irrationals) and construction puzzles (`{ value: V, count: 1 }`).
+   **`src/lib/interaction/helpers.ts`**, and `cellLabel` if it should
+   appear in narrator messages.
+6. Add a Literature entry in **`core/catalog/entries.ts`**. Use
+   `ladderUnlockCost(L, M)` for the cost — the operator's hierarchy
+   position L and per-entry multiplier M, plus any predicate side
+   demands (negatives / primes / irrationals) and construction puzzles
+   (`{ value: V, count: 1 }`). For the game-side purchase wiring (level
+   upgrades, comp requirement checks), edit `src/lib/literature.ts`.
+   For sim's roadmap, also add to `sim/catalog.ts:OPERATOR_AND_CELL_ENTRIES`.
 7. If it has per-firing fuel cost, extend `ladderPosition` in
-   `cost.ts` to return the new cell's L. The ladder runs automatically;
-   the fire path calls `consumeFuelLadder(ladder)` to consume the
-   per-firing pyramid of small numbers. For cost formulas that depend
-   on runtime input (variadic-arrow), special-case inside
+   **`core/cost.ts`** to return the new cell's L. The ladder runs
+   automatically; the fire path calls `consumeFuelLadder(ladder)` to
+   consume the per-firing pyramid of small numbers. For cost formulas
+   that depend on runtime input (variadic-arrow), special-case inside
    `fuelLadder` itself.
 8. If it needs persistent state (warehouse-style), add fields to
-   `PlacedCell`, snapshot in `snapshotCells`, restore in `rehydrateCell`.
+   `PlacedCell` in **`src/lib/world/types.ts`**, snapshot in
+   `world/index.ts:snapshotCells`, restore in
+   **`src/lib/interaction/rehydration.ts:rehydrateCell`**.
 
 The TypeScript exhaustive-switch will tell you what's left to wire.
 
-**Avoiding cell-types ↔ pixi/* runtime cycles.** `cell-types.ts` uses
-`*_CELL_WIDTH` constants from each `pixi/*-cell.ts` at module init. Any
-runtime import from a `pixi/*-cell.ts` back to `world.ts` (which itself
-imports from `cell-types.ts`) will TDZ-crash on `BINARY_CELL_WIDTH` /
-`WAREHOUSE_CELL_WIDTH` / `CULTIVATION_CELL_WIDTH`. The rules:
+**Cell-types ↔ pixi cycle is now broken (Phase A.2).** Cell width
+constants live in `core/cell-geometry.ts`. `core/cell-types.ts` imports
+widths from there; each `pixi/*-cell.ts` imports + re-exports its width
+constant from `core/cell-geometry.ts` so external callers that reach
+for e.g. `BINARY_CELL_WIDTH` via the pixi file keep working. The old
+TDZ trap (cell-types imports pixi imports cell-types) is gone — but
+the discipline still applies:
 
-- Pixi cell files may import from `cost.ts` (pure math, type-only
-  `CellType`) freely.
-- Pixi cell files must import `PlacedCell` from `world.ts` as
+- Pixi cell files may import from `core/cost.ts`, `core/value.ts`,
+  `core/cell-geometry.ts` freely (all pure).
+- Pixi cell files must import `PlacedCell` from `src/lib/world` as
   `import type`, never as a runtime value.
 - If you need a `world.ts` helper inside a pixi/cell file, inline it
-  there — see how `binary-cell.ts` filters operands and
-  `warehouse-cell.ts` totals rule items.
+  there.
 
 ## Build verification before committing a slice
 
@@ -469,6 +516,26 @@ The dev server is `npm run dev` (auto-opens on port 5173).
   whether the underlying approach is wrong before tuning numbers.
 - Don't drift from the design pillars in `DESIGN.md` §2 — they were
   established through extensive brainstorming.
+- **`core/` is shared between game and sim** (Phase A, 2026-05-17).
+  Cost formulas live in `core/catalog/costs.ts`; the Literature entries
+  data table is `core/catalog/entries.ts`. Editing core/ flows to both
+  sides. The verification protocol after any core/ edit is
+  `npm run check` → `npm run build` → `node sim/run.ts --csv after.csv` +
+  diff against `sim/pacing-locked.csv`.
+- **Interaction layer uses a `ControllerCtx` pattern** (Phase B.3).
+  Every mode function takes `ctx: ControllerCtx` as its first arg
+  (`{ app, canvasLayer, state: { mode } }`). No closure captures, no
+  classes. To add a new interaction mode: write a `beginX(ctx, ...)`
+  function in `src/lib/interaction/modes.ts`, wire it into
+  `DragController` in `interaction/index.ts`. To call into existing
+  modes from a new helper, import from `attach.ts` (drag/fire/attach)
+  or `modes.ts` (entry-mode functions). The dependency graph is
+  acyclic: `helpers → attach → modes`, `attach → rehydration`.
+- **Imports from `core/` use depth-aware relative paths.** From
+  `src/lib/*.ts` use `'../../core/X'`. From `src/lib/pixi/*.ts`,
+  `src/lib/world/*.ts`, or `src/lib/interaction/*.ts` use
+  `'../../../core/X'`. `core/*` files import each other with explicit
+  `.ts` extensions (required for Node native TS in sim/).
 - **Cultivators are input-driven transformer cells** (Phase 6 ε.1).
   Each firing consumes one operand; output = `f(input, step)` per
   `cost.ts:cultivationEmit`; step persists per cell. No seed concept,

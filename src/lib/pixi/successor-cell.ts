@@ -14,8 +14,8 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
  * and drop zone need horizontal room.
  */
 
-export const SUCCESSOR_CELL_WIDTH = 156;
-export const SUCCESSOR_CELL_HEIGHT = 88;
+import { SUCCESSOR_CELL_WIDTH, SUCCESSOR_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { SUCCESSOR_CELL_WIDTH, SUCCESSOR_CELL_HEIGHT };
 
 export function drawSuccessorCell(x: number, y: number): Container {
   const container = new Container();

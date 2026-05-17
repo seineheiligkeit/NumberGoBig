@@ -14,8 +14,8 @@ import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
  * (`CELL_SHAPES`); the visuals drawn here must stay in sync.
  */
 
-export const UNARY_CELL_WIDTH = 168;
-export const UNARY_CELL_HEIGHT = 88;
+import { UNARY_CELL_WIDTH, UNARY_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { UNARY_CELL_WIDTH, UNARY_CELL_HEIGHT };
 
 export interface UnaryCellOptions {
   /** The glyph centered between input and output ('−1', 'p…', …). */

@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStroke, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
 import type { PlacedBlock } from '../world';
-import { valueComprehensible, valueExceeds, valueLabel, type Value } from '../value';
+import { valueComprehensible, valueExceeds, valueLabel, type Value } from '../../../core/value';
 import { valueColor } from '../family';
 import { drawValueLabel } from './value-label';
 

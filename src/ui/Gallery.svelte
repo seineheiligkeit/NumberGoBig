@@ -5,9 +5,9 @@
     KNOWN_PERFECTS,
     famousNumberOf,
     integerFromKey,
-  } from '../lib/classify';
-  import { valueOf } from '../lib/value';
-  import { isPrime } from '../lib/classify';
+    isPrime,
+  } from '../../core/classify';
+  import { valueOf } from '../../core/value';
 
   type Tab = 'integers' | 'primes' | 'perfects' | 'famous';
   let activeTab: Tab = 'integers';

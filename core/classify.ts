@@ -12,7 +12,7 @@
  * Pure: no DOM, no Pixi, no stores. Safe to import from anywhere.
  */
 
-import { valueToSafeNumber, type Value } from './value';
+import { valueToSafeNumber, type Value } from './value.ts';
 
 const PRIME_CHECK_MAX = 1e9;
 

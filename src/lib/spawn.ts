@@ -34,7 +34,7 @@ import {
 } from './world';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import { spawnEmitScribble } from './pixi/micro-anim';
-import { valueComprehensible, type Value } from './value';
+import { valueComprehensible, type Value } from '../../core/value';
 
 let _attachInteraction: ((b: PlacedBlock) => void) | null = null;
 export function setSpawnBlockInteractionAttach(fn: (b: PlacedBlock) => void): void {

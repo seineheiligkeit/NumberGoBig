@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStroke, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import { drawBlock } from './block';
-import type { Value } from '../value';
+import type { Value } from '../../../core/value';
 
 /**
  * Translation Operator (T-bot) — Slice 6.11. The Phase 2 cleanup bot was a

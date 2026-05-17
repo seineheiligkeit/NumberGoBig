@@ -15,8 +15,8 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
  * output, preserving stacks via the standard merge radius.
  */
 
-export const FILTER_CELL_WIDTH = 168;
-export const FILTER_CELL_HEIGHT = 132;
+import { FILTER_CELL_WIDTH, FILTER_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { FILTER_CELL_WIDTH, FILTER_CELL_HEIGHT };
 
 export function drawFilterCell(_x: number, _y: number, ruleLabel?: string): Container {
   const container = new Container();

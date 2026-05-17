@@ -23,7 +23,7 @@ import {
   type PipeSnapshot,
   type PlacedCell,
 } from './world';
-import { valueSnapshot } from './value';
+import { valueSnapshot } from '../../core/value';
 
 const STORAGE_KEY = 'numbers-go-big.blueprints';
 

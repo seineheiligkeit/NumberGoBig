@@ -24,12 +24,12 @@ import {
   type PlacedPipe,
   withdrawFromWarehouse,
 } from './world';
-import { getWarehouseRule } from './warehouse-rules';
+import { getWarehouseRule } from '../../core/warehouse-rules';
 import type { Container } from 'pixi.js';
 import type Decimal from 'break_eternity.js';
 import { drawBlock, updateStackBadge } from './pixi/block';
 import { updateCostBadge } from './pixi/binary-cell';
-import { computationalCost, cultivationEmissionCost, cultivationEmit, fuelLadder, isCultivationType, operate } from './cell-types';
+import { computationalCost, cultivationEmissionCost, cultivationEmit, fuelLadder, isCultivationType, operate } from '../../core/cell-types';
 import { updateCultivationBadge } from './pixi/cultivation-cell';
 // captureSeed removed in Phase 6 ε.1 — cultivators now use the standard
 // pending-input fire path (no seed concept).
@@ -44,7 +44,7 @@ import {
   valueExceeds,
   valueLabel,
   type Value,
-} from './value';
+} from '../../core/value';
 
 /**
  * Hook the interaction layer registers so freshly-emitted output blocks are

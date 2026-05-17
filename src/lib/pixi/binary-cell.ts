@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import Decimal from 'break_eternity.js';
 import { drawDashedRect, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY, pencilText } from './typography';
-import { computationalCost, fuelLadder } from '../cost';
+import { computationalCost, fuelLadder } from '../../../core/cost';
 import type { PlacedCell } from '../world';
 
 /**
@@ -16,8 +16,8 @@ import type { PlacedCell } from '../world';
  * that geometry.
  */
 
-export const BINARY_CELL_WIDTH = 200;
-export const BINARY_CELL_HEIGHT = 108;
+import { BINARY_CELL_WIDTH, BINARY_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { BINARY_CELL_WIDTH, BINARY_CELL_HEIGHT };
 
 export interface BinaryCellOptions {
   /** The operator glyph centered between the two inputs ('+', '×', '^', …). */

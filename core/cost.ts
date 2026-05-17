@@ -42,7 +42,7 @@
  */
 
 import Decimal from 'break_eternity.js';
-import type { CellType } from './cell-types';
+import type { CellType } from './cell-types.ts';
 import {
   VALUE_ONE,
   VALUE_ZERO,
@@ -54,7 +54,7 @@ import {
   valuePow,
   valueToSafeNumber,
   type Value,
-} from './value';
+} from './value.ts';
 
 /**
  * Tier table — retained for backward-compat callers (e.g.

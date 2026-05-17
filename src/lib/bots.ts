@@ -17,9 +17,9 @@ import {
 import { getBotHandles } from './pixi/cleanup-bot';
 import { drawBlock } from './pixi/block';
 import { showMarginalia } from './marginalia';
-import { valueComprehensible, valueEq, valueLabel, valueMagnitude, type Value } from './value';
-import { getWarehouseRule } from './warehouse-rules';
-import { operate, type CellType } from './cell-types';
+import { valueComprehensible, valueEq, valueLabel, valueMagnitude, type Value } from '../../core/value';
+import { getWarehouseRule } from '../../core/warehouse-rules';
+import { operate, type CellType } from '../../core/cell-types';
 import Decimal from 'break_eternity.js';
 
 /**

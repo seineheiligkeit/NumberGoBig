@@ -2,9 +2,9 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { drawDashedRect, pencilStrokeDouble } from './pencil';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
 import type { PlacedCell } from '../world';
-import { valueLabel } from '../value';
+import { valueLabel } from '../../../core/value';
 import { valueColor } from '../family';
-import { getWarehouseRule } from '../warehouse-rules';
+import { getWarehouseRule } from '../../../core/warehouse-rules';
 
 /**
  * Warehouse — typed storage cell.
@@ -19,8 +19,8 @@ import { getWarehouseRule } from '../warehouse-rules';
  * source from the output port as well.
  */
 
-export const WAREHOUSE_CELL_WIDTH = 200;
-export const WAREHOUSE_CELL_HEIGHT = 124;
+import { WAREHOUSE_CELL_WIDTH, WAREHOUSE_CELL_HEIGHT } from '../../../core/cell-geometry';
+export { WAREHOUSE_CELL_WIDTH, WAREHOUSE_CELL_HEIGHT };
 
 /**
  * Draws a warehouse cell. When `ruleLabel` is provided (e.g. "< 10",

@@ -2,7 +2,7 @@ import { Container, Graphics, Text, TextStyle } from 'pixi.js';
 import { pencilStroke, pencilStrokeDouble } from './pencil';
 import { PENCIL_FONT_FAMILY } from './typography';
 import { GRAPHITE, JAM_TINT } from '../colors';
-import { valueLabel, type Value } from '../value';
+import { valueLabel, type Value } from '../../../core/value';
 import { valueColor } from '../family';
 
 /**

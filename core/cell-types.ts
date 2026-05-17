@@ -19,13 +19,16 @@
  *      can reuse `drawBinaryCell`)
  */
 
-import { SUCCESSOR_CELL_WIDTH } from './pixi/successor-cell';
-import { BINARY_CELL_WIDTH } from './pixi/binary-cell';
-import { UNARY_CELL_WIDTH } from './pixi/unary-cell';
-import { WAREHOUSE_CELL_WIDTH } from './pixi/warehouse-cell';
-import { CULTIVATION_CELL_WIDTH } from './pixi/cultivation-cell';
-import { FILTER_CELL_WIDTH } from './pixi/filter-cell';
-import { VARIADIC_ARROW_CELL_WIDTH, VARIADIC_ARROW_CELL_HEIGHT } from './pixi/variadic-arrow-cell';
+import {
+  SUCCESSOR_CELL_WIDTH,
+  BINARY_CELL_WIDTH,
+  UNARY_CELL_WIDTH,
+  WAREHOUSE_CELL_WIDTH,
+  CULTIVATION_CELL_WIDTH,
+  FILTER_CELL_WIDTH,
+  VARIADIC_ARROW_CELL_WIDTH,
+  VARIADIC_ARROW_CELL_HEIGHT,
+} from './cell-geometry.ts';
 import {
   VALUE_ONE,
   VALUE_ZERO,
@@ -52,7 +55,7 @@ import {
   PENTATE_HEIGHT_CAP,
   TETRATE_HEIGHT_CAP,
   type Value,
-} from './value';
+} from './value.ts';
 import Decimal from 'break_eternity.js';
 
 export type CellType =
@@ -775,11 +778,11 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
 // Computational cost moved to `./cost.ts` in Slice 3.5.1 — see that module
 // for the magnitude-scaled formula. Re-exported from here so the existing
 // `import { computationalCost } from './cell-types'` call sites keep working.
-export { computationalCost } from './cost';
+export { computationalCost } from './cost.ts';
 
 // `cultivationEmit` moved to `./cost.ts` in Slice 3.5.6 so the renderer's
 // next-emission preview can import it without threading a runtime cycle
 // (pixi/cultivation-cell → cell-types → pixi/cultivation-cell). Re-exported
 // from here so existing imports stay valid. `cultivationEmissionCost`
 // likewise re-exported for fire paths (α.4b.2 / Slice 6.x).
-export { cultivationEmit, cultivationEmissionCost, fuelLadder } from './cost';
+export { cultivationEmit, cultivationEmissionCost, fuelLadder } from './cost.ts';

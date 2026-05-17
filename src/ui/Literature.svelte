@@ -19,7 +19,7 @@
     purchaseCounts,
   } from '../lib/world';
   import { getController } from '../lib/interaction';
-  import type { CellType } from '../lib/cell-types';
+  import type { CellType } from '../../core/cell-types';
 
   $: visible = $achievements.has('play_with_zeros');
 

@@ -60,6 +60,23 @@
 //     independent magnitude ratings priced in stockpiles, no comp
 //     prerequisite (delegated comprehension). Stubs in α.1.
 
+// Phase A.5 (2026-05-17): the cost-math formulas (`ladderUnlockCost`,
+// `compUpgradeCost`, `pipeCost`) are now THIN ADAPTERS over the canonical
+// versions in `core/catalog/costs.ts`. The shape that lives in sim — number
+// values, `predicate` instead of `ruleId`, etc. — is preserved; the
+// adapter (`fromCoreCostItem` below) translates at the boundary. Result:
+// changing a ladder formula in core/ flows automatically into the sim.
+import { valueToSafeNumber } from '../core/value.ts';
+import {
+  ladderUnlockCost as coreLadderUnlockCost,
+  compUpgradeCost as coreCompUpgradeCost,
+  pipeCost as corePipeCost,
+} from '../core/catalog/costs.ts';
+import {
+  isValueItem as coreIsValueItem,
+  type LiteratureCostItem as CoreCostItem,
+} from '../core/catalog/types.ts';
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -167,47 +184,49 @@ export interface LitEntry {
 export const COMP_MAX_TIER = 30;
 
 /**
+ * Phase A.5 adapter: convert a core (Value-shaped) cost item to sim's
+ * number-shaped CostItem.
+ *
+ * Game side stores cost values as `Value` (Decimal-backed) because
+ * the canvas/UI handles full Value semantics. Sim runs in plain
+ * numbers for speed and simplicity — the agent never sees a Decimal.
+ * This boundary function does the cheap one-shot translation.
+ *
+ * Predicate items: game uses `ruleId` (the full warehouse-rule
+ * vocabulary including magnitude-band rules like `lt100`); sim only
+ * cares about variety-forcing predicates (`prime` / `negative` /
+ * `irrational`). If a core entry asks for a magnitude-band predicate
+ * the adapter errors loudly — that's a sign sim's roadmap is consuming
+ * entries it doesn't know how to model.
+ */
+function fromCoreCostItem(item: CoreCostItem): CostItem {
+  if (coreIsValueItem(item)) {
+    const n = valueToSafeNumber(item.value);
+    if (n === null) {
+      throw new Error(
+        `sim adapter: core cost item has non-safe-number Value; sim model can't represent it`,
+      );
+    }
+    return { value: n, count: item.count };
+  }
+  const id = item.ruleId;
+  if (id !== 'prime' && id !== 'negative' && id !== 'irrational') {
+    throw new Error(
+      `sim adapter: predicate '${id}' is not modeled (only prime/negative/irrational)`,
+    );
+  }
+  return { predicate: id, count: item.count, magnitudeMin: item.magnitudeMin };
+}
+
+/**
  * Cost curve for the comp upgrade to tier N (reaches Comp ≤ 2^N).
  *
- * α.5b — full ladder. Every comp tier follows the same ladder
- * pattern as operator unlocks: M × `2^(L-k)` of value k for
- * k=0..L. L grows with the comp tier (deeper ladder for higher
- * tiers — late-game comp asks for the full small-number pyramid
- * up through value 5 or so).
- *
- * Multiplier M(N) and depth L(N) are tuned to:
- *   - Keep zeros + small numbers in continuous demand at every tier.
- *   - Scale costs roughly with comp ceiling (geometric in N).
- *
- * Tier 1 (≤2) costs nothing — it's the baseline, not a purchase.
+ * Phase A.5: delegates to `core/catalog/costs.ts:compUpgradeCost`.
+ * Original logic preserved verbatim there; this wrapper adapts the
+ * Value-shaped result to sim's number-shaped form.
  */
 function compUpgradeCost(n: number): CostItem[] {
-  // Ladder depth: caps at 3 (zeros..threes). Beyond L=3 the bottleneck
-  // becomes specific small numbers (4s, 5s) that addition struggles to
-  // produce at scale, blowing up late-game pacing without adding
-  // variety. Late tiers still demand the full lower pyramid; depth is
-  // capped so growth comes from M, not ladder size.
-  const L = Math.min(3, Math.floor(n / 3));
-  // Multiplier curve (sim-tuned α.5b):
-  //   - early geometric (1.4× per tier) for steady ramp.
-  //   - linear past tier 10 to keep late game finite.
-  // M(10) ≈ 60; M(20) ≈ 660. Late game still costly but reachable.
-  let M: number;
-  if (n <= 10) M = Math.ceil(6 * Math.pow(1.4, n - 1));
-  else M = Math.ceil(6 * Math.pow(1.4, 9) * (n - 9));
-  const cost = ladderUnlockCost(L, M);
-
-  // α.5c: every comp tier carries a milestone puzzle — construct
-  // 1 × 2^(N-1) (the ceiling of the PREVIOUS tier). At the moment
-  // of purchase the agent has just bought comp_(N-1), so comp =
-  // 2^(N-1), and the puzzle value is exactly at the comprehension
-  // boundary — comprehensible. The player must engineer this number
-  // before paying the comp_N cost. Per-tier "construct the largest
-  // number you can currently lift" is the gameplay philosophy.
-  if (n >= 2) {
-    cost.push({ value: Math.pow(2, n - 1), count: 1 });
-  }
-  return cost;
+  return coreCompUpgradeCost(n).map(fromCoreCostItem);
 }
 
 function generateCompLadder(): LitEntry[] {
@@ -240,18 +259,15 @@ function generateCompLadder(): LitEntry[] {
  * Pipes have NO leveling axis anymore. Throughput comes from placing
  * parallel pipes (Quantity), per §19 *Three axes of progression*.
  */
+/**
+ * Cost curve for a pipe rated ≤ 2^N.
+ *
+ * Phase A.5: delegates to `core/catalog/costs.ts:pipeCost`. The
+ * recursive-bootstrap economy (pipe ≤ 2^N paid in blocks at that
+ * magnitude) is preserved by the canonical implementation.
+ */
 function pipeCost(n: number): CostItem[] {
-  const mag = Math.pow(2, n);
-  // α.2 iteration 1: pipes are stockpile-sized — buying pipe ≤2^N is
-  // a "this magnitude is now my comfortable interior" investment, so
-  // counts are proportional to magnitude (not 1-or-2).
-  if (mag <= 4) return [{ value: 1, count: Math.max(5, mag * 5) }];
-  if (mag <= 32) return [{ value: 10, count: Math.max(5, Math.ceil(mag / 2)) }];
-  if (mag <= 256) return [{ value: 100, count: Math.max(5, Math.ceil(mag / 4)) }];
-  if (mag <= 4096) return [{ value: 1000, count: Math.max(5, Math.ceil(mag / 16)) }];
-  if (mag <= 65_536) return [{ value: 10_000, count: Math.max(5, Math.ceil(mag / 128)) }];
-  if (mag <= 1_048_576) return [{ value: 100_000, count: Math.max(5, Math.ceil(mag / 1_024)) }];
-  return [{ value: 1_000_000, count: Math.max(5, Math.ceil(mag / 8_192)) }];
+  return corePipeCost(n).map(fromCoreCostItem);
 }
 
 // ---------------------------------------------------------------------------
@@ -319,12 +335,14 @@ function generatePipeLadder(): LitEntry[] {
 // EXPLICIT for every operator — the agent grinds the small-number
 // pyramid, not just a single main currency.
 
+/**
+ * Phase A.5: delegates to `core/catalog/costs.ts:ladderUnlockCost`.
+ * The wrapper adapts core's Value-shaped output to sim's number-
+ * shaped CostItem. Used directly by every hand-curated operator
+ * entry below.
+ */
 function ladderUnlockCost(L: number, M: number): CostItem[] {
-  const items: CostItem[] = [];
-  for (let k = 0; k <= L; k++) {
-    items.push({ value: k, count: M * Math.pow(2, L - k) });
-  }
-  return items;
+  return coreLadderUnlockCost(L, M).map(fromCoreCostItem);
 }
 
 // ---------------------------------------------------------------------------

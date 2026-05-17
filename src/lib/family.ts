@@ -17,7 +17,7 @@
  */
 
 import Decimal from 'break_eternity.js';
-import type { Value } from './value';
+import type { Value } from '../../core/value';
 import {
   ACCENT_BLUE,
   ACCENT_GREEN,

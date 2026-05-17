@@ -40,7 +40,7 @@
 import { Container, Text, TextStyle } from 'pixi.js';
 import Decimal from 'break_eternity.js';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
-import { valueMagnitude, type Value } from '../value';
+import { valueMagnitude, type Value } from '../../../core/value';
 
 // Thresholds in Decimal land — comparing magnitudes against constructed
 // boundaries keeps tetration-tier inputs working without the JS-number trap.

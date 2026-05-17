@@ -24,7 +24,7 @@
  */
 
 import Decimal from 'break_eternity.js';
-import { valueIsNegative, valueMagnitude, type Value } from './value';
+import { valueIsNegative, valueMagnitude, type Value } from './value.ts';
 
 export interface WarehouseRule {
   id: string;

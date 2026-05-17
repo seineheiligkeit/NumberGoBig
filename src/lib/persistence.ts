@@ -1,4 +1,4 @@
-import type { CellType } from './cell-types';
+import type { CellType } from '../../core/cell-types';
 import { snapshotSeenMarginalia, restoreSeenMarginalia } from './marginalia';
 import {
   dirtyTick,
@@ -25,7 +25,7 @@ import {
 } from './world';
 import type { DragController } from './interaction';
 import { restoreCamera, snapshotCamera } from './camera';
-import { valueRestore, type ValueSnapshot } from './value';
+import { valueRestore, type ValueSnapshot } from '../../core/value';
 
 /**
  * Save / load — localStorage persistence for the world.
