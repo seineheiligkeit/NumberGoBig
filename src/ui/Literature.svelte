@@ -8,6 +8,7 @@
     isCompRequirementMet,
     isComprehensionEntryAvailable,
     isLevelUpgradeAvailable,
+    isUnlockRequirementMet,
     purchase,
     type LiteratureEntry,
   } from '../lib/literature';
@@ -31,12 +32,14 @@
     // Touch the stores so reactivity tracks changes (no-op reads).
     void $cellLevels;
     void $comprehension;
+    void $purchaseCounts; // V2.2: re-evaluate when an unlock (e.g. subtraction) lands
     // pipeLevels store dropped in γ.1 — pipe leveling dissolved.
     return LITERATURE_ENTRIES.filter(
       (e) =>
         isLevelUpgradeAvailable(e) &&
         isComprehensionEntryAvailable(e) &&
-        isCompRequirementMet(e),
+        isCompRequirementMet(e) &&
+        isUnlockRequirementMet(e),
     );
   })();
 
@@ -52,6 +55,7 @@
       getController().beginCellPlacement(type, {
         ruleId: entry.ruleId,
         botRating: entry.botRating,
+        batteryMode: entry.batteryMode,
       });
     } else if (entry.kind === 'pipe' && entry.pipeMagnitude) {
       getController().beginPipePlacement(entry.pipeMagnitude, entry.pipeCooldownMs ?? 1000);
@@ -65,6 +69,7 @@
     if (entry.kind === 'comprehension') return 'comprehend';
     if (entry.kind === 'pipe') return owned > 0 ? 'lay another' : 'lay pipe';
     if (entry.kind === 'level') return 'upgrade';
+    if (entry.kind === 'defense') return owned > 0 ? 'fortify again' : 'fortify';
     return owned > 0 ? 'acquire another' : 'acquire';
   }
 

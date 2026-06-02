@@ -25,6 +25,7 @@ import {
 } from './world';
 import type { DragController } from './interaction';
 import { restoreCamera, snapshotCamera } from './camera';
+import { restoreAdversary, snapshotAdversary } from './adversary';
 import { valueRestore, type ValueSnapshot } from './value';
 
 /**
@@ -110,7 +111,7 @@ import { valueRestore, type ValueSnapshot } from './value';
  */
 
 const STORAGE_KEY = 'numbers-go-big.save';
-const SAVE_VERSION = 17;
+const SAVE_VERSION = 18;
 const DEBOUNCE_MS = 250;
 
 export interface SaveData {
@@ -138,6 +139,11 @@ export interface SaveData {
    *  SaveData type as optional so v15 saves can still be parsed by
    *  `isSaveDataLike`; the migration strips it. */
   pipeLevels?: [number, number][];
+  /** V2.5 Adversary: Core HP and fortification tier (added in v18). */
+  coreHp?: number;
+  coreFortifyTiers?: number;
+  /** V3: the Shield magnitude (Decimal string). */
+  coreShield?: string;
 }
 
 function serialize(): SaveData {
@@ -155,6 +161,9 @@ function serialize(): SaveData {
     discoveries: snapshotDiscoveries(),
     cellLevels: snapshotCellLevels(),
     // pipeLevels dropped in v16 (Phase 6 γ.1) — pipe leveling dissolved.
+    coreHp: snapshotAdversary().coreHp,
+    coreFortifyTiers: snapshotAdversary().fortifyTiers,
+    coreShield: snapshotAdversary().shield,
   };
 }
 
@@ -315,6 +324,12 @@ export function loadFromStorage(): SaveData | null {
     }
     if (parsed.version === 16) {
       return migrateLadderRuleToV17(parsed as SaveData);
+    }
+    // v17 → v18 (V2.2): batteryState added as an optional cell field, and
+    // coreHp/coreHpMax added at the top level (V2.5). All additive — pre-v18
+    // saves simply lack them and the rehydrator falls back to defaults.
+    if (parsed.version === 17) {
+      return { ...(parsed as SaveData), version: SAVE_VERSION };
     }
     console.warn(
       `Save version mismatch: got ${parsed.version}, expected ${SAVE_VERSION}. Ignoring save.`,
@@ -585,6 +600,9 @@ function wrapValue(raw: unknown): ValueSnapshot {
 export function restoreFromSave(controller: DragController, data: SaveData): void {
   resetWorld();
   restoreSeenMarginalia(data.seenMarginalia);
+  // V2.5: restore Core HP + fortification before setupCore builds the Core
+  // (setupCore keeps a positive restored HP rather than re-initialising).
+  restoreAdversary({ coreHp: data.coreHp, fortifyTiers: data.coreFortifyTiers, shield: data.coreShield });
 
   for (const cell of data.cells) {
     controller.rehydrateCell(
@@ -637,6 +655,7 @@ export function restoreFromSave(controller: DragController, data: SaveData): voi
           }
         : undefined,
       cell.filterState ? { ruleId: cell.filterState.ruleId } : undefined,
+      cell.batteryState ? { mode: cell.batteryState.mode } : undefined,
     );
   }
   for (const block of data.blocks) {

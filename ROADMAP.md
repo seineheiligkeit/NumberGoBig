@@ -683,6 +683,137 @@ After Phase 6: cell-leveling redesign (its own session), prestige + Ancestral (w
 
 ---
 
+### V2 — The Adversary  ← **active next phase**
+
+The gameplay overhaul. A defensive-conflict spine on top of the factory:
+an advancing front of **negative numbers** ("antinumbers") crawls toward a
+defendable **Core**, and the player repels it with the numbers they
+produce. The design driver is synergy, not addition — the "number-reducing"
+operators (Subtraction, Division, Factor, Decrement, Negation, Inversion),
+which all *cost* Total Score in construction and so go unused, become the
+**weapon tree**. Full design in **DESIGN.md Part II**; combat-sim model in
+**`sim/ADVERSARY.md`**.
+
+Design decisions locked this session (from the planning Q&A):
+
+- **Spatial model:** advancing front on the *existing* canvas (not a
+  separate tower-defense strip), so combat and the factory share one space.
+- **Stakes:** a Core with hit-points and a **recoverable setback** on
+  collapse (erase a band + pause the wave) — real consequence, no run loss.
+- **Onset:** the Adversary switches on when the player **unlocks
+  Subtraction** — the first calm minutes stay a pure builder, and the tool
+  that reveals negatives is the same tool that begins the fight.
+- **Score model:** antinumbers live in their own registry, excluded from
+  `recompute()`; only Negate-converted enemies count toward Total Score;
+  two things subtract score — the setback (erases blocks) and feeding the
+  V3 Shield (a positive committed to the army leaves the pool).
+
+Sliced in dependency order. **Sim first**, per project discipline. Each
+slice ends buildable + playtestable.
+
+```
+V2.0  Adversary sim model         (sim/ only — proves the loop is balanceable)
+V2.1  Front + antinumber entity + Core HP + manual-throw defense
+V2.2  Battery cells (add/divide/negate) + ammo from the pool + fuel ladder
+V2.3  Wave scheduler + frontier scaling + the setback
+V2.4  Boss-numbers (predicate encounters)
+V2.5  Defense Literature branch + flavor/polish + save bump (defensive bots deferred)
+V2.6  Prestige tie-in (optional, deferred)
+```
+
+| Slice | Content | Acceptance | Status |
+|---|---|---|---|
+| **V2.0** | **Adversary sim (no game code).** `sim/adversary.ts` — standalone combat-balance model layered on the locked pacing curve: threat/production both scale with the frontier (normalized units), a growth-vs-defense allocation agent, Core HP, bosses at every comp tier, the metrics (defense tax, survival margin, Core-HP trace, pacing stretch), a `--sweep` tax/pacing trade-off menu, and the `--no-adversary` regression guard. **Remaining:** fold the allocation into the main `simulator.ts` agent so the per-firing economy pays the tax. | Defense never fully starves growth; pacing holds within tolerance incl. the defense tax. **Met:** tax ~13%, 0 setbacks, bosses dent Core to ~16/40, ~1.15× stretch, regression reproduces locked curve. **Open call:** re-baseline §V2.8 pentation target to ~13h. | **model done; agent integration next** |
+| **V2.1** | **Front + antinumber + Core.** New `src/lib/adversary.ts` registry + `tickAntinumbers()` added to the `pixi/setup.ts` ticker **before** `tickPipes`; screen-fixed `frontLayer` between `canvasLayer` and `river`; Core entity with HP (`src/lib/pixi/antinumber.ts` — red struck-through enemies + ℕ Core); manual **drag-a-positive-onto-an-antinumber** cancel (interaction.ts step 0, reuses `valueAdd`). Onset gated on `hasUnlock('subtraction')`. **Caveats:** magnitudes fixed small (frontier scaling = V2.3), setback stubbed (real band-erase = V2.3), antinumbers + Core HP in-memory only (persistence = V2.5). | Enemies spawn at the right edge, advance left, can be hand-cancelled, and damage the Core; setback stubbed; antinumbers never appear in Total Score. **Met** (type-check 0/0, build clean; visual playtest pending). | **done (pending playtest)** |
+| **V2.2** | **Battery cells.** One portless `battery` CellType + `batteryMode` (add/divide/negate), threaded like the bot/ruleId pattern through `cell-types.ts` / `world.ts` / `interaction.ts` / `persistence.ts`. `adversary.ts:tickBatteries` fires the front-most antinumber on a cadence, pulling ammo from the pool via `spendFuel` (no wiring — the α.5 philosophy); negate spills the converted positive via `commitSpawn`. Three gated Literature entries (`requiresUnlock: 'subtraction'`). **Simplification:** batteries target the front-most enemy regardless of position (spatial range = later polish); ammo is pool-pull, not piped. | An automated line holds against a steady trickle with no manual input. | **done (pending playtest)** |
+| **V2.3** | **Waves + scaling + setback.** Wave-burst scheduler (lulls punctuated by `WAVE_SIZE` bursts); antinumber magnitude + Core HP both scale with frontier tier (`comprehensionLevel`) so difficulty stays frontier-invariant, matching the sim. Real **setback** on Core collapse: erase the lowest-magnitude band of loose blocks (trophies survive) via `decreaseStack`, clear the Front, pause the wave, rebuild the Core. | Difficulty tracks progression; a lost Core is recoverable and the run continues. | **done (pending playtest)** |
+| **V2.4** | **Boss-numbers.** Slow heavy arrivals on a timer, drawn larger + labeled; kind picked from `isPrime` / `KNOWN_PERFECTS` / `FAMOUS_NUMBERS` / powers of two, magnitude capped near Core HP. Prime bosses set `indivisible` so divide-batteries no-op (forcing a big Add). | A prime boss cannot be cheesed by Division alone; the arsenal stays relevant. | **done (pending playtest)** |
+| **V2.5** | **Defense economy + polish + save.** Defense Literature branch (3 batteries + repeatable **Core fortification**, a new `'defense'` entry kind handled in `purchase()`); red-pen strike-through visuals + narrator beats; **save schema v18** persists Core HP + fortification with an additive v17→v18 migration (batteries persist as cells). **Deferred:** defensive bot variants; range/cadence/wall upgrades. | The full vertical loop is shoppable, persists across reload, and migrates cleanly from pre-V2 saves. | **done (pending playtest)** |
+| **V2.6** | **Prestige tie-in (deferred).** Wire Core collapse as the optional prestige trigger; banks peak as an Ancestral Number. | Documented hook honored; no base-game permadeath. | deferred |
+
+**Architectural notes (V2):**
+
+- **Additive, not invasive.** The Adversary is a new layer (registry +
+  tick + Pixi layer), reusing `value.ts` arithmetic, `operate()`, the fuel
+  ladder, `spawn.ts`, pipes, and `bots.ts` wholesale. No rewrite of the
+  factory — antinumbers are just negative `Value`s on a moving lane.
+- **One score invariant.** `recompute()` is touched only to *keep ignoring*
+  antinumbers; score sinks are the setback and (V3) feeding the Shield.
+  Stated once in DESIGN §3 and enforced in code.
+- **Sim discipline holds.** All combat tuning lands in `sim/adversary.ts`
+  first; game costs are ported from locked numbers, never hand-tuned.
+- **Onset gating.** The Adversary is unlocked by the Subtraction purchase,
+  so the opening-60-seconds onboarding (DESIGN §18) is untouched.
+
+---
+
+### V3 — The Clash (prototype; `V3_PLAN.md`)
+
+The combat overhaul's other half: the **army**. V2 shipped the artillery
+(batteries pre-processing specific threats); V3 makes the *primary* defense
+**your produced positives clashing with incoming negatives, 1:1 by
+magnitude**. Sim-validated by `sim/throughput.ts` (army carries ~99.7% of
+enemy count; functions stay throughput-capped spice) and `sim/weapons.ts`
+(cost-tuning is fragile; difficulty is Comprehension-anchored).
+
+| Slice | Content | Status |
+|---|---|---|
+| **V3.1** | **Shield + Rampart clash.** `adversary.ts` gains a `shield: Decimal` reservoir (the army), rendered on the Core; antinumbers clash with it at `RAMPART_X` before reaching Core HP at `IMPACT_X`. | **prototype done** |
+| **V3.2** | **Feed paths.** Manual: a positive dropped near the Core feeds the Shield (`tryFeedShieldAt`). Automated: `batteryMode: 'feed'` (the **Rampart**) pulls pool blocks into the Shield via `consumePositiveBlock`; a Literature "Rampart" entry gated behind Subtraction. | **prototype done** |
+| **V3.3** | **Threading + persistence.** `'feed'` added to the `batteryMode` unions; Shield persisted in the save. | **prototype done** |
+| **V3.4** | **Tuning to the throughput model.** Wave/threat curves, feed cadence, Shield target. Deferred to a dedicated balancing pass (per design owner). | not started |
+
+**Findings from the headless playthrough harness** (Playwright + DEV hooks,
+very-early → exponentiation):
+
+- **Numbers go up.** A real river→successor→warehouse factory produces a
+  clean rising curve; mid-game with multiplication/exponentiation blocks the
+  score reaches 5-figures.
+- **Agency is strategic, not idle.** Side-by-side: a static "set-and-forget"
+  defense (one Rampart, no production) **collapses** — the Shield depletes
+  and the Core falls (a setback). Active investment (ongoing production + two
+  Ramparts) **holds the line *and* grows the score**. You can't idle; you
+  must keep production flowing and scale defense to the threat (the
+  throughput war). Moment-to-moment is calm (Ramparts auto-feed); the agency
+  lives in the build-out and spike response.
+- **Two balance bugs found and fixed by running:** the auto-feeder drained
+  the whole pool into a wastefully huge Shield (fixed with a
+  frontier-proportional auto-feed cap; manual feed stays uncapped); and the
+  Add battery overkilled tiny enemies the Shield would absorb (fixed by
+  gating artillery to only engage threats that exceed the Shield — exactly
+  the army/artillery split `sim/throughput.ts` prescribes). Also fixed: a
+  Core-collapse crash in the setback loop, caught only by actually running.
+
+---
+
+### V4 — The Set-Theoretic Foundations (core built; `V4_PLAN.md`)
+
+**Built & run-verified (this batch):** a `'set'` Value variant + `sets.ts`
+(pure ∪ ∩ \ △, power set, cardinality, singleton, unfold) + 8 cells
+(`singleton`/`count`/`unfold`/`powerset`/`set-union`/`-intersect`/`-diff`/
+`-symdiff`) + set-block rendering + Literature gating + persistence. The Set
+layer is *logic* (magnitude 0 → no score); Comprehension gates cardinality.
+Capstone test: `Count(Union(Unfold(n), Singleton(n))) = n+1` — successor from
+set primitives. **Not yet built:** predicate-sets/Separation (V4.3), guided
+derivations + ×/^ (V4.4), Dedekind cuts (V4.5), ordinals (V4.6).
+
+
+A creative-but-careful plan to ground the game in set theory — which it
+already half-is (river = ∅, von Neumann successor, warehouses = collections,
+Filter = Separation, the literally-named **Comprehension** spine). Mostly a
+reframe + a thin logic layer + a few cells, built on existing infrastructure.
+Sliced V4.0 (the Set object + Count) → V4.1 (set algebra ∪ ∩ \ △, the AND/OR)
+→ V4.2 (power set + the Cantor production loop) → V4.3 (predicate-sets +
+Separation, the Comprehension pun) → V4.4 (numbers-are-sets: Unfold +
+constructive operators via Blueprints) → V4.5 (number-system constructions;
+irrationals as Dedekind cuts) → V4.6 (transfinite: ω + ordinals, merges the
+deferred ordinals/surreals). Key integration rule: the Set layer is *logic*,
+the number layer is *wealth* — magnitude crosses only via Count/Unfold, so
+score-conservation is untouched. Full design, per-slice fun/risk analysis,
+and the no-homework guardrail in **V4_PLAN.md**.
+
+---
+
 ## 3. Cross-cutting concerns
 
 These touch every phase and ship in parallel rather than as discrete slices.

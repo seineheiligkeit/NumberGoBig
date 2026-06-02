@@ -22,6 +22,8 @@ import { tickEquationCells, tickPipes } from '../pipe';
 // tickCultivation removed in Phase 6 ε.1 — cultivators now fire like
 // regular operator cells via fireCell / fireCellViaPipe.
 import { tickBots } from '../bots';
+import { setupCore, tickAntinumbers, tickBatteries } from '../adversary';
+import { tickPhysics } from '../physics';
 import {
   allCells,
   cellLevel,
@@ -169,7 +171,14 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
   // survive `clearStorage()` and aren't tangled with the world schema.
   loadBlueprintsFromStorage();
 
-  // Layer 3: river
+  // Layer 3: the Front (V2.1 Adversary). Screen-fixed band above the
+  // workspace and below the river, where antinumbers advance toward the
+  // Core. Hidden until the Subtraction unlock onsets the Adversary.
+  const frontLayer = new Container();
+  app.stage.addChild(frontLayer);
+  setupCore(frontLayer);
+
+  // Layer 4: river
   const river = setupRiver(app, {
     onZeroPicked: (event) => drag.beginDragFromRiver(event, VALUE_ZERO),
   });
@@ -229,12 +238,19 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
     // (river-tap removed in α.5 — Successor always requires a wired
     // pipe ≤1 to feed it from the river. Zero supply is the universal
     // bottleneck.)
+    // V2.1: advance the Adversary's Front before the factory ticks.
+    tickAntinumbers(dtMs, frontLayer, app.screen.width);
     tickPipes(dtMs, canvasLayer);
     // Equation cells loaded but blocked on computational cost retry here.
     // Cheap when nothing is blocked.
     tickEquationCells(dtMs, canvasLayer);
     // Cleanup bots sweep loose blocks into nearby matching warehouses.
     tickBots(dtMs, canvasLayer);
+    // V2.2: batteries fire at the Front, pulling ammo from the pool.
+    tickBatteries(dtMs, canvasLayer);
+    // Game-feel: step dust particles + recoil springs last, so they ride on
+    // top of the final positions this frame.
+    tickPhysics(dtMs);
   };
   app.ticker.add((ticker) => advance(ticker.deltaMS));
 
@@ -246,11 +262,37 @@ export async function setupPixi(container: HTMLElement): Promise<void> {
       __nbgAdvance: (dt: number) => void;
       __nbgWorld: typeof import('../world');
       __nbgController: typeof drag;
+      __nbgValue?: typeof import('../value');
+      __nbgAdversary?: typeof import('../adversary');
+      __nbgLiterature?: typeof import('../literature');
+      __nbgPhysics?: typeof import('../physics');
+      __nbgFrontLayer?: Container;
+      __nbgSets?: typeof import('../sets');
+      __nbgCellTypes?: typeof import('../cell-types');
     };
     win.__nbgAdvance = advance;
     win.__nbgController = drag;
+    win.__nbgFrontLayer = frontLayer;
+    import('../physics').then((p) => {
+      win.__nbgPhysics = p;
+    });
     import('../world').then((w) => {
       win.__nbgWorld = w;
+    });
+    import('../value').then((v) => {
+      win.__nbgValue = v;
+    });
+    import('../adversary').then((a) => {
+      win.__nbgAdversary = a;
+    });
+    import('../literature').then((l) => {
+      win.__nbgLiterature = l;
+    });
+    import('../sets').then((s) => {
+      win.__nbgSets = s;
+    });
+    import('../cell-types').then((ct) => {
+      win.__nbgCellTypes = ct;
     });
   }
 

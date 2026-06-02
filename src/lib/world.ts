@@ -136,6 +136,12 @@ export interface PlacedCell {
   botSpeed?: number;
   /** The Value the worker is carrying (during returning). null otherwise. */
   botCarried?: Value | null;
+
+  // V2.2 Battery (DESIGN §V2.5) — portless defensive cells.
+  /** Which weapon this battery fires: add / divide / negate. */
+  batteryMode?: 'add' | 'divide' | 'negate' | 'feed';
+  /** Per-firing cadence countdown (ms). undefined ⇒ ready to fire. */
+  batteryCooldownRemaining?: number;
 }
 
 let nextCellId = 1;
@@ -534,6 +540,29 @@ export function findBlockAt(
 
 export function allBlocks(): readonly PlacedBlock[] {
   return blocks;
+}
+
+/**
+ * V3 — pulls one loose positive block of the SMALLEST magnitude from the pool
+ * (so the auto-feeder spends small change, not trophies) and returns its
+ * value. Used by the Rampart feeder to convert production into Shield. Null
+ * if no positive block exists.
+ */
+export function consumePositiveBlock(): Value | null {
+  let best: PlacedBlock | null = null;
+  let bestMag: Decimal | null = null;
+  for (const b of blocks) {
+    if (valueIsNegative(b.value) || valueIsZero(b.value)) continue;
+    const m = valueMagnitude(b.value);
+    if (bestMag === null || m.lt(bestMag)) {
+      best = b;
+      bestMag = m;
+    }
+  }
+  if (!best) return null;
+  const v = best.value;
+  decreaseStack(best, 1);
+  return v;
 }
 
 /**
@@ -1462,6 +1491,10 @@ export interface CellSnapshot {
     /** Phase 6 δ.1: per-bot magnitude rating (decomposer family). */
     botRating?: number;
   };
+  /** V2.2 Battery cells — which weapon mode this emplacement fires. */
+  batteryState?: {
+    mode: 'add' | 'divide' | 'negate' | 'feed';
+  };
 }
 
 export interface PipeSnapshot {
@@ -1509,6 +1542,9 @@ export function snapshotCells(): CellSnapshot[] {
     }
     if (c.type === 'filter') {
       snap.filterState = { ruleId: c.ruleId ?? '' };
+    }
+    if (c.type === 'battery') {
+      snap.batteryState = { mode: c.batteryMode ?? 'add' };
     }
     if (
       c.type === 'cultivation-arithmetic' ||

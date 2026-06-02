@@ -31,7 +31,8 @@ export type Family =
   | 'negative'
   | 'rational'
   | 'irrational'
-  | 'complex';
+  | 'complex'
+  | 'set';
 
 /**
  * Classifies a Value into a family. Sign-only branching lives on `real`;
@@ -51,6 +52,8 @@ export function family(v: Value): Family {
       return 'irrational';
     case 'complex':
       return 'complex';
+    case 'set':
+      return 'set';
   }
 }
 
@@ -73,6 +76,7 @@ export function familyColor(f: Family): number {
     case 'irrational':
     case 'zero':
     case 'natural':
+    case 'set':
       return GRAPHITE;
   }
 }

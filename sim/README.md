@@ -13,11 +13,14 @@ per-firing ladder, unlock-cost ladders, comp milestone puzzles,
 multi-currency comp tiers, predicate stocks (prime/negative/
 irrational), warehouse capacity scaling. Game code matches: see
 `src/lib/cost.ts:fuelLadder`, `src/lib/world.ts:consumeFuelLadder`,
-`src/lib/literature.ts:ladderUnlockCost`. Save schema v17.
+`src/lib/literature.ts:ladderUnlockCost`. (Game save schema is now v18
+after V2/V3; the sim itself does not persist.)
 
-**Locked pacing:** Tetration **4h 10m**, Pentation **11h 48m** (sim
-agent). Real-player ~10% slower. See `PACING_LOCKED.md` for the
-full unlock table.
+**Locked pacing (no combat):** Tetration **4h 10m**, Pentation **11h 48m**
+(sim agent). Real-player ~10% slower. See `PACING_LOCKED.md` for the
+full unlock table. **With the V2 combat defense tax** (`sim/adversary.ts`
+default) these stretch to ~**4h 47m** / ~**13h 31m**; CLAUDE.md keeps the
+canonical key for which figure is which.
 
 ## Two tools
 
@@ -29,6 +32,37 @@ full unlock table.
   run, focus-time distribution, and pool snapshots at every unlock
   event. Use when investigating "where is the agent actually
   spending time" or "is this value the binding constraint."
+- **`adversary.ts`** — the **V2 combat-balance model** (sim/ADVERSARY.md).
+  Layers the Adversary (Part II) on top of the locked pacing curve and
+  reports the **defense tax**, survival margin, Core-HP trace, and the
+  resulting pacing stretch. `--no-adversary` is the regression guard:
+  with combat off it reproduces the locked curve exactly. This is the
+  V2.0 slice — the proof the growth-vs-defense loop is balanceable
+  before any game code lands.
+- **`weapons.ts`** — the **V3 per-weapon balance model**. Where
+  `adversary.ts` checks the aggregate tax, this checks the *micro*
+  question: is any defensive *function* trivial, and does any *mint*
+  currency? It encodes the four anti-trivialization laws (conservation,
+  reducers-can't-finish, reducers-pay-to-compress, throughput-is-the-wall)
+  as cost formulas normalised against the Add anchor, then runs sweeps
+  (`--sweep`). Key findings: reducers (esp. mod) make *comprehended*
+  combat nearly free — so **all real difficulty is Comprehension-anchored**
+  at the frontier, where reducers can't reach; brute-forcing that frontier
+  is ~3000× costlier than raising Comprehension; and `SALVAGE_FRAC` must
+  stay ≤ 1.0 or a kill mints currency.
+- **`throughput.ts`** — the **V3 throughput model**, the design's preferred
+  architecture: balance functions by *throughput*, not per-use cost. Two
+  layers — an **army** (positive blocks colliding with incoming negatives 1:1,
+  the primary ever-scaling defense) and **artillery** (mod/divide/factor/
+  negate as rate-limited emplacements, cooldown ∝ ⌈log M⌉, comp-gated). It
+  proves: the army fights ~99.7% of enemy *count* and spends ~99.8% of defense
+  *fuel*; functions stay "spice" (a bounded-minority leverage) because their
+  throughput can never be turned on the count-heavy swarm; leverage
+  **asymptotes** (~60%) no matter how many batteries you build — the swarm and
+  frontier are structurally immune (modding tiny numbers is pointless; the
+  frontier is comp-gated). The attrition tax is **frontier-invariant** (flat
+  across comp tiers). This is the model to extend when the V3 combat economy
+  is designed for real.
 
 ## Running
 
@@ -45,7 +79,41 @@ node sim/run.ts --max-ticks 50000     # cap simulation runtime
 node sim/analyze.ts                   # richer metric report
 node sim/analyze.ts --to tetration    # truncated analyze
 node sim/analyze.ts --csv-cons f.csv  # consumption CSV
+
+node sim/adversary.ts                 # V2 combat model + acceptance verdict
+node sim/adversary.ts --verbose       # tick trace (tax / Core HP / boss windows)
+node sim/adversary.ts --sweep         # tax/pentation trade-off menu (tuning)
+node sim/adversary.ts --no-adversary  # regression: reproduce the locked curve
+node sim/adversary.ts --csv combat.csv
+
+node sim/weapons.ts                   # V3 per-weapon balance model + verdicts
+node sim/weapons.ts --sweep           # ALPHA / COMP_TIER / SALVAGE cliffs
+
+node sim/throughput.ts                # V3 throughput model (army + artillery)
+node sim/throughput.ts --sweep        # battery / comp-tier sweeps
 ```
+
+## V2.0 — Adversary model (current finding)
+
+`adversary.ts` confirms the V2 combat loop is balanceable. With the
+recommended baseline tuning (steady threat 15% of production capacity,
+~11% fuel overhead, a 25% Negate rebate, bosses at every comp tier
+spiking ×4):
+
+- **Defense tax ≈ 13%** of production (in the 10–30% target band).
+- **Bosses bite but don't break:** peak tax ~46% in boss windows, Core
+  HP dips to ~16/40 and self-repairs, **0 setbacks** on the optimal
+  line; leaks are confined to boss windows (~1.6% of ticks).
+- **Pacing stretches ~1.15×:** tetration ~4h47m, pentation ~13h31m vs
+  the locked 4h10m / 11h48m.
+
+The headline **decision the sim surfaces** (see `--sweep`): combat can
+*never* return pentation to the locked ~11h48m — any felt defense tax
+delays it. The trade-off is explicit — harder war (higher tax, later
+pentation) vs better batteries (buy the time back at the same threat).
+The recommended lock above lands pentation at **~13h**; the suggested
+follow-up is to re-baseline DESIGN §V2.8's target to "~13h with combat."
+All knobs live in the `TUNING` block at the top of `adversary.ts`.
 
 ## α.5c model — Ladder Rule
 

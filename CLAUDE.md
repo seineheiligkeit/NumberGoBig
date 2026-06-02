@@ -103,7 +103,8 @@ moments at the cost of grind length. See `sim/PACING_LOCKED.md` for
 the locked unlock table.
 
 **Phase 6 — SHIPPED end-to-end.** All 14 code slices (β.1–ε.2) are
-live. Save schema is **v17**.
+live. Save schema is **v18** (V2/V3 added Core HP, fortification, and the
+Shield; see the V2/V3 notes below).
 
 **α.5 Ladder Rule — SHIPPED (this session).** The fuel economy has
 been replaced wholesale by a **per-firing ladder** of small numbers:
@@ -134,6 +135,107 @@ been replaced wholesale by a **per-firing ladder** of small numbers:
 
 Build is clean, type-check 0/0, save schema **v17** with full
 migration chain from v11.
+
+**V2 — The Adversary (built, pending playtest; save schema v18).** A
+gameplay overhaul: an advancing front of negative "antinumbers" crawls
+toward a defendable **Core**, repelled by the numbers the player produces.
+The hook is synergy — the *number-reducing* operators (Subtraction,
+Division, Factor, Decrement, Negation, Inversion), useless in pure
+construction because they cost Total Score, become the **weapon tree**.
+Locked decisions: advancing front on the existing canvas; a Core with a
+recoverable **setback** (not run-loss); the Adversary switches on at the
+**Subtraction** unlock; antinumbers live in their own registry, excluded
+from `recompute()` (only Negate-converted enemies count toward score; the
+setback is the sole score sink). Design in **DESIGN.md Part II**, sliced
+plan in **ROADMAP.md → "V2 — The Adversary"**, combat-sim spec in
+**`sim/ADVERSARY.md`**.
+
+Implementation: **`src/lib/adversary.ts`** (registry + tick + waves +
+bosses + setback + batteries), **`src/lib/pixi/antinumber.ts`** (red
+struck-through enemies + ℕ Core) and **`pixi/battery-cell.ts`**; a
+screen-fixed `frontLayer` in `setup.ts`; `tickAntinumbers`/`tickBatteries`
+in the ticker; manual drag-to-cancel in `interaction.ts`. Batteries are a
+portless `battery` CellType (+`batteryMode`) that pull ammo from the pool
+via `spendFuel`. The Defense Literature branch (`requiresUnlock:
+'subtraction'`) holds the three batteries + repeatable Core fortification
+(new `'defense'` entry kind). Slices V2.0–V2.5 are done and build green;
+**V2.6 (prestige tie-in) remains deferred**. The standalone balance model
+**`sim/adversary.ts`** (run `node sim/adversary.ts`, `--sweep`,
+`--no-adversary`) is the pacing source of truth.
+
+**V3 — The Clash (prototype; `V3_PLAN.md`, ROADMAP "V3 — The Clash").** The
+army half of combat: a **Shield** reservoir on the Core (your committed
+positive magnitude) that incoming antinumbers clash into 1:1 by magnitude
+before they can reach Core HP, fed manually (drop a positive near the Core)
+and automatically (the **Rampart** — `batteryMode: 'feed'`, pulls pool
+blocks into the Shield). Combat batteries are now **artillery**: they only
+engage a front-most enemy that exceeds the Shield (no overkill). Auto-feed
+is capped at a frontier-proportional Shield target so it doesn't drain the
+pool. Validated by `sim/throughput.ts` and a headless Playwright playthrough
+(very-early → exponentiation): numbers go up, and agency is *strategic* —
+a static defense collapses, active production+defense holds and grows.
+Balance tuning (V3.4) is a deferred dedicated pass. Two combat sim models
+back V3: **`sim/throughput.ts`** (army+artillery, throughput-capped
+functions) and **`sim/weapons.ts`** (cost-law analysis).
+
+**Game-feel layer (`src/lib/physics.ts`).** A light, *visual-only* physics
+module stepped from the ticker (`tickPhysics`): velocity+gravity **dust
+particles** (`emitDust`) and a critically-damped **spring offset** for
+recoil (`impulse`), behind a `JUICE` intensity scalar. Decoupled from
+simulation — game logic always uses logical positions; these only jiggle
+the rendered transform and restore it (bodies sleep when settled). Two
+independent spring DOFs: **position** (`impulse`, used for Core recoil — safe
+because the Core isn't hit-tested) and **scale** (`punch`, used for block
+pops — scale-only so it never moves a block's logical/hit-tested position).
+Four hooks live: **the clash** (`adversary.ts:clashAt` — eraser-shavings +
+Core recoil), **drop-settle / stack-merge** (`interaction.ts` onUp),
+**production-pop** (`spawn.ts:commitSpawn` — every cell emission / pipe
+output pops), and **drag-weight** (`interaction.ts` `follow`/`unfollow` —
+the drag ghost trails the cursor with lag + lean; safe because the ghost is
+never hit-tested and the drop snaps to the cursor). Four spring kinds in
+`physics.ts`: dust particles, position `impulse`, scale `punch`, and `follow`.
+Tuned to "tasteful pop". NOTES: `tickPhysics` guards against destroyed
+containers (`c.destroyed`) — a punched block can be consumed before its
+spring settles; and `unfollow` restores the ghost's rest rotation so a block
+dropped mid-lean isn't left tilted.
+
+**V4 — Set-Theoretic Foundations (core built; `V4_PLAN.md`).** A **set is a
+`Value` variant** `{ kind: 'set', elements: Value[] }` (canonical via
+`makeSet` — distinct + sorted by `valueKey`), so set-blocks drag/pipe/stack/
+store/persist like any number. Integration rule: the Set layer is *logic*,
+not *wealth* — `valueMagnitude(set) = 0`, so sets never touch Total Score;
+`valueComprehensible` gates a set by **cardinality** (so Power set / Unfold
+throttle like exponentiation). Pure ops in **`sets.ts`** (∪ ∩ \ △, power set,
+cardinality, singleton, unfold). **8 cells** via `operate()` —
+`singleton`/`count`/`unfold`/`powerset` (unary) + `set-union`/`-intersect`/
+`-diff`/`-symdiff` (binary) — rendered by **`pixi/set-cell.ts`**, gated in
+Literature behind Addition (algebra) / Exponentiation (powerset, unfold).
+The block renderer (`pixi/block.ts:drawNumeralInto`) has a `'set'` case.
+Capstone: `Count(Union(Unfold(n), Singleton(n))) = n+1` — successor from set
+primitives. NOTE: adding a `Value` variant means a `'set'` case in ~20
+exhaustive switches across `value.ts`/`family.ts`; the type-checker
+enumerates them. Not yet built: predicate-sets, Dedekind cuts, ordinals.
+
+**Two ways to verify, and when to use each.** The standalone `sim/` models
+(`run`, `analyze`, `adversary`, `weapons`, `throughput`) are for **fast,
+automated balance at scale** — 12 h of pacing in milliseconds via an
+optimal-play agent, sweeps, upfront design. The **real game** can be driven
+**headlessly** for **ground-truth correctness, visuals, and feel**: in DEV
+builds `pixi/setup.ts` exposes `window.__nbgAdvance(dtMs)`, `__nbgWorld`,
+`__nbgController`, `__nbgValue`, `__nbgAdversary`, `__nbgLiterature`. Drive
+it with Playwright + software-WebGL Chromium (`npm run dev`, then
+`page.evaluate` against the hooks): build a factory via
+`controller.rehydrateCell/rehydratePipe`, step `__nbgAdvance`, read stores
+(`totalScore`, `coreHp$`, `shield$`), screenshot. This caught bugs the sim
+structurally can't (e.g. the setback-loop crash). The two are
+complementary; the real game can also calibrate the sim.
+
+**Pacing-figure key (to avoid confusion).** Three Pentation numbers appear
+across docs, all correct for different things: **~11h 48m** = the locked
+*no-combat* baseline (`sim/run.ts`, `PACING_LOCKED.md`, `--no-adversary`);
+**~12h** = the same, rounded; **~13h 31m** = *with* the V2 combat defense
+tax (`sim/adversary.ts` default). Tetration: ~4h10m baseline, ~4h47m with
+combat.
 
 **`sim/analyze.ts` — the new metric tool.** Beyond the basic
 unlock-pacing table that `sim/run.ts` prints, `analyze.ts` reports
@@ -252,14 +354,14 @@ src/
 │   │                          geometric scaling + canAfford
 │   ├── marginalia.ts          Narrator-note store + showMarginalia (key-dedup);
 │   │                          snapshot/restoreSeenMarginalia for persistence
-│   ├── persistence.ts         Versioned SaveData (v14) — blocks, cells (with
-│   │                          warehouse/rule-warehouse/cultivation/bot state;
-│   │                          bot state now carries optional T-bot phase fields
-│   │                          since 6.11), pipes (with cooldownRemaining),
+│   ├── persistence.ts         Versioned SaveData (v18) — blocks, cells (with
+│   │                          warehouse/rule-warehouse/cultivation/bot/battery
+│   │                          state), pipes (with cooldownRemaining),
 │   │                          achievements, unlocks, purchaseCounts, cellLevels,
-│   │                          pipeLevels, seenMarginalia, camera, comprehension,
-│   │                          discoveries. Debounced autosave + beforeunload.
-│   │                          Structural typeguard on load. v1→v14 migration chain.
+│   │                          seenMarginalia, camera, comprehension, discoveries,
+│   │                          and the Adversary's coreHp/coreFortifyTiers/
+│   │                          coreShield. Debounced autosave + beforeunload.
+│   │                          Structural typeguard on load. v1→v18 migration chain.
 │   ├── camera.ts              Pan (mid-mouse / right-mouse drag) + zoom (wheel to
 │   │                          cursor). screenToCanvas helper drives every
 │   │                          hit-test in the interaction layer
@@ -326,8 +428,9 @@ src/
 │       ├── river.ts           500-zero parallax flow, interactive
 │       ├── successor-cell.ts  Unary { } visual
 │       ├── binary-cell.ts     Shared visual for +, −, ×, ÷, ^, ↑↑, ↑↑↑ cells.
-│       │                      Mul/div/exp/tetration/pentation get a fuel-port
-│       │                      socket below; cost-preview badge `fuel ≥ N`
+│       │                      Per α.5c, binary cells have NO fuel port (the
+│       │                      ladder pulls small numbers from the pool); only
+│       │                      Inversion (unary) keeps a port. Cost-preview badge
 │       │                      updates on every pending change (works for any
 │       │                      cell that installs `container.__costBadge`).
 │       ├── variadic-arrow-cell.ts  ↑ⁿ cell — three operand inputs (base, arrows,

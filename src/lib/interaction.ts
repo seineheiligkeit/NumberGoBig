@@ -54,6 +54,10 @@ import {
   updateCultivationBadge,
 } from './pixi/cultivation-cell';
 import { setCultivationBlockInteractionAttach } from './cultivation';
+import { tryCancelAntinumberAt, tryFeedShieldAt } from './adversary';
+import { follow, punch, unfollow } from './physics';
+import { drawBattery, type BatteryMode } from './pixi/battery-cell';
+import { drawSetCell } from './pixi/set-cell';
 import { drawCleanupBot, getBotHandles } from './pixi/cleanup-bot';
 import { drawDecomposerBot } from './pixi/decomposer-bot';
 import { fadeAndDestroy } from './pixi/micro-anim';
@@ -159,7 +163,10 @@ type InteractionMode =
 
 export interface DragController {
   beginDragFromRiver(event: FederatedPointerEvent, value: Value): void;
-  beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number }): void;
+  beginCellPlacement(
+    type: CellType,
+    options?: { ruleId?: string; botRating?: number; batteryMode?: BatteryMode },
+  ): void;
   /** Two-click pipe placement: source then destination. */
   beginPipePlacement(magnitude: number, cooldownMs?: number): void;
   /** Rect-drag a region; on release, prompt for a name and save as
@@ -205,6 +212,7 @@ export interface DragController {
       capacity: number;
     },
     filterState?: { ruleId: string },
+    batteryState?: { mode: BatteryMode },
   ): void;
   /** Restores a placed pipe. `cooldownRemaining` defaults to `cooldownMs`. */
   rehydratePipe(
@@ -539,12 +547,27 @@ export function createDragController(app: Application, canvasLayer: Container): 
 
     const onMove = (e: PointerEvent): void => {
       const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
-      ghost.x = c.x;
-      ghost.y = c.y;
+      // Drag-weight: the ghost trails the cursor with a little lag + lean
+      // (stepped in tickPhysics). The ghost is never hit-tested, and the drop
+      // snaps to the cursor, so animating its position here is safe.
+      follow(ghost, c.x, c.y);
     };
 
     const onUp = (e: PointerEvent): void => {
-      const { x, y } = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+      const sx = e.clientX - rect.left;
+      const sy = e.clientY - rect.top;
+
+      // 0) Adversary intercepts (screen-fixed Front — hit-test in screen
+      // coords before converting). Feeding the Shield near the Core takes
+      // priority; otherwise a positive dropped on an antinumber cancels it.
+      if (tryFeedShieldAt(sx, sy, value) || tryCancelAntinumberAt(sx, sy, value)) {
+        canvasLayer.removeChild(ghost);
+        ghost.destroy({ children: true });
+        cleanup();
+        return;
+      }
+
+      const { x, y } = screenToCanvas(sx, sy);
 
       // 1) Cell port?
       const target = findCellPortAt(x, y);
@@ -562,6 +585,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         ghost.destroy({ children: true });
         increaseStack(existing, 1);
         updateStackBadge(existing);
+        punch(existing.container, 0.18); // the stack "absorbs" the dropped block
         cleanup();
         return;
       }
@@ -571,10 +595,12 @@ export function createDragController(app: Application, canvasLayer: Container): 
       ghost.y = y;
       const placed = addBlock(ghost, value);
       attachBlockInteraction(placed);
+      punch(placed.container, 0.12); // a small drop-settle pop
       cleanup();
     };
 
     const cleanup = (): void => {
+      unfollow(ghost); // stop drag-weight + restore rest rotation before the ghost is placed
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       document.body.style.cursor = PENCIL_CURSOR_URL;
@@ -782,6 +808,24 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return 'Decrement Operator';
       case 'inversion-bot':
         return 'Inversion Operator';
+      case 'battery':
+        return 'Battery';
+      case 'singleton':
+        return 'Singleton';
+      case 'count':
+        return 'Count';
+      case 'unfold':
+        return 'Unfold';
+      case 'powerset':
+        return 'Power set';
+      case 'set-union':
+        return 'Union';
+      case 'set-intersect':
+        return 'Intersection';
+      case 'set-diff':
+        return 'Difference';
+      case 'set-symdiff':
+        return 'Symmetric difference';
     }
   }
 
@@ -793,7 +837,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
     cell.refreshBadge();
   }
 
-  function drawCellByType(type: CellType, ruleId?: string): Container {
+  function drawCellByType(type: CellType, ruleId?: string, batteryMode?: BatteryMode): Container {
     switch (type) {
       case 'successor':
         return drawSuccessorCell(0, 0);
@@ -853,6 +897,17 @@ export function createDragController(app: Application, canvasLayer: Container): 
         return drawDecomposerBot(0, 0, { glyph: 'D' });
       case 'inversion-bot':
         return drawDecomposerBot(0, 0, { glyph: '1/x' });
+      case 'battery':
+        return drawBattery(batteryMode ?? 'add', 0, 0);
+      case 'singleton':
+      case 'count':
+      case 'unfold':
+      case 'powerset':
+      case 'set-union':
+      case 'set-intersect':
+      case 'set-diff':
+      case 'set-symdiff':
+        return drawSetCell(type);
     }
   }
 
@@ -981,6 +1036,27 @@ export function createDragController(app: Application, canvasLayer: Container): 
           text: 'An Inversion Operator. The worker walks to a loose block within its rating and replaces it with its reciprocal.',
           key: 'first_inversion_bot',
         };
+      case 'battery':
+        return {
+          text: 'A battery, trained on the Front. It pulls ammo from your stock and fires at the nearest correction — no wiring required.',
+          key: 'first_battery_placed',
+        };
+      case 'singleton':
+        return { text: '{·} wraps a value in a one-element set. The smallest possible set.', key: 'first_singleton_placed' };
+      case 'count':
+        return { text: '|·| counts a set into a number — the one bridge back to the economy.', key: 'first_count_placed' };
+      case 'unfold':
+        return { text: 'Unfold turns a number n into the set {0, 1, …, n−1}. A number IS a set.', key: 'first_unfold_placed' };
+      case 'powerset':
+        return { text: '𝒫 forms ALL subsets — 2^n of them. This is why numbers go big (Cantor).', key: 'first_powerset_placed' };
+      case 'set-union':
+        return { text: '∪ pours two sets together — duplicates merge (a set has no repeats).', key: 'first_union_placed' };
+      case 'set-intersect':
+        return { text: '∩ keeps only what both sets share. Set "AND".', key: 'first_intersect_placed' };
+      case 'set-diff':
+        return { text: '∖ removes the right set from the left.', key: 'first_diff_placed' };
+      case 'set-symdiff':
+        return { text: '△ keeps what is in exactly one of the two sets. Set "XOR".', key: 'first_symdiff_placed' };
     }
   }
 
@@ -1090,6 +1166,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
         capacity: number;
       },
       filterState?: { ruleId: string },
+      batteryState?: { mode: BatteryMode },
     ): void {
       // Rule warehouses AND filters need their predicate id at draw time
       // (it picks the centre glyph/label), so peek the state before
@@ -1100,7 +1177,7 @@ export function createDragController(app: Application, canvasLayer: Container): 
           : type === 'filter'
             ? filterState?.ruleId
             : undefined;
-      const container = drawCellByType(type, ruleId);
+      const container = drawCellByType(type, ruleId, batteryState?.mode);
       container.x = x;
       container.y = y;
       canvasLayer.addChild(container);
@@ -1133,6 +1210,9 @@ export function createDragController(app: Application, canvasLayer: Container): 
       }
       if (type === 'filter' && filterState) {
         placed.ruleId = filterState.ruleId;
+      }
+      if (type === 'battery') {
+        placed.batteryMode = batteryState?.mode ?? 'add';
       }
       if (isCultivationType(type) && cultivationState) {
         placed.seed = cultivationState.seed;
@@ -1520,14 +1600,18 @@ export function createDragController(app: Application, canvasLayer: Container): 
       window.addEventListener('keydown', onKey);
     },
 
-    beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number }): void {
+    beginCellPlacement(
+      type: CellType,
+      options?: { ruleId?: string; botRating?: number; batteryMode?: BatteryMode },
+    ): void {
       if (mode !== 'idle') return;
       mode = 'placing';
 
       const ruleId = options?.ruleId;
       const botRating = options?.botRating;
+      const batteryMode = options?.batteryMode;
       const rect = rectOf();
-      const ghost = drawCellByType(type, ruleId);
+      const ghost = drawCellByType(type, ruleId, batteryMode);
       ghost.alpha = 0.7;
       canvasLayer.addChild(ghost);
 
@@ -1567,6 +1651,9 @@ export function createDragController(app: Application, canvasLayer: Container): 
           // of player Comprehension. The bot will act on any block of
           // magnitude ≤ this rating, even uncomprehended ones.
           placed.botRating = botRating;
+        }
+        if (type === 'battery') {
+          placed.batteryMode = batteryMode ?? 'add';
         }
         attachCellInteraction(placed);
 

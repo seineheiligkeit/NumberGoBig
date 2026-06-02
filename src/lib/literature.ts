@@ -12,6 +12,7 @@ import {
   spendValue,
   unlock,
 } from './world';
+import { fortifyCore } from './adversary';
 import { showMarginalia } from './marginalia';
 import {
   valueKey,
@@ -100,7 +101,7 @@ function predicateTest(item: LiteratureCostPredicate): ((v: Value) => boolean) |
   return (v: Value) => rule.test(v) && valueMagnitude(v).gte(minD);
 }
 
-export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe' | 'level';
+export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe' | 'level' | 'defense';
 
 export interface LiteratureEntry {
   id: string;
@@ -143,6 +144,12 @@ export interface LiteratureEntry {
    *  to know what magnitudes their worker can act on — independent of
    *  player Comprehension. Undefined for non-decomposer entries. */
   botRating?: number;
+  /** V2.2 Adversary: which weapon a placed `battery` cell fires. */
+  batteryMode?: 'add' | 'divide' | 'negate' | 'feed';
+  /** V2.2: hide this entry until the given unlock id is owned. Used to
+   *  gate the Defense branch behind the Subtraction unlock (the Adversary
+   *  onset). Undefined ⇒ always visible. */
+  requiresUnlock?: string;
   /** Optional narrator note fired on the *first* purchase only. */
   unlockMessage?: string;
 }
@@ -921,6 +928,180 @@ export const LITERATURE_ENTRIES: readonly LiteratureEntry[] = [
       'Result added to your literature: Factor Operator (high). What you cannot read, this one will partition.',
   },
 
+  // ---- V2.2 Defense branch — Batteries (gated behind Subtraction) -------
+  // Portless emplacements that pull ammo from your stock and fire at the
+  // front-most antinumber. The canonical line is divide-to-soften →
+  // add-to-finish → negate-the-remainder-into-wealth (DESIGN §V2.4).
+  {
+    id: 'battery-divide',
+    kind: 'cell',
+    placementCellType: 'battery',
+    batteryMode: 'divide',
+    requiresUnlock: 'subtraction',
+    name: 'Divide Battery (÷)',
+    glyph: '÷',
+    description:
+      'Halves the front-most correction for one small block. The cheap softener — knock a big threat down so an Add Battery can finish it.',
+    cost: [{ value: valueOf(2), count: 25 }],
+    costScale: 1.6,
+    unlockMessage:
+      'Result added to your literature: the Divide Battery. Crowd control, by long division.',
+  },
+  {
+    id: 'battery-add',
+    kind: 'cell',
+    placementCellType: 'battery',
+    batteryMode: 'add',
+    requiresUnlock: 'subtraction',
+    name: 'Add Battery (+)',
+    glyph: '+',
+    description:
+      'Annihilates the front-most correction by adding into it — consumes one block at least as large as the threat. The finisher. Needs magnitude.',
+    cost: [
+      { value: valueOf(2), count: 40 },
+      { value: valueOf(5), count: 10 },
+    ],
+    costScale: 1.6,
+    unlockMessage:
+      'Result added to your literature: the Add Battery. Cancellation, automated.',
+  },
+  {
+    id: 'battery-negate',
+    kind: 'cell',
+    placementCellType: 'battery',
+    batteryMode: 'negate',
+    requiresUnlock: 'subtraction',
+    name: 'Negate Battery (±)',
+    glyph: '±',
+    description:
+      'Flips the front-most correction into a positive block of the same magnitude — the error becomes an asset, added to your stock. The converter.',
+    cost: [
+      { value: valueOf(2), count: 60 },
+      { value: valueOf(10), count: 5 },
+    ],
+    costScale: 1.7,
+    unlockMessage:
+      'Result added to your literature: the Negate Battery. Every −n you turn back into an n. Sound pedagogy.',
+  },
+  {
+    id: 'battery-feed',
+    kind: 'cell',
+    placementCellType: 'battery',
+    batteryMode: 'feed',
+    requiresUnlock: 'subtraction',
+    name: 'Rampart (▲)',
+    glyph: '▲',
+    description:
+      'Feeds your produced blocks into the Shield — the army the incoming corrections clash into. The backbone of the defense: more Ramparts + more production = a Shield that holds a bigger wave.',
+    cost: [{ value: valueOf(2), count: 15 }],
+    costScale: 1.5,
+    unlockMessage:
+      'Result added to your literature: the Rampart. Your numbers now hold the line themselves.',
+  },
+  {
+    id: 'core-fortify',
+    kind: 'defense',
+    requiresUnlock: 'subtraction',
+    name: 'Fortify the Core',
+    glyph: 'ℕ',
+    description:
+      'Reinforce the Core (+20 HP ceiling, topped up now). Buy repeatedly — each reinforcement buys more room to absorb a breach before the setback.',
+    cost: [{ value: valueOf(2), count: 50 }],
+    costScale: 1.8,
+    unlockMessage:
+      'Result added to your literature: Core fortification. Rigor, shored up.',
+  },
+
+  // ---- V4 — The Set-Theoretic Foundations ------------------------------
+  // Collection-sets: build sets, count them, and combine them with logic.
+  {
+    id: 'singleton',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Singleton { · }',
+    glyph: '{·}',
+    description: 'Wraps a value in a one-element set — the smallest set. The way to start building sets.',
+    cost: [{ value: valueOf(1), count: 20 }],
+    costScale: 1.5,
+    unlockMessage: 'Result added to your literature: the Singleton. A set is a bag of distinct numbers — and now you can make one.',
+  },
+  {
+    id: 'count',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Count | · |',
+    glyph: '|·|',
+    description: 'Counts a set into a number (its cardinality) — the one bridge from the Set layer back into the economy.',
+    cost: [{ value: valueOf(1), count: 15 }],
+    costScale: 1.5,
+    unlockMessage: 'Result added to your literature: Count. The size of a set is a number you can spend.',
+  },
+  {
+    id: 'set-union',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Union ∪',
+    glyph: '∪',
+    description: 'Pours two sets together (set OR). Duplicates merge — a set has no repeats.',
+    cost: [{ value: valueOf(2), count: 20 }],
+    costScale: 1.5,
+    unlockMessage: 'Result added to your literature: Union. Drop two of the same in and only one remains.',
+  },
+  {
+    id: 'set-intersect',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Intersection ∩',
+    glyph: '∩',
+    description: 'Keeps only the values both sets share (set AND).',
+    cost: [{ value: valueOf(2), count: 25 }],
+    costScale: 1.5,
+    unlockMessage: 'Result added to your literature: Intersection. The common ground of two sets.',
+  },
+  {
+    id: 'set-diff',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Difference ∖',
+    glyph: '∖',
+    description: 'Removes the right set from the left (set minus).',
+    cost: [{ value: valueOf(2), count: 25 }],
+    costScale: 1.5,
+  },
+  {
+    id: 'set-symdiff',
+    kind: 'cell',
+    requiresUnlock: 'addition',
+    name: 'Symmetric difference △',
+    glyph: '△',
+    description: 'Keeps what is in exactly one of the two sets (set XOR).',
+    cost: [{ value: valueOf(2), count: 30 }],
+    costScale: 1.5,
+  },
+  // Numbers-are-sets + the Cantor explosion (later: exponentiation-era).
+  {
+    id: 'unfold',
+    kind: 'cell',
+    requiresUnlock: 'exponentiation',
+    name: 'Unfold {0…n−1}',
+    glyph: '{0…}',
+    description: 'Turns a number n into the set {0, 1, …, n−1} — a number IS a set (von Neumann). Count it to get n back.',
+    cost: [{ value: valueOf(5), count: 20 }],
+    costScale: 1.6,
+    unlockMessage: 'Result added to your literature: Unfold. Every number was a set all along.',
+  },
+  {
+    id: 'powerset',
+    kind: 'cell',
+    requiresUnlock: 'exponentiation',
+    name: 'Power set 𝒫',
+    glyph: '𝒫',
+    description: 'Forms ALL subsets of a set — 2^n of them. Power set then Count is exponentiation, built from sets. (This is why numbers go big. Cantor.)',
+    cost: [{ value: valueOf(5), count: 30 }],
+    costScale: 1.7,
+    unlockMessage: 'Result added to your literature: the Power set. |𝒫(A)| > |A|, always — the engine of largeness itself.',
+  },
+
   // Decrement-bot — chips one off. Brute-force salvage for any
   // stuck number, including primes (which Factor refuses).
   {
@@ -1575,10 +1756,24 @@ export function purchase(entry: LiteratureEntry): boolean {
     // in the v15 → v16 migration.
   }
 
+  // V2.5 Defense branch: Core fortification raises the Core's HP ceiling.
+  if (entry.kind === 'defense') {
+    fortifyCore();
+  }
+
   if (owned === 0 && entry.unlockMessage) {
     showMarginalia(entry.unlockMessage, `unlock_${entry.id}`);
   }
   return true;
+}
+
+/**
+ * V2.2: an entry gated by `requiresUnlock` only becomes visible once that
+ * unlock is owned. Used to keep the Defense branch hidden until Subtraction
+ * onsets the Adversary. Entries without the field are always eligible.
+ */
+export function isUnlockRequirementMet(entry: LiteratureEntry): boolean {
+  return !entry.requiresUnlock || hasUnlock(entry.requiresUnlock);
 }
 
 /** Module re-export of `hasUnlock` so consumers don't all reach into world.ts. */

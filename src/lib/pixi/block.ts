@@ -156,6 +156,14 @@ function drawNumeralInto(container: Container, value: Value): void {
       // still fits.
       drawSingleLineNumeral(container, value, complexFontSize(value));
       return;
+    case 'set': {
+      // V4: render the set label `{2, 5, 7}` (valueLabel truncates large
+      // sets to `{…}`), auto-shrunk to fit the tile.
+      const len = valueLabel(value).length;
+      const size = len <= 5 ? 26 : len <= 10 ? 19 : 14;
+      drawSingleLineNumeral(container, value, size);
+      return;
+    }
   }
 }
 
