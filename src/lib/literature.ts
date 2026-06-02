@@ -32,6 +32,7 @@ import {
   spendValue,
   unlock,
 } from './world';
+import { fortifyCore } from './adversary';
 import { showMarginalia } from './marginalia';
 import {
   valueKey,
@@ -300,10 +301,24 @@ export function purchase(entry: LiteratureEntry): boolean {
     // in the v15 → v16 migration.
   }
 
+  // V2.5 Defense branch: Core fortification raises the Core's HP ceiling.
+  if (entry.kind === 'defense') {
+    fortifyCore();
+  }
+
   if (owned === 0 && entry.unlockMessage) {
     showMarginalia(entry.unlockMessage, `unlock_${entry.id}`);
   }
   return true;
+}
+
+/**
+ * V2.2: an entry gated by `requiresUnlock` only becomes visible once that
+ * unlock is owned. Used to keep the Defense branch hidden until Subtraction
+ * onsets the Adversary. Entries without the field are always eligible.
+ */
+export function isUnlockRequirementMet(entry: LiteratureEntry): boolean {
+  return !entry.requiresUnlock || hasUnlock(entry.requiresUnlock);
 }
 
 /** Module re-export of `hasUnlock` so consumers don't all reach into world.ts. */

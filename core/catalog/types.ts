@@ -53,7 +53,7 @@ export function isPredicateItem(item: LiteratureCostItem): item is LiteratureCos
 /** Multi-item cost. Single-cost entries supply a one-element array. */
 export type LiteratureCost = readonly LiteratureCostItem[];
 
-export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe' | 'level';
+export type LiteratureKind = 'cell' | 'theorem' | 'comprehension' | 'pipe' | 'level' | 'defense';
 
 export interface LiteratureEntry {
   id: string;
@@ -96,6 +96,12 @@ export interface LiteratureEntry {
    *  to know what magnitudes their worker can act on — independent of
    *  player Comprehension. Undefined for non-decomposer entries. */
   botRating?: number;
+  /** V2.2 Adversary: which weapon a placed `battery` cell fires. */
+  batteryMode?: 'add' | 'divide' | 'negate' | 'feed';
+  /** V2.2: hide this entry until the given unlock id is owned. Used to
+   *  gate the Defense branch behind the Subtraction unlock (the Adversary
+   *  onset). Undefined ⇒ always visible. */
+  requiresUnlock?: string;
   /** Optional narrator note fired on the *first* purchase only. */
   unlockMessage?: string;
 }

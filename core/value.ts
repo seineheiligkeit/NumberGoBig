@@ -44,7 +44,14 @@ export type Value =
   | { kind: 'real'; n: Decimal }
   | { kind: 'rational'; num: Decimal; den: Decimal }
   | { kind: 'irrational'; symbol: string; approx: Decimal }
-  | { kind: 'complex'; re: Decimal; im: Decimal };
+  | { kind: 'complex'; re: Decimal; im: Decimal }
+  // V4 — a finite SET of distinct Values (von Neumann / collection sets).
+  // The Set layer is *logic*, not *wealth*: a set has magnitude 0, so it
+  // never contributes to Total Score (DESIGN §V4 / V4_PLAN.md). Magnitude
+  // crosses into the economy only via the Count cell (set → cardinality).
+  // `elements` is canonical: distinct by `valueKey`, sorted by `valueKey`
+  // (so equality/identity are order-independent). Build via `makeSet`.
+  | { kind: 'set'; elements: Value[] };
 
 // ---------------------------------------------------------------------------
 // Constructors
@@ -56,6 +63,25 @@ export function valueOf(source: DecimalSource): Value {
 
 export const VALUE_ZERO: Value = { kind: 'real', n: Decimal.dZero };
 export const VALUE_ONE: Value = { kind: 'real', n: Decimal.dOne };
+
+/** The empty set ∅ (a distinct Set object — not the number 0). */
+export const VALUE_EMPTY_SET: Value = { kind: 'set', elements: [] };
+
+/**
+ * Canonical Set constructor (V4): dedups members by `valueKey` and sorts by
+ * `valueKey`, so two sets with the same members in any order are `valueEq`
+ * and share a `valueKey`. The one way to build a `'set'` Value.
+ */
+export function makeSet(elements: Value[]): Value {
+  const byKey = new Map<string, Value>();
+  for (const e of elements) byKey.set(valueKey(e), e);
+  const canon = [...byKey.values()].sort((a, b) => {
+    const ka = valueKey(a);
+    const kb = valueKey(b);
+    return ka < kb ? -1 : ka > kb ? 1 : 0;
+  });
+  return { kind: 'set', elements: canon };
+}
 
 /** Smart ctor for rationals (see file header). */
 export function makeRational(num: Decimal, den: Decimal): Value {
@@ -117,6 +143,7 @@ function toRationalParts(v: Value): { num: Decimal; den: Decimal } | null {
       return { num: v.num, den: v.den };
     case 'irrational':
     case 'complex':
+    case 'set':
       return null;
   }
 }
@@ -132,6 +159,8 @@ function toComplexParts(v: Value): { re: Decimal; im: Decimal } {
       return { re: v.approx, im: Decimal.dZero };
     case 'complex':
       return { re: v.re, im: v.im };
+    case 'set':
+      return { re: Decimal.dZero, im: Decimal.dZero };
   }
 }
 
@@ -148,6 +177,8 @@ function approximate(v: Value): Decimal {
       return v.approx;
     case 'complex':
       return v.re;
+    case 'set':
+      return Decimal.dZero;
   }
 }
 
@@ -354,6 +385,9 @@ export function valueTetrate(a: Value, b: Value): Value | null {
     case 'complex':
       baseD = a.re;
       break;
+    case 'set':
+      baseD = Decimal.dZero;
+      break;
   }
   return { kind: 'real', n: baseD.tetrate(height) };
 }
@@ -397,6 +431,9 @@ export function valuePentate(a: Value, b: Value): Value | null {
       break;
     case 'complex':
       baseD = a.re;
+      break;
+    case 'set':
+      baseD = Decimal.dZero;
       break;
   }
   return { kind: 'real', n: baseD.pentate(height) };
@@ -445,6 +482,9 @@ export function valueArrow(base: Value, height: Value, arrows: Value): Value | n
       break;
     case 'complex':
       baseD = base.re;
+      break;
+    case 'set':
+      baseD = Decimal.dZero;
       break;
   }
 
@@ -503,6 +543,8 @@ export function valueNeg(v: Value): Value {
       };
     case 'complex':
       return makeComplex(v.re.neg(), v.im.neg());
+    case 'set':
+      return v; // sets have no sign — negation is a no-op
   }
 }
 
@@ -547,6 +589,8 @@ export function valueRecip(v: Value): Value | null {
       if (denom.eq(Decimal.dZero)) return null;
       return makeComplex(v.re.div(denom), v.im.neg().div(denom));
     }
+    case 'set':
+      return null; // a set has no reciprocal
   }
 }
 
@@ -566,6 +610,8 @@ export function valueAbs(v: Value): Value {
       // Modulus = √(re² + im²). Generally irrational; we collapse to real
       // approx for 4.4. (A future polish could keep this symbolic.)
       return { kind: 'real', n: v.re.mul(v.re).add(v.im.mul(v.im)).pow(new Decimal(0.5)) };
+    case 'set':
+      return v; // a set has no magnitude/sign — abs is a no-op
   }
 }
 
@@ -641,6 +687,8 @@ export function valueSqrt(v: Value): Value {
           new Decimal(sr * Math.sin(theta / 2)),
         );
       }
+    case 'set':
+      return v; // √ of a set is undefined — no-op
   }
 }
 
@@ -665,10 +713,24 @@ export function valueEq(a: Value, b: Value): boolean {
       const bc = b as { re: Decimal; im: Decimal };
       return a.re.eq(bc.re) && a.im.eq(bc.im);
     }
+    case 'set': {
+      const bs = b as { elements: Value[] };
+      if (a.elements.length !== bs.elements.length) return false;
+      // Canonical order ⇒ element-wise comparison suffices.
+      return a.elements.every((e, i) => valueEq(e, bs.elements[i]));
+    }
   }
 }
 
 export function valueLt(a: Value, b: Value): boolean {
+  // Sets aren't numerically ordered; compare by size (cardinality) so pipe /
+  // comprehension fallbacks behave. (Set magnitude is 0, so this special-case
+  // is needed for set-vs-set.)
+  if (a.kind === 'set' || b.kind === 'set') {
+    const sizeOf = (x: Value): number =>
+      x.kind === 'set' ? x.elements.length : valueMagnitude(x).toNumber();
+    return sizeOf(a) < sizeOf(b);
+  }
   // Complex numbers aren't totally ordered; we compare moduli when one is
   // involved. Same fallback used by `valueExceeds` for pipe/comprehension.
   if (a.kind === 'complex' || b.kind === 'complex') {
@@ -702,7 +764,9 @@ export function valueIsZero(v: Value): boolean {
       return v.num.eq(Decimal.dZero);
     case 'irrational':
     case 'complex':
-      // makeRational / makeComplex collapse zero-cases to real(0).
+    case 'set':
+      // makeRational / makeComplex collapse zero-cases to real(0); a set is
+      // never the number 0 (even ∅ is a distinct Set object).
       return false;
   }
 }
@@ -714,6 +778,7 @@ export function valueIsOne(v: Value): boolean {
     case 'rational':
     case 'irrational':
     case 'complex':
+    case 'set':
       return false;
   }
 }
@@ -737,6 +802,7 @@ export function valueIsNegative(v: Value): boolean {
     case 'irrational':
       return v.approx.lt(Decimal.dZero);
     case 'complex':
+    case 'set':
       return false;
   }
 }
@@ -766,6 +832,10 @@ export function valueMagnitude(v: Value): Decimal {
     case 'complex':
       // Modulus.
       return v.re.mul(v.re).add(v.im.mul(v.im)).pow(new Decimal(0.5));
+    case 'set':
+      // The Set layer is logic, not wealth — a set has zero magnitude, so it
+      // never contributes to Total Score (V4_PLAN.md principle 1).
+      return Decimal.dZero;
   }
 }
 
@@ -788,6 +858,13 @@ export function valueExceeds(v: Value, ceiling: number): boolean {
  * — that's β.3, not β.2.
  */
 export function valueComprehensible(v: Value, comprehension: number): boolean {
+  // V4: Comprehension gates a set's *cardinality* (and its members'
+  // comprehensibility), exactly as it gates a number's magnitude. This is
+  // what throttles Power set / Unfold the way it throttles exponentiation.
+  if (v.kind === 'set') {
+    if (v.elements.length > comprehension) return false;
+    return v.elements.every((e) => valueComprehensible(e, comprehension));
+  }
   return !valueExceeds(v, comprehension);
 }
 
@@ -813,6 +890,11 @@ export function valueLabel(v: Value): string {
       }
       return v.im.lt(Decimal.dZero) ? `${reStr} - ${imStr}` : `${reStr} + ${imStr}`;
     }
+    case 'set': {
+      if (v.elements.length === 0) return '∅';
+      const shown = v.elements.slice(0, 4).map(valueLabel).join(', ');
+      return v.elements.length > 4 ? `{${shown}, …}` : `{${shown}}`;
+    }
   }
 }
 
@@ -826,6 +908,9 @@ export function valueKey(v: Value): string {
       return `irrational:${v.symbol}`;
     case 'complex':
       return `complex:${v.re.toString()}+${v.im.toString()}i`;
+    case 'set':
+      // Canonical (sorted, distinct) ⇒ a deterministic identity key.
+      return `set:{${v.elements.map(valueKey).join(',')}}`;
   }
 }
 
@@ -837,7 +922,8 @@ export type ValueSnapshot =
   | { kind: 'real'; n: string }
   | { kind: 'rational'; num: string; den: string }
   | { kind: 'irrational'; symbol: string; approx: string }
-  | { kind: 'complex'; re: string; im: string };
+  | { kind: 'complex'; re: string; im: string }
+  | { kind: 'set'; elements: ValueSnapshot[] };
 
 export function valueSnapshot(v: Value): ValueSnapshot {
   switch (v.kind) {
@@ -849,6 +935,8 @@ export function valueSnapshot(v: Value): ValueSnapshot {
       return { kind: 'irrational', symbol: v.symbol, approx: v.approx.toString() };
     case 'complex':
       return { kind: 'complex', re: v.re.toString(), im: v.im.toString() };
+    case 'set':
+      return { kind: 'set', elements: v.elements.map(valueSnapshot) };
   }
 }
 
@@ -862,6 +950,8 @@ export function valueRestore(snap: ValueSnapshot): Value {
       return { kind: 'irrational', symbol: snap.symbol, approx: new Decimal(snap.approx) };
     case 'complex':
       return makeComplex(new Decimal(snap.re), new Decimal(snap.im));
+    case 'set':
+      return makeSet(snap.elements.map(valueRestore));
   }
 }
 

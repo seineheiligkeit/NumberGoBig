@@ -33,6 +33,7 @@ import {
   type PlacedCell,
 } from '../world';
 import type { CellType } from '../../../core/cell-types';
+import type { BatteryMode } from '../pixi/battery-cell';
 import { setPipeBlockInteractionAttach } from '../pipe';
 import { showMarginalia } from '../marginalia';
 import { type Value } from '../../../core/value';
@@ -66,7 +67,7 @@ export type InteractionMode =
 
 export interface DragController {
   beginDragFromRiver(event: FederatedPointerEvent, value: Value): void;
-  beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number }): void;
+  beginCellPlacement(type: CellType, options?: { ruleId?: string; botRating?: number; batteryMode?: BatteryMode }): void;
   /** Two-click pipe placement: source then destination. */
   beginPipePlacement(magnitude: number, cooldownMs?: number): void;
   /** Rect-drag a region; on release, prompt for a name and save as
@@ -112,6 +113,7 @@ export interface DragController {
       capacity: number;
     },
     filterState?: { ruleId: string },
+    batteryState?: { mode: BatteryMode },
   ): void;
   /** Restores a placed pipe. `cooldownRemaining` defaults to `cooldownMs`. */
   rehydratePipe(
@@ -205,8 +207,8 @@ export function createDragController(app: Application, canvasLayer: Container): 
     rehydrateBlock(value, count, x, y) {
       rehydrateBlockImpl(ctx, value, count, x, y);
     },
-    rehydrateCell(type, x, y, pending, warehouseState, cultivationState, botState, ruleWarehouseState, filterState) {
-      rehydrateCellImpl(ctx, type, x, y, pending, warehouseState, cultivationState, botState, ruleWarehouseState, filterState);
+    rehydrateCell(type, x, y, pending, warehouseState, cultivationState, botState, ruleWarehouseState, filterState, batteryState) {
+      rehydrateCellImpl(ctx, type, x, y, pending, warehouseState, cultivationState, botState, ruleWarehouseState, filterState, batteryState);
     },
     rehydratePipe(source, dest, magnitude, cooldownMs, cooldownRemaining) {
       rehydratePipeImpl(ctx, source, dest, magnitude, cooldownMs, cooldownRemaining);

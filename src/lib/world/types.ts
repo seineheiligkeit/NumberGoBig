@@ -102,6 +102,12 @@ export interface PlacedCell {
   botSpeed?: number;
   /** The Value the worker is carrying (during returning). null otherwise. */
   botCarried?: Value | null;
+
+  // V2.2 Battery (DESIGN §V2.5) — portless defensive cells.
+  /** Which weapon this battery fires: add / divide / negate / feed. */
+  batteryMode?: 'add' | 'divide' | 'negate' | 'feed';
+  /** Per-firing cadence countdown (ms). undefined ⇒ ready to fire. */
+  batteryCooldownRemaining?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,6 +198,10 @@ export interface CellSnapshot {
     botCarried?: ValueSnapshot | null;
     /** Phase 6 δ.1: per-bot magnitude rating (decomposer family). */
     botRating?: number;
+  };
+  /** V2.2 Battery cells — which weapon mode this emplacement fires. */
+  batteryState?: {
+    mode: 'add' | 'divide' | 'negate' | 'feed';
   };
 }
 

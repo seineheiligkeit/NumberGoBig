@@ -456,6 +456,29 @@ export function allBlocks(): readonly PlacedBlock[] {
 }
 
 /**
+ * V3 — pulls one loose positive block of the SMALLEST magnitude from the pool
+ * (so the auto-feeder spends small change, not trophies) and returns its
+ * value. Used by the Rampart feeder to convert production into Shield. Null
+ * if no positive block exists.
+ */
+export function consumePositiveBlock(): Value | null {
+  let best: PlacedBlock | null = null;
+  let bestMag: Decimal | null = null;
+  for (const b of blocks) {
+    if (valueIsNegative(b.value) || valueIsZero(b.value)) continue;
+    const m = valueMagnitude(b.value);
+    if (bestMag === null || m.lt(bestMag)) {
+      best = b;
+      bestMag = m;
+    }
+  }
+  if (!best) return null;
+  const v = best.value;
+  decreaseStack(best, 1);
+  return v;
+}
+
+/**
  * Consumes `n` blocks of `value` from the player's stacks AND from any
  * warehouses storing that value (Slice 3.5.3). Returns true on success,
  * false if there weren't enough across both pools.
@@ -1366,6 +1389,9 @@ export function snapshotCells(): CellSnapshot[] {
     }
     if (c.type === 'filter') {
       snap.filterState = { ruleId: c.ruleId ?? '' };
+    }
+    if (c.type === 'battery') {
+      snap.batteryState = { mode: c.batteryMode ?? 'add' };
     }
     if (
       c.type === 'cultivation-arithmetic' ||

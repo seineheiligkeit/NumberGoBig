@@ -79,6 +79,21 @@ export function cellLevelBadgeOffset(type: CellType): { x: number; y: number } {
       // read cleanly, and bots aren't leveled in v1 anyway. Default
       // offset is a safe placeholder if a future tier introduces them.
       return { x: 28 - 8, y: -28 + 8 };
+    case 'battery':
+      // V2.2: 48 × 48 emplacement; batteries aren't leveled in V2.
+      return { x: 24 - 8, y: -24 + 8 };
+    case 'singleton':
+    case 'count':
+    case 'unfold':
+    case 'powerset':
+      // V4 unary set cells: ~144 × 80 — halfW 72, halfH 40.
+      return { x: 72 - 24, y: -40 + 14 };
+    case 'set-union':
+    case 'set-intersect':
+    case 'set-diff':
+    case 'set-symdiff':
+      // V4 binary set cells: ~180 × 100 — halfW 90, halfH 50.
+      return { x: 90 - 24, y: -50 + 14 };
   }
 }
 

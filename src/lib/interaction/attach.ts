@@ -62,6 +62,8 @@ import { PENCIL_ACTIVE_CURSOR_URL, PENCIL_CURSOR_URL } from '../cursors';
 import { showMarginalia } from '../marginalia';
 import { screenToCanvas } from '../camera';
 import { redrawPipesForCell } from '../pipe';
+import { tryCancelAntinumberAt, tryFeedShieldAt } from '../adversary';
+import { follow, punch, unfollow } from '../physics';
 import { valueComprehensible, valueIsOne, valueLabel, type Value } from '../../../core/value';
 import {
   cellLabel,
@@ -93,12 +95,27 @@ export function beginDrag(ctx: ControllerCtx, value: Value, initialScreenX: numb
 
   const onMove = (e: PointerEvent): void => {
     const c = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
-    ghost.x = c.x;
-    ghost.y = c.y;
+    // Drag-weight: the ghost trails the cursor with a little lag + lean
+    // (stepped in tickPhysics). The ghost is never hit-tested, and the drop
+    // snaps to the cursor, so animating its position here is safe.
+    follow(ghost, c.x, c.y);
   };
 
   const onUp = (e: PointerEvent): void => {
-    const { x, y } = screenToCanvas(e.clientX - rect.left, e.clientY - rect.top);
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+
+    // 0) Adversary intercepts (screen-fixed Front — hit-test in screen
+    // coords before converting). Feeding the Shield near the Core takes
+    // priority; otherwise a positive dropped on an antinumber cancels it.
+    if (tryFeedShieldAt(sx, sy, value) || tryCancelAntinumberAt(sx, sy, value)) {
+      ctx.canvasLayer.removeChild(ghost);
+      ghost.destroy({ children: true });
+      cleanup();
+      return;
+    }
+
+    const { x, y } = screenToCanvas(sx, sy);
 
     // 1) Cell port?
     const target = findCellPortAt(x, y);
@@ -116,6 +133,7 @@ export function beginDrag(ctx: ControllerCtx, value: Value, initialScreenX: numb
       ghost.destroy({ children: true });
       increaseStack(existing, 1);
       updateStackBadge(existing);
+      punch(existing.container, 0.18); // the stack "absorbs" the dropped block
       cleanup();
       return;
     }
@@ -125,10 +143,12 @@ export function beginDrag(ctx: ControllerCtx, value: Value, initialScreenX: numb
     ghost.y = y;
     const placed = addBlock(ghost, value);
     attachBlockInteraction(ctx, placed);
+    punch(placed.container, 0.12); // a small drop-settle pop
     cleanup();
   };
 
   const cleanup = (): void => {
+    unfollow(ghost); // stop drag-weight + restore rest rotation before the ghost is placed
     window.removeEventListener('pointermove', onMove);
     window.removeEventListener('pointerup', onUp);
     document.body.style.cursor = PENCIL_CURSOR_URL;

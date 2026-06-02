@@ -50,6 +50,7 @@ import {
   rectOf,
   resolvePipeEndpoint,
 } from './helpers';
+import type { BatteryMode } from '../pixi/battery-cell';
 import { attachCellInteraction, beginDrag } from './attach';
 import { rehydratePipe } from './rehydration';
 import type { ControllerCtx } from './index';
@@ -58,14 +59,15 @@ import type { ControllerCtx } from './index';
 // Cell placement mode
 // ---------------------------------------------------------------------------
 
-export function beginCellPlacement(ctx: ControllerCtx, type: CellType, options?: { ruleId?: string; botRating?: number }): void {
+export function beginCellPlacement(ctx: ControllerCtx, type: CellType, options?: { ruleId?: string; botRating?: number; batteryMode?: BatteryMode }): void {
   if (ctx.state.mode !== 'idle') return;
   ctx.state.mode = 'placing';
 
   const ruleId = options?.ruleId;
   const botRating = options?.botRating;
+  const batteryMode = options?.batteryMode;
   const rect = rectOf(ctx);
-  const ghost = drawCellByType(type, ruleId);
+  const ghost = drawCellByType(type, ruleId, batteryMode);
   ghost.alpha = 0.7;
   ctx.canvasLayer.addChild(ghost);
 
@@ -105,6 +107,9 @@ export function beginCellPlacement(ctx: ControllerCtx, type: CellType, options?:
       // of player Comprehension. The bot will act on any block of
       // magnitude ≤ this rating, even uncomprehended ones.
       placed.botRating = botRating;
+    }
+    if (type === 'battery') {
+      placed.batteryMode = batteryMode ?? 'add';
     }
     attachCellInteraction(ctx, placed);
 

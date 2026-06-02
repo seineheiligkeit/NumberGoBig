@@ -65,6 +65,16 @@ So climbing the operator hierarchy is the only efficient way to grow the score, 
 
 The Total Score is also the natural **prestige trigger** — the player can prestige once the score reaches a threshold, and Ancestral Numbers are essentially the previous run's peak score preserved as a single trophy block.
 
+> **V2/V3 note.** The Adversary's *antinumbers* (Part II) are **not** part
+> of Total Score — they are a threat the player does not yet possess, held
+> in a separate registry and excluded from the score computation. Only an
+> antinumber *converted* by a Negate weapon becomes a player block and
+> counts. Two things subtract from Total Score: the combat **setback**
+> (which erases loose blocks), and **feeding the Shield** (Part III) — a
+> positive committed to the army leaves the pool, moving its magnitude out
+> of Total Score into defense (a deliberate, recoverable sink). The
+> headline-number semantics above are otherwise unchanged.
+
 ---
 
 ## 4. The Canvas
@@ -597,7 +607,10 @@ The frame is "you are working in your own private mathematical notebook," which 
 
 Default state is graphite-gray on cream. Color is used the way mathematicians use colored pencils — *sparingly, for meaning*:
 
-- **Red** for primes
+- **Red** for *marking* — the grader's pen. A prime gets a red **underline**
+  (something notable); a V2 antinumber gets a red **strike-through**
+  (something crossed out). One pen, two marks; the strike-through reads as
+  threat, the underline as discovery.
 - **Blue** for negatives
 - **Green** for rationals / decimals
 - **Purple** for complex
@@ -756,9 +769,310 @@ Things this game is *not* — guardrails to prevent drift:
 
 - **Not a story-driven game.** No plot, no characters, no world.
 - **Not a multiplayer game.** Single-player only.
-- **Not a real-time strategy game.** Time pressure is absent.
+- **Not a twitch real-time strategy game.** *Revised for V2:* the
+  Adversary (Part II) adds a light, **abstracted** real-time defense
+  layer — a slowly advancing front, generous reaction windows, idle-
+  friendly automation. It is not an APM contest, not unit micro, not a
+  game you can lose to slow reflexes. The factory remains the heart; the
+  defense is pressure, not panic.
 - **Not a puzzle game with discrete levels.** One continuous canvas.
 - **Not a teaching tool.** Math is the content, not the curriculum.
 - **Not a clicker.** Clicking is available; the design rewards engineering over clicking.
 
 It is one thing only: a parody factory in which numbers go big.
+
+---
+
+# Part II — The Adversary (V2)
+
+*This part layers a defensive-conflict spine onto the factory described in
+Part I. Everything in Part I still holds: the river of zeros is the only
+source, numbers grow in magnitude **and** amount, the page is a pencil
+notebook, the narrator is a dry academic, and Comprehension governs the
+economy. V2 adds something to push **against**.*
+
+> **Reading note (post-V3).** Part II is the V2 design vision — the
+> *artillery* (functions that pre-process threats). The **primary** combat
+> that actually shipped is the **army** (the Shield), described in **Part
+> III — The Clash (V3)**; read the two together. Where Part II says "is",
+> treat it as design intent; the **Implementation status** box at the end of
+> Part III is the authority on what's actually built and how (e.g. batteries
+> pull ammo from the *pool*, not from pipes; there is no remainder-spill).
+
+## V2.1 Why an adversary
+
+V1 is a clean construction toy with no opposition. Two consequences:
+
+1. **No moment-to-moment tension.** The score only goes up; there is
+   never a reason to act *now*.
+2. **Half the math is dead weight.** Subtraction, Division, Factor,
+   Decrement, Negation, and Inversion all *reduce* Total Score, so an
+   optimal builder avoids them. The "number-reducing" operators exist but
+   have no compelling job.
+
+The Adversary solves both at once. An advancing front of **negative
+numbers** threatens a defendable **Core**; the player repels it using the
+numbers they produce. The reducing operators become the **primary weapon
+tree** — the worse a tool is at *building* score, the better it is at
+*destroying* a threat. The dead half of the math becomes the live half of
+the defense. (This follows the project's own rule: *the best new mechanics
+integrate, they don't isolate* — the point of the Adversary is not the
+enemies it adds but the existing systems it makes essential.)
+
+## V2.2 The fiction — the grader's red pen
+
+The adversary is the **grading correction**. You construct in graphite;
+the red pen crosses your work out. This reuses, rather than expands, the
+notebook's palette: red is the *marking* color. A prime gets a red
+**underline** (the grader noting something notable); an antinumber is a red
+**strike-through** (the grader crossing something out). One pen, two marks.
+
+The narrator stays dry and unalarmed:
+
+> *"A correction approaches from the right margin."*
+
+> *"−12 has been struck through. The grader remains unconvinced."*
+
+> *"You negated an incoming −256 into a +256. The error is now an asset.
+> Sound pedagogy."*
+
+No story, no characters, no lore — just entropy with a red pencil. The
+flavor is suggested; the mechanics below stand without it.
+
+## V2.3 Entities
+
+- **Antinumber (the enemy).** A **negative `Value`** (−4, −100, −2^k, …)
+  that spawns at the far right edge and advances slowly leftward along a
+  horizontal **lane band** toward the Core. Its **magnitude is its threat
+  and its hit-points**, rendered as a red, struck-through `−N` numeral.
+  (Routing enemy labels through the full magnitude ladder — commas / sci /
+  towers / arrows — is design vision; today it is a plain `−mag` string.)
+  An antinumber is **not a player
+  block**: it lives in its own `antinumbers` registry and is **excluded
+  from `recompute()`**, so it never contributes to Total Score until it is
+  *converted* (see Negate, below).
+- **The Core ("rigor").** A protected anchor at the safe (left) edge with
+  a hit-point pool (scales with the frontier). An antinumber that reaches it
+  deals damage equal to its magnitude. The Core is **repaired by Rampart
+  overflow** — once the Shield (Part III) is topped up, the feeder's surplus
+  heals the Core. At 0 HP it triggers a **setback** (§V2.6), never a hard
+  loss.
+- **The Front.** The lane region the antinumbers cross. Visually it is the
+  contested strip between the far edge and the Core, drawn on its own
+  layer above the workspace and below the river so combat reads clearly
+  against the calm factory behind it.
+
+## V2.4 The weapon tree — the synergy core
+
+Defense is **your operators acting on the passing antinumber**, reusing the
+existing pure arithmetic (`value.ts`) and `operate()` verbatim — an
+antinumber is just a negative `Value`, so every operator already knows what
+to do with it. Each reducing operator earns a combat job:
+
+| Weapon | On enemy `−M` with ammo `a` | Effect | Reuses |
+|---|---|---|---|
+| **Add** | `−M + a` | **Finish.** If the result ≥ 0 the enemy is annihilated. (A remainder-spill reward is design vision, *not* implemented.) | `valueAdd` |
+| **Divide** | `−M / a` | **Soften.** `−100 / 4 → −25`. The premier crowd-control — knock a big threat down so a cheap Add can finish it. | `valueDiv` |
+| **Subtract** | chip | Cheap continuous chip damage. | `valueSub` |
+| **Negate** | `−M ↦ +M` | **Convert.** Turn the attacker into score *and* ammo. High value, paid in signed fuel. | `operate('negation')` |
+| **Multiply** | `−M × −b` | **Sign-flip combo.** Two negatives make a large positive — turn a clustered threat into a windfall (mis-sign it and you make the threat *worse*). | `valueMul` |
+| **Inversion** | `−M ↦ −1/M` | **Trivialize.** Collapse a boss's magnitude to a fraction; produces negative fuel, feeding the existing signed-fuel economy. | `valueRecip` |
+| **Factor / Decrement bots** | decompose enemy | Autonomous chip/split defenders. | `operate('factor' \| 'decrement')` |
+
+The canonical defensive combo — **Divide to soften → Add to finish →
+Negate the remainder into wealth** — is built from exactly the three
+operators that *cost* Total Score in construction. That inversion of
+worth is the heart of V2: the tools you avoided while building are the
+tools you live by while defending.
+
+> **Built vs. designed.** Of the table above, the shipped artillery is the
+> **Add / Divide / Negate** battery (plus the manual Add of a dropped
+> positive). Subtract, Multiply, Inversion, and Factor/Decrement *defenders*
+> are design vision, not yet implemented. And per V3 (Part III), combat
+> batteries are **artillery** — they only fire on a front-most antinumber
+> whose magnitude *exceeds the Shield*; the Shield (the army) absorbs the
+> rest.
+
+**Both growth axes gain combat demand.** A *wave of many* small
+antinumbers requires **throughput** — many shots per second, i.e. the
+*amount* axis. A single *boss* antinumber requires **magnitude** — one
+shot big enough, i.e. the *magnitude* axis. The two ways "numbers go big"
+each get a defensive reason to exist, which is exactly the V1 promise the
+overhaul must keep.
+
+## V2.5 Manual → automated defense
+
+The defense arc mirrors the river→pipe arc the game already teaches, at a
+new scale.
+
+- **Manual (the moment the Adversary appears).** Drag a positive block
+  from your workspace directly onto an incoming antinumber to add into it
+  by hand (or near the Core to feed the Shield — Part III). Tactile,
+  immediate, and reuses the existing drag-onto-target resolution in the
+  interaction layer.
+- **Automated (mid-game).** Place **Battery cells** on the canvas. A battery
+  targets the **front-most** antinumber and **pulls its ammo from the pool**
+  (loose blocks + warehouses, via `spendFuel` — *not* from pipes; no wiring,
+  matching the α.5c "ladder pulls from the pool" philosophy), then applies
+  its operator. Batteries come in the three combo flavors — **Add** (finish),
+  **Divide** (soften), **Negate** (convert) — plus the V3 **Rampart**
+  (`feed`, the army-feeder, Part III). Per V3 they are *artillery*: they hold
+  fire unless the front-most threat exceeds the Shield.
+
+## V2.6 The Core and the setback
+
+When the Front overruns the Core's hit-points, a **setback** fires — real
+stakes, fully recoverable, never a deleted run:
+
+- The Front overruns a **band of the canvas**: the loose blocks in that
+  band are **erased** (the eraser-swipe animation already in the visual
+  language), and the production frontier is pushed back temporarily.
+- The wave **pauses** to let the player rebuild and re-establish the line.
+
+Repair is proactive: route positive numbers into the Core to rebuild HP
+before it falls. The Core is therefore a permanent, scaling **score sink**
+that competes with growth for the player's production — the central
+economic tension of V2. A *hard* loss (Core collapse ending the run) is
+reserved as an optional **prestige trigger** (§V2.9), not a base-game
+punishment.
+
+## V2.7 Waves and boss-numbers
+
+- **Waves** spawn on a cadence. Antinumber magnitude **scales with the
+  player's frontier** (tied to the Comprehension tier and/or Total Score)
+  so the threat is always *frontier-appropriate* — never trivial, never
+  impossible. This keeps the mid and late game full of things to do and
+  gives the player a standing reason to maintain a *steady stream* of
+  production rather than parking a single trophy number.
+- **Boss-numbers** turn the predicate catalog into encounter design — the
+  "math is content" pillar made literal, reusing `classify.ts` and
+  `warehouse-rules.ts`:
+  - **Prime boss** `−p` — indivisible: Division stalls on it (no clean
+    quotient), forcing exact-magnitude Add or Decrement. Uses `isPrime`.
+  - **Power-of-two boss** — halves cleanly: a Division-friendly breather.
+  - **Perfect-number boss** `−6, −28, −496, …` — uses `isPerfect`.
+  - **Famous boss** `−1729` ("Erratum: Hardy–Ramanujan") — uses
+    `FAMOUS_NUMBERS`; pure narrator delight.
+
+  Each boss type *forces* a different weapon, so the player's whole arsenal
+  stays relevant instead of collapsing onto one optimal tool.
+
+## V2.8 The economy and pacing
+
+- **A new Defense branch in Literature** (gated by `requiresUnlock:
+  'subtraction'`): the battery cells (Add / Divide / Negate / **Rampart**
+  `feed`) as repeatable `cell` entries, plus Core fortification (a
+  `kind: 'defense'` entry). Range / cadence / wall upgrades and defensive
+  bot variants are design vision, not yet built.
+- **Score-model decision (authoritative).** Antinumbers are excluded from
+  `recompute()`; only a *converted* antinumber (via Negate) becomes a
+  player block and counts toward Total Score. Two things subtract score:
+  the **setback** (erases loose blocks) and **feeding the Shield** (a
+  positive committed to the army leaves the pool — see Part III). The score
+  still measures *what you possess*; the threat, and magnitude committed to
+  defense, are things you do not currently hold as blocks.
+- **The defense tax.** Because the Core competes with growth for
+  production, the player runs a continuous allocation decision: how much
+  output to divert to defense versus unlocks. The simulator models this
+  explicitly (§V2.10) and the pacing targets (Tetration ~5 h, Pentation
+  ~12 h) are held within tolerance *including* the defense tax — defense
+  must never fully starve growth.
+
+  > **Sim finding (V2.0, `sim/adversary.ts`).** Combat *cannot* return
+  > pentation to the locked ~12 h — any felt defense tax delays it. At the
+  > recommended baseline (≈13% tax) pentation lands at **~13 h** with
+  > tetration ~4h47m; bosses dent the Core but never break it (0 setbacks
+  > on the optimal line). The trade-off (war intensity vs minutes-to-
+  > pentation, offset by battery efficiency) is mapped by `--sweep`. The
+  > standing recommendation is to **re-baseline this target to "~13 h with
+  > combat."**
+
+## V2.9 Prestige tie-in (documented, deferred)
+
+The Core's collapse is the natural **prestige trigger**: a run that "fails
+its defense" resets, banking its peak as an Ancestral Number (§15). V2
+documents this hook so the slices leave room for it; it does not build
+prestige.
+
+## V2.10 The combat simulator
+
+The Adversary must be balanceable before it is built, so V2 is **sim-first**
+like every prior phase. The standalone `sim/` harness gains an adversary
+model (`sim/adversary.ts`, mirroring the decoupled `catalog.ts` pattern):
+wave schedule, antinumber magnitude curve, battery throughput, and Core
+hit-points. The optimal-play agent now splits production between **growth**
+(unlocks) and **defense** (surviving waves), and the report adds combat
+metrics: per-wave **survival margin**, **ammo-throughput vs incoming
+threat**, **Core HP over time**, and the **defense tax** (fraction of
+production diverted to defense). The acceptance bar: defense never fully
+starves growth, and the Part I pacing targets still hold. The full model
+spec lives in `sim/ADVERSARY.md`.
+
+---
+
+# Part III — The Clash (V3)
+
+*Part II built the **artillery** — functions that pre-process specific
+threats. Part III adds the **army**, which is the primary combat: your
+produced positives clash with the incoming negatives, mass against mass.
+Plan + prototype notes live in `V3_PLAN.md`; the balance model is
+`sim/throughput.ts`.*
+
+## V3.1 The Shield (the army) and the Rampart
+
+- **The Shield** is a positive-magnitude reservoir on the Core, rendered as
+  a bold number just ahead of it. It *is* your committed army. Antinumbers
+  reaching the **Rampart line** clash with it and annihilate **1:1 by
+  magnitude** *before* they can reach Core HP. If the Shield covers the
+  antinumber, it is annihilated; if the Shield is exhausted, the remainder
+  carries on and damages the Core.
+- **Feeding the Shield** follows the manual→automated arc: drop a positive
+  near the Core by hand, or place a **Rampart** (a battery in `feed` mode)
+  that pulls positives from the pool and converts their magnitude into
+  Shield. Auto-feed is **capped at a frontier-proportional target**
+  (`SHIELD_TARGET_MULT × coreMaxHp`) so it doesn't drain the whole pool;
+  **overflow past the cap repairs Core HP**. Manual feed is uncapped — a
+  deliberate big commitment is the player's call.
+
+## V3.2 Why this is the design's heart
+
+- **Numbers clashing with numbers.** The army (the Shield) does ~all the
+  fighting *by count* and *by fuel*; the artillery only picks off the rare
+  threats the Shield can't absorb. Validated in `sim/throughput.ts`: the
+  army fights ~99.7% of enemy count, functions stay throughput-capped
+  "spice," and their leverage asymptotes — **the swarm and the
+  uncomprehended frontier are structurally immune to functions** (modding a
+  tiny number is pointless; the frontier is comp-gated), so no amount of
+  battery-spam replaces the clash.
+- **Throughput war = agency.** Holding the line means keeping production
+  flowing and scaling defense to the threat. A static "set-and-forget"
+  defense collapses; active investment holds *and* grows. Moment-to-moment
+  is calm (Ramparts auto-feed), but every Comprehension tier scales the
+  threat and creates a pressure-then-relief beat.
+
+## V3.3 Implementation status (authoritative)
+
+What is actually built (the source of truth over any "is" phrasing in
+Part II):
+
+- **Army:** `shield: Decimal` on the Core; antinumbers clash at `RAMPART_X`
+  before Core HP at `IMPACT_X` (`src/lib/adversary.ts`). Shield rendered by
+  `pixi/antinumber.ts:drawCore`.
+- **Feed:** manual `tryFeedShieldAt` (drop near the Core); automated
+  `batteryMode: 'feed'` → `consumePositiveBlock` (pulls the **smallest loose
+  positive block**, not warehouses), capped at `SHIELD_TARGET_MULT (=4) ×
+  coreMaxHp`, overflow → `repairCore`.
+- **Artillery:** `battery` cell, `batteryMode ∈ {add, divide, negate,
+  feed}`, ammo from the pool via `spendFuel`; combat batteries only fire on
+  the front-most antinumber whose magnitude **exceeds the Shield**.
+- **Core:** HP scales with the frontier (`CORE_HP_BASE × tier + fortify`).
+  Setback on collapse erases the lowest-magnitude band of loose blocks,
+  clears the Front, pauses the wave, rebuilds the Core; recoverable, no run
+  loss.
+- **Onset:** the whole Adversary is gated on the **Subtraction** unlock.
+- **Persistence:** save schema **v18** stores `coreHp`, `coreFortifyTiers`,
+  `coreShield`.
+- **Not built (design vision):** Subtract/Multiply/Inversion/Factor
+  *defenders*, remainder-spill, magnitude-ladder enemy rendering, defensive
+  bots, range/cadence/wall upgrades, the prestige tie-in, and full V3.4
+  wave/threat tuning.

@@ -77,6 +77,7 @@ export function rehydrateCell(
     capacity: number;
   },
   filterState?: { ruleId: string },
+  batteryState?: { mode: 'add' | 'divide' | 'negate' | 'feed' },
 ): void {
   // Rule warehouses AND filters need their predicate id at draw time
   // (it picks the centre glyph/label), so peek the state before
@@ -120,6 +121,9 @@ export function rehydrateCell(
   }
   if (type === 'filter' && filterState) {
     placed.ruleId = filterState.ruleId;
+  }
+  if (type === 'battery') {
+    placed.batteryMode = batteryState?.mode ?? 'add';
   }
   if (isCultivationType(type) && cultivationState) {
     placed.seed = cultivationState.seed;

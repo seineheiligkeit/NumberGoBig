@@ -56,7 +56,21 @@ import {
   TETRATE_HEIGHT_CAP,
   type Value,
 } from './value.ts';
+import {
+  powerSet,
+  setCardinality,
+  setDifference,
+  setIntersect,
+  setSingleton,
+  setSymDiff,
+  setUnfold,
+  setUnion,
+} from './sets.ts';
 import Decimal from 'break_eternity.js';
+
+/** Hard cap on the cardinality of an Unfold result (Comprehension gates the
+ *  produced set too, but this bounds the work before the jam check). */
+const UNFOLD_CAP = 256;
 
 export type CellType =
   | 'successor'
@@ -94,7 +108,28 @@ export type CellType =
   // fire through pending inputs; their tick handles everything.
   | 'factor-bot'
   | 'decrement-bot'
-  | 'inversion-bot';
+  | 'inversion-bot'
+  // V2.2 Adversary — Battery cells (DESIGN §V2.5). Portless, tick-driven
+  // (see `adversary.ts:tickBatteries`): they pull ammo from the pool and
+  // fire on a cadence at the front-most antinumber. The `batteryMode`
+  // field on PlacedCell selects add / divide / negate.
+  | 'battery'
+  // V4 — Set-Theoretic Foundations. Sets are `'set'` Values; these cells are
+  // the set operations. Unary: singleton {·}, count |·|, unfold n→{0..n-1},
+  // power set P(·). Binary: ∪ ∩ \ △. See `sets.ts` + V4_PLAN.md.
+  | 'singleton'
+  | 'count'
+  | 'unfold'
+  | 'powerset'
+  | 'set-union'
+  | 'set-intersect'
+  | 'set-diff'
+  | 'set-symdiff';
+
+/** True for the V4 binary set-algebra cells (two set inputs → one set out). */
+export function isBinarySetType(t: CellType): boolean {
+  return t === 'set-union' || t === 'set-intersect' || t === 'set-diff' || t === 'set-symdiff';
+}
 
 export function isCultivationType(t: CellType): boolean {
   return (
@@ -373,6 +408,57 @@ export const CELL_SHAPES: Record<CellType, CellShape> = {
   'decrement-bot': {
     inputs: [],
     outputs: [],
+  },
+  // V2.2 Battery — portless, tick-driven, pulls ammo from the pool.
+  'battery': {
+    inputs: [],
+    outputs: [],
+  },
+  // V4 unary set cells (mirror the unary cell geometry).
+  'singleton': {
+    inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'count': {
+    inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'unfold': {
+    inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'powerset': {
+    inputs: [{ offsetX: UNARY_INPUT_X, offsetY: 0, halfWidth: UNARY_INPUT_HALF_W, halfHeight: UNARY_INPUT_HALF_H }],
+    outputs: [{ offsetX: UNARY_OUTPUT_X, offsetY: 0 }],
+  },
+  // V4 binary set-algebra cells (mirror the binary cell geometry).
+  'set-union': {
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'set-intersect': {
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'set-diff': {
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
+  },
+  'set-symdiff': {
+    inputs: [
+      { offsetX: BINARY_PORT_X, offsetY: -26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+      { offsetX: BINARY_PORT_X, offsetY: 26, halfWidth: BINARY_PORT_HALF_W, halfHeight: BINARY_PORT_HALF_H },
+    ],
+    outputs: [{ offsetX: BINARY_OUTPUT_X, offsetY: 0 }],
   },
   'inversion-bot': {
     inputs: [],
@@ -762,6 +848,53 @@ export function operate(type: CellType, inputs: readonly Value[]): OperateResult
     case 'cleanup-bot':
       // Cleanup bots have no operation — they sweep, they don't fire.
       return { emits: [] };
+    case 'battery':
+      // V2.2: batteries are tick-driven (see `adversary.ts:tickBatteries`).
+      // They act on antinumbers, not canvas operands — no fire-path op.
+      return { emits: [] };
+
+    // V4 — set operations. Outputs are `'set'` Values (magnitude 0, so they
+    // never score); Comprehension gates a set's cardinality, so an oversized
+    // result jams the output port via the universal comp-jam (β.3), exactly
+    // like exponentiation overflow.
+    case 'singleton':
+      return { emits: [{ portIndex: 0, value: setSingleton(inputs[0]) }] };
+    case 'count':
+      return { emits: [{ portIndex: 0, value: setCardinality(inputs[0]) }] };
+    case 'unfold': {
+      const n = valueToSafeNumber(inputs[0]);
+      if (n === null || n < 0 || !Number.isInteger(n) || n > UNFOLD_CAP) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'That number is too large (or not a natural) to unfold into a set by hand.',
+            key: 'unfold_refused',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: setUnfold(n) }] };
+    }
+    case 'powerset': {
+      const result = powerSet(inputs[0]);
+      if (result === null) {
+        return {
+          emits: [],
+          marginalia: {
+            text: 'The power set of a set that large would not fit in this universe. (Cantor warned you.)',
+            key: 'powerset_refused',
+          },
+        };
+      }
+      return { emits: [{ portIndex: 0, value: result }] };
+    }
+    case 'set-union':
+      return { emits: [{ portIndex: 0, value: setUnion(inputs[0], inputs[1]) }] };
+    case 'set-intersect':
+      return { emits: [{ portIndex: 0, value: setIntersect(inputs[0], inputs[1]) }] };
+    case 'set-diff':
+      return { emits: [{ portIndex: 0, value: setDifference(inputs[0], inputs[1]) }] };
+    case 'set-symdiff':
+      return { emits: [{ portIndex: 0, value: setSymDiff(inputs[0], inputs[1]) }] };
     case 'factor-bot':
     case 'decrement-bot':
     case 'inversion-bot':

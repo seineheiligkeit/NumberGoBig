@@ -45,6 +45,8 @@ import {
 import { drawCleanupBot } from '../pixi/cleanup-bot';
 import { drawDecomposerBot } from '../pixi/decomposer-bot';
 import { drawFilterCell } from '../pixi/filter-cell';
+import { drawBattery, type BatteryMode } from '../pixi/battery-cell';
+import { drawSetCell } from '../pixi/set-cell';
 import { screenToCanvas } from '../camera';
 import { PENCIL_FONT_FAMILY } from '../pixi/typography';
 import {
@@ -140,6 +142,15 @@ export function cellLabel(type: CellType): string {
     case 'factor-bot': return 'Factor Operator';
     case 'decrement-bot': return 'Decrement Operator';
     case 'inversion-bot': return 'Inversion Operator';
+    case 'battery': return 'Battery';
+    case 'singleton': return 'Singleton';
+    case 'count': return 'Count';
+    case 'unfold': return 'Unfold';
+    case 'powerset': return 'Power set';
+    case 'set-union': return 'Union';
+    case 'set-intersect': return 'Intersection';
+    case 'set-diff': return 'Difference';
+    case 'set-symdiff': return 'Symmetric difference';
   }
 }
 
@@ -169,7 +180,7 @@ export function installWarehouseRefresh(cell: PlacedCell): void {
   cell.refreshBadge();
 }
 
-export function drawCellByType(type: CellType, ruleId?: string): Container {
+export function drawCellByType(type: CellType, ruleId?: string, batteryMode?: BatteryMode): Container {
   switch (type) {
     case 'successor': return drawSuccessorCell(0, 0);
     case 'addition': return drawAdditionCell(0, 0);
@@ -204,6 +215,16 @@ export function drawCellByType(type: CellType, ruleId?: string): Container {
     case 'factor-bot': return drawDecomposerBot(0, 0, { glyph: 'F' });
     case 'decrement-bot': return drawDecomposerBot(0, 0, { glyph: 'D' });
     case 'inversion-bot': return drawDecomposerBot(0, 0, { glyph: '1/x' });
+    case 'battery': return drawBattery(batteryMode ?? 'add', 0, 0);
+    case 'singleton':
+    case 'count':
+    case 'unfold':
+    case 'powerset':
+    case 'set-union':
+    case 'set-intersect':
+    case 'set-diff':
+    case 'set-symdiff':
+      return drawSetCell(type);
   }
 }
 
@@ -332,6 +353,27 @@ export function placementMarginalia(type: CellType): { text: string; key: string
         text: 'An Inversion Operator. The worker walks to a loose block within its rating and replaces it with its reciprocal.',
         key: 'first_inversion_bot',
       };
+    case 'battery':
+      return {
+        text: 'A battery, trained on the Front. It pulls ammo from your stock and fires at the nearest correction — no wiring required.',
+        key: 'first_battery_placed',
+      };
+    case 'singleton':
+      return { text: '{·} wraps a value in a one-element set. The smallest possible set.', key: 'first_singleton_placed' };
+    case 'count':
+      return { text: '|·| counts a set into a number — the one bridge back to the economy.', key: 'first_count_placed' };
+    case 'unfold':
+      return { text: 'Unfold turns a number n into the set {0, 1, …, n−1}. A number IS a set.', key: 'first_unfold_placed' };
+    case 'powerset':
+      return { text: '𝒫 forms ALL subsets — 2^n of them. This is why numbers go big (Cantor).', key: 'first_powerset_placed' };
+    case 'set-union':
+      return { text: '∪ pours two sets together — duplicates merge (a set has no repeats).', key: 'first_union_placed' };
+    case 'set-intersect':
+      return { text: '∩ keeps only what both sets share. Set "AND".', key: 'first_intersect_placed' };
+    case 'set-diff':
+      return { text: '∖ removes the right set from the left.', key: 'first_diff_placed' };
+    case 'set-symdiff':
+      return { text: '△ keeps what is in exactly one of the two sets. Set "XOR".', key: 'first_symdiff_placed' };
   }
 }
 
