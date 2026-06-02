@@ -263,13 +263,57 @@ time-to-each-unlock. **It is the source of truth for pacing numbers.**
 - α.5c: models the **full ladder rule** (per-firing + unlock), comp
   milestone puzzles, multi-currency comp tiers, predicate stocks
   (prime/negative/irrational), and warehouse capacity scaling.
-- Flags: `--verbose`, `--csv pacing.csv`, `--to <entry>`, `--max-ticks <n>`
+- Flags: `--verbose`, `--csv pacing.csv`, `--to <entry>`, `--max-ticks <n>`,
+  `--strategy <name>`, `--config <path>`, `--scale key=value` (repeatable).
 - **`sim/analyze.ts`** — richer report: consumption-vs-production
   per value, bottleneck distribution, pool snapshots at each unlock.
   Run with `node sim/analyze.ts`. Use this when investigating
   "where is the agent really spending time."
-- See `sim/README.md` for usage notes and `sim/PACING_LOCKED.md` for
-  the locked α.5c baseline.
+- **`sim/compare.ts`** — runs every strategy (or `--strategies a,b,c`)
+  side-by-side against the same roadmap + config and prints a unified
+  pacing table. Use to surface where strategies actually diverge —
+  i.e. where the design has real choices to make.
+- **`sim/diff.ts`** — runs two SimConfig JSONs back-to-back and prints
+  the pacing delta per unlock. The fastest way to answer "what if I
+  cut tetration's M from 950 to 600?":
+  `node sim/diff.ts sim/configs/baseline.json variant.json`.
+- See `sim/README.md` for the full strategy + config reference and
+  `sim/PACING_LOCKED.md` for the locked α.5c baseline.
+
+**The playtester (Phase A.6).** The agent's policy is pluggable. Each
+strategy in `sim/strategies/` registers a factory via
+`registerStrategy()` (see `sim/strategy.ts`); registration happens
+on import, so `run.ts` / `compare.ts` / `diff.ts` each import every
+strategy file at the top. Built-in strategies:
+
+- `speedrun-greedy` — the original baked-in agent. Reproduces
+  `sim/pacing-locked.csv` byte-for-byte under the default config —
+  this is the **regression baseline**. Always tune from here.
+- `comp-rush` — diverts grinding-time toward the next comp upgrade
+  whenever its cost is reachable.
+- `warehouse-hoarder` — buys typed warehouses preemptively at 40%
+  pool fill.
+- `cell-spammer` — redirects level-up purchases to fresh clones.
+- `beam-search` — picks each next milestone by rolling out every
+  candidate in a cloned world and taking the fastest. Surfaces
+  "weird and fast" orderings the hand-curated roadmap doesn't try.
+  Rollouts have a 2000-tick stall guard; ~100ms per pick.
+
+To add a new strategy: drop a file in `sim/strategies/`, call
+`registerStrategy('my-name', factory)` at module load, and add the
+import to `run.ts`, `compare.ts`, and `diff.ts`.
+
+**SimConfig (sim/config.ts).** Toggle mechanics (`cellLeveling`,
+`ladderFuel`, `warehouses`, `comprehensionGate`) and scale costs
+(`operatorM.<id>`, `compTier`, `pipe`, `warehouse`, `level`)
+without editing catalog data. Configs live as JSON in `sim/configs/`
+(baseline, flat-fuel, no-leveling, no-warehouses, cheap-mult).
+Active config is installed via `withConfig(cfg, () => simulate(...))`
+which sets a module-level `currentConfig()` for the duration of one
+run. Sim helpers (`cellThroughput`, `ladderForCell`, `poolCap`,
+`currentCost`, `purchaseLevel`, `canPurchase`, `steadyStateRate`,
+`bottleneckResource`) read `currentConfig()` to branch on toggles
+and apply scales.
 
 **Cost formulas are unified (Phase A).** `ladderUnlockCost`,
 `compUpgradeCost`, `pipeCost`, and the Literature entries data table

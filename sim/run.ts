@@ -10,8 +10,24 @@
 //   node sim/run.ts --to tetration      # stop at a specific roadmap entry
 
 import { writeFileSync } from 'node:fs';
-import { simulate, newAgent, type SimulationResult } from './simulator.ts';
+import { simulate, type SimulationResult } from './simulator.ts';
 import { LITERATURE_BY_ID } from './catalog.ts';
+import {
+  STRATEGIES,
+  createStrategy,
+} from './strategy.ts';
+import './strategies/speedrun-greedy.ts';
+import './strategies/comp-rush.ts';
+import './strategies/warehouse-hoarder.ts';
+import './strategies/cell-spammer.ts';
+import './strategies/beam-search.ts';
+import {
+  applyScaleOverride,
+  defaultConfig,
+  loadConfigFile,
+  withConfig,
+  type SimConfig,
+} from './config.ts';
 
 // ---------------------------------------------------------------------------
 // Default roadmap (Phase 6 ordering)
@@ -93,6 +109,9 @@ interface CliArgs {
   verbose: boolean;
   to: string | null;
   maxTicks: number;
+  strategy: string;
+  configPath: string | null;
+  scaleOverrides: string[];
 }
 
 function parseArgs(): CliArgs {
@@ -102,6 +121,9 @@ function parseArgs(): CliArgs {
     verbose: false,
     to: null,
     maxTicks: 200_000,
+    strategy: 'speedrun-greedy',
+    configPath: null,
+    scaleOverrides: [],
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -113,12 +135,25 @@ function parseArgs(): CliArgs {
       result.to = args[++i] ?? null;
     } else if (a === '--max-ticks') {
       result.maxTicks = Number(args[++i] ?? result.maxTicks);
+    } else if (a === '--strategy') {
+      result.strategy = args[++i] ?? result.strategy;
+    } else if (a === '--config') {
+      result.configPath = args[++i] ?? null;
+    } else if (a === '--scale') {
+      const v = args[++i];
+      if (v) result.scaleOverrides.push(v);
     } else if (a === '--help' || a === '-h') {
       printHelp();
       process.exit(0);
     }
   }
   return result;
+}
+
+function buildConfig(args: CliArgs): SimConfig {
+  let cfg = args.configPath ? loadConfigFile(args.configPath) : defaultConfig();
+  for (const kv of args.scaleOverrides) cfg = applyScaleOverride(cfg, kv);
+  return cfg;
 }
 
 function printHelp(): void {
@@ -128,11 +163,17 @@ Usage:
   node sim/run.ts [options]
 
 Options:
-  --csv <path>       Write per-unlock CSV to the given path
-  --verbose          Print every purchase event
-  --to <entryId>     Stop at this roadmap entry (default: full roadmap)
-  --max-ticks <n>    Maximum ticks to simulate (default: 200000)
-  -h, --help         Show this help
+  --csv <path>           Write per-unlock CSV to the given path
+  --verbose              Print every purchase event
+  --to <entryId>         Stop at this roadmap entry (default: full roadmap)
+  --max-ticks <n>        Maximum ticks to simulate (default: 200000)
+  --strategy <name>      Agent strategy (default: speedrun-greedy)
+                         Known: ${Object.keys(STRATEGIES).join(', ') || 'speedrun-greedy'}
+  --config <path>        Load a SimConfig JSON (sim/configs/*.json)
+  --scale key=value      Override one config field (repeatable).
+                         Keys: compTier, pipe, warehouse, level,
+                               operatorM.<id>, mechanics.<flag>
+  -h, --help             Show this help
 
 Phase 6 model: Comprehension is the spine. Power-of-2 ladder
 (comp_1..comp_30); production of value V requires comp ≥ V.
@@ -307,12 +348,21 @@ function main(): void {
     }
   }
 
+  const config = buildConfig(args);
+  const strategy = createStrategy(args.strategy, { roadmap });
+
   console.log(`Running pacing simulator (Phase 6 model)…`);
+  console.log(`  Strategy: ${strategy.name}`);
+  if (args.configPath) console.log(`  Config: ${args.configPath}`);
+  if (args.scaleOverrides.length > 0) {
+    console.log(`  Overrides: ${args.scaleOverrides.join(', ')}`);
+  }
   console.log(`  Roadmap: ${roadmap.length} unlocks`);
   console.log(`  Max ticks: ${args.maxTicks}`);
 
-  const agent = newAgent(roadmap);
-  const result = simulate(agent, { maxTicks: args.maxTicks });
+  const result = withConfig(config, () =>
+    simulate(strategy, { maxTicks: args.maxTicks }),
+  );
 
   if (args.verbose) {
     console.log('\n=== Event trace ===');

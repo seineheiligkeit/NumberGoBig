@@ -56,9 +56,59 @@ import {
   isValueCost,
   isPredicateCost,
   ladderFor,
+  ladderPosition,
   levelMultiplier,
   nextLevelEntry,
 } from './catalog.ts';
+import { currentConfig } from './config.ts';
+
+// ---------------------------------------------------------------------------
+// Config-aware effective helpers (Slice A/B)
+// ---------------------------------------------------------------------------
+//
+// These wrap the raw catalog primitives with the active SimConfig so
+// mechanic toggles (cellLeveling, ladderFuel, warehouses, …) and cost
+// scales propagate without threading config through every function.
+
+function effectiveLevelMultiplier(level: number): number {
+  if (!currentConfig().mechanics.cellLeveling) return 1;
+  return levelMultiplier(level);
+}
+
+/** Flat-fuel approximation used when `mechanics.ladderFuel === false`.
+ *  Each firing consumes one block of value `L` scaled by magnitude —
+ *  the pre-α.5 single-fuel-block model, used as the counterfactual
+ *  baseline. */
+function flatLadderFor(type: CellType, maxInput: number): Map<number, number> {
+  const L = ladderPosition(type);
+  const map = new Map<number, number>();
+  if (L < 0) return map;
+  if (L === 0) {
+    map.set(0, 1);
+    return map;
+  }
+  const absMax = Math.abs(maxInput);
+  const mag = absMax > 0 ? Math.max(1, Math.ceil(Math.log10(absMax))) : 1;
+  map.set(L, mag);
+  return map;
+}
+
+function entryCostScale(entry: LitEntry): number {
+  const cs = currentConfig().costScale;
+  switch (entry.kind) {
+    case 'cell':
+    case 'bot':
+      return cs.operatorM[entry.id] ?? 1;
+    case 'pipe':
+      return cs.pipe;
+    case 'warehouse':
+      return cs.warehouse;
+    case 'comprehension':
+      return cs.compTier;
+    case 'theorem':
+      return 1;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // World state
@@ -145,7 +195,7 @@ export function predicateStock(world: WorldState, pred: PredicateId): number {
 export function cellThroughput(world: WorldState, cellType: CellType): number {
   const count = world.cells.get(cellType) ?? 0;
   const level = world.cellLevels.get(cellType) ?? 1;
-  return count * levelMultiplier(level);
+  return count * effectiveLevelMultiplier(level);
 }
 
 /** Pipe throughput at a given magnitude — count alone (no leveling in Phase 6). */
@@ -205,6 +255,7 @@ export const LOOSE_POOL_TOLERANCE = 1000;
  * pool; warehouses store the surplus.
  */
 export function poolCap(world: WorldState, value: number): number {
+  if (!currentConfig().mechanics.warehouses) return Infinity;
   const warehouses = world.warehouses.get(value) ?? 0;
   return LOOSE_POOL_TOLERANCE + warehouses * warehouseCapacity(world.comprehension);
 }
@@ -243,11 +294,17 @@ export function ladderForCell(
   cellType: CellType,
   maxInput: number,
 ): Map<number, number> {
+  // Counterfactual toggle (Slice B): swap ladder fuel for the flat
+  // single-block model. Level discounts still apply on top.
+  const base = currentConfig().mechanics.ladderFuel
+    ? ladderFor(cellType, maxInput)
+    : flatLadderFor(cellType, maxInput);
   // Level discounts (α.4d carry-over): for mult/exp at lvl ≥ 3, reduce
   // the magnitude tax by 1 (min 1); at lvl 5 halve it. Acts on the
   // magnitude multiplier, so it scales every ladder entry uniformly.
-  const base = ladderFor(cellType, maxInput);
-  const level = world.cellLevels.get(cellType) ?? 1;
+  const level = currentConfig().mechanics.cellLeveling
+    ? (world.cellLevels.get(cellType) ?? 1)
+    : 1;
   const isDiscountable = cellType === 'multiplication' || cellType === 'exponentiation';
   if (!isDiscountable || level < 3) return base;
 
@@ -373,7 +430,12 @@ export function steadyStateRate(world: WorldState, target: number): number {
   // path. α.5c kept this strict — per design, uncomprehended blocks
   // are not usable as Literature costs, so producing above-comp
   // values for the goal pool would be wasted work.
-  if (maxIntermediateValue(target) > world.comprehension) return 0;
+  if (
+    currentConfig().mechanics.comprehensionGate &&
+    maxIntermediateValue(target) > world.comprehension
+  ) {
+    return 0;
+  }
 
   const vec = resourceCost(world, target);
   let minRate = Infinity;
@@ -408,7 +470,12 @@ export function bottleneckResource(
   }
 
   // Phase 6 comp bottleneck — checked before any cell-supply analysis.
-  if (maxIntermediateValue(target) > world.comprehension) return 'comprehension';
+  if (
+    currentConfig().mechanics.comprehensionGate &&
+    maxIntermediateValue(target) > world.comprehension
+  ) {
+    return 'comprehension';
+  }
 
   const vec = resourceCost(world, target);
   let worstRatio = Infinity;
@@ -437,11 +504,14 @@ export function bottleneckResource(
 // ---------------------------------------------------------------------------
 
 export function currentCost(entry: LitEntry, purchaseCount: number): CostItem[] {
-  if (entry.once || purchaseCount === 0) return entry.cost;
+  const configScale = entryCostScale(entry);
   const scale = entry.costScale ?? 1.6;
-  const mult = Math.pow(scale, purchaseCount);
+  // Geometric repurchase multiplier applies only after the first buy.
+  const repurchaseMult = entry.once || purchaseCount === 0 ? 1 : Math.pow(scale, purchaseCount);
+  const totalMult = repurchaseMult * configScale;
+  if (totalMult === 1) return entry.cost;
   return entry.cost.map((item): CostItem => {
-    const scaled = Math.ceil(item.count * mult);
+    const scaled = Math.ceil(item.count * totalMult);
     if (isValueCost(item)) return { value: item.value, count: scaled };
     return {
       predicate: item.predicate,
@@ -479,7 +549,13 @@ export function canAfford(world: WorldState, cost: CostItem[]): boolean {
  * can't be bought until comp climbs that high.
  */
 export function canPurchase(world: WorldState, entry: LitEntry, cost: CostItem[]): boolean {
-  if (entry.compRequirement && world.comprehension < entry.compRequirement) return false;
+  if (
+    currentConfig().mechanics.comprehensionGate &&
+    entry.compRequirement &&
+    world.comprehension < entry.compRequirement
+  ) {
+    return false;
+  }
   return canAfford(world, cost);
 }
 
@@ -500,12 +576,29 @@ export function deductCost(world: WorldState, cost: CostItem[]): void {
  * as unlocked. Returns true on success. Phase 6: cell-level only
  * (pipes no longer have a level axis).
  */
+/** Apply the active config's level-cost scale to a LevelEntry. */
+export function scaledLevelCost(entry: LevelEntry): CostItem[] {
+  const mult = currentConfig().costScale.level;
+  if (mult === 1) return entry.cost;
+  return entry.cost.map((item): CostItem => {
+    const scaled = Math.ceil(item.count * mult);
+    if (isValueCost(item)) return { value: item.value, count: scaled };
+    return {
+      predicate: item.predicate,
+      count: scaled,
+      ...(item.magnitudeMin !== undefined ? { magnitudeMin: item.magnitudeMin } : {}),
+    };
+  });
+}
+
 export function purchaseLevel(world: WorldState, entry: LevelEntry): boolean {
-  if (!canAfford(world, entry.cost)) return false;
+  if (!currentConfig().mechanics.cellLeveling) return false;
+  const cost = scaledLevelCost(entry);
+  if (!canAfford(world, cost)) return false;
   const currentLevel = world.cellLevels.get(entry.target.cellType) ?? 1;
   if (currentLevel !== entry.level - 1) return false;
 
-  deductCost(world, entry.cost);
+  deductCost(world, cost);
   world.cellLevels.set(entry.target.cellType, entry.level);
   world.unlocked.add(entry.id);
   return true;
@@ -791,7 +884,11 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
     // Phase 6: pipes no longer level. Only cell-type bottlenecks have
     // upgrade options.
     let upgradeEntry: LevelEntry | null = null;
-    if (!bn.startsWith('literal:') && bn !== 'zero') {
+    if (
+      currentConfig().mechanics.cellLeveling &&
+      !bn.startsWith('literal:') &&
+      bn !== 'zero'
+    ) {
       const cellType = bn as CellType;
       const currentLevel = world.cellLevels.get(cellType) ?? 1;
       upgradeEntry = nextLevelEntry({ kind: 'cell', cellType }, currentLevel);
@@ -818,7 +915,7 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
             : 0;
       const levelMult =
         infraEntry.kind === 'cell' && infraEntry.cellType
-          ? levelMultiplier(world.cellLevels.get(infraEntry.cellType) ?? 1)
+          ? effectiveLevelMultiplier(world.cellLevels.get(infraEntry.cellType) ?? 1)
           : 1; // pipes don't level
       const currentSupply = ownedCells * levelMult;
       const cloneSpeedupRatio =
@@ -837,17 +934,18 @@ export function decide(world: WorldState, agent: AgentState): AgentDecision {
     }
 
     if (upgradeEntry) {
-      const upgradeAffordTime = canAfford(world, upgradeEntry.cost)
+      const upgradeCost = scaledLevelCost(upgradeEntry);
+      const upgradeAffordTime = canAfford(world, upgradeCost)
         ? 0
-        : ticksToAfford(world, upgradeEntry.cost);
+        : ticksToAfford(world, upgradeCost);
       const upgradeSpeedupRatio = 0.5;
       const upgradeScore = upgradeAffordTime + goalRemaining * upgradeSpeedupRatio;
       if (upgradeScore < bestScore) {
         bestScore = upgradeScore;
-        if (canAfford(world, upgradeEntry.cost)) {
+        if (canAfford(world, upgradeCost)) {
           bestAction = { kind: 'upgrade', entry: upgradeEntry };
         } else {
-          bestAction = { kind: 'pursue-infra', cost: upgradeEntry.cost };
+          bestAction = { kind: 'pursue-infra', cost: upgradeCost };
         }
       }
     }
@@ -972,8 +1070,17 @@ export interface SimulationResult {
   stalled: boolean;
 }
 
+/** Minimal Strategy contract repeated locally to avoid circular imports.
+ *  Mirrors sim/strategy.ts:Strategy. */
+export interface SimStrategy {
+  name: string;
+  decide(world: WorldState): AgentDecision;
+  onPurchase?(world: WorldState, entryId: string): void;
+  currentGoal?(): string | null;
+}
+
 export function simulate(
-  agent: AgentState,
+  strategy: SimStrategy,
   options: { maxTicks: number; stallThreshold?: number } = { maxTicks: 100_000 },
 ): SimulationResult {
   const world = newWorld();
@@ -984,8 +1091,26 @@ export function simulate(
   let lastPurchaseTick = 0;
   let stalled = false;
 
+  const onPurchase = (entryId: string): void => {
+    if (!unlocks.has(entryId)) unlocks.set(entryId, world.tick);
+    strategy.onPurchase?.(world, entryId);
+    lastPurchaseTick = world.tick;
+  };
+
+  const recordStall = (): boolean => {
+    if (world.tick - lastPurchaseTick <= stallThreshold) return false;
+    const goalId = strategy.currentGoal?.() ?? '(no goal)';
+    events.push({
+      tick: world.tick,
+      kind: 'stall',
+      message: `Agent stalled at goal "${goalId}" — ${describeBottleneck(world, goalId)}`,
+    });
+    stalled = true;
+    return true;
+  };
+
   while (world.tick < options.maxTicks) {
-    const decision = decide(world, agent);
+    const decision = strategy.decide(world);
     if (decision.done) break;
 
     if (decision.buy) {
@@ -996,13 +1121,7 @@ export function simulate(
           kind: 'purchase',
           message: `Bought ${decision.buy}`,
         });
-        if (!unlocks.has(decision.buy)) {
-          unlocks.set(decision.buy, world.tick);
-          if (agent.roadmap[agent.goalIndex] === decision.buy) {
-            agent.goalIndex += 1;
-          }
-        }
-        lastPurchaseTick = world.tick;
+        onPurchase(decision.buy);
         continue;
       }
       tickProduction(world, 0);
@@ -1017,8 +1136,7 @@ export function simulate(
           kind: 'purchase',
           message: `Upgraded ${decision.buyLevel.id}`,
         });
-        unlocks.set(decision.buyLevel.id, world.tick);
-        lastPurchaseTick = world.tick;
+        onPurchase(decision.buyLevel.id);
         continue;
       }
       tickProduction(world, 0);
@@ -1027,17 +1145,14 @@ export function simulate(
 
     if (decision.tickFocus !== undefined) {
       // α.4b.1: a tickFocus whose pool is at cap wastes the tick. The
-      // decide() path may have routed to a cost-currency value without
+      // strategy may have routed to a cost-currency value without
       // realising its pool was full; intercept here and route to the
       // warehouse / comp upgrade that lifts the cap.
-      //
-      // α.4c.4: predicate focuses bypass this check — predicateStocks
-      // have no cap.
       const focus = decision.tickFocus;
       if (!isPredicateFocus(focus) && poolAtCap(world, focus)) {
         const reroute =
-          pursueWarehouse(world, focus) ??
-          pursueCompUpgrade(world);
+          pursueWarehouseExt(world, focus) ??
+          pursueCompUpgradeExt(world);
         if (reroute) {
           if (reroute.buy) {
             const ok = purchase(world, reroute.buy);
@@ -1047,13 +1162,7 @@ export function simulate(
                 kind: 'purchase',
                 message: `Bought ${reroute.buy} (cap reroute on value ${focus})`,
               });
-              if (!unlocks.has(reroute.buy)) {
-                unlocks.set(reroute.buy, world.tick);
-                if (agent.roadmap[agent.goalIndex] === reroute.buy) {
-                  agent.goalIndex += 1;
-                }
-              }
-              lastPurchaseTick = world.tick;
+              onPurchase(reroute.buy);
               continue;
             }
           }
@@ -1062,33 +1171,14 @@ export function simulate(
             !(typeof reroute.tickFocus === 'number' && poolAtCap(world, reroute.tickFocus))
           ) {
             tickProduction(world, reroute.tickFocus);
-            if (world.tick - lastPurchaseTick > stallThreshold) {
-              const goalId = agent.roadmap[agent.goalIndex];
-              events.push({
-                tick: world.tick,
-                kind: 'stall',
-                message: `Agent stalled at goal "${goalId}" — ${describeBottleneck(world, goalId)}`,
-              });
-              stalled = true;
-              break;
-            }
+            if (recordStall()) break;
             continue;
           }
         }
       }
 
       tickProduction(world, focus);
-
-      if (world.tick - lastPurchaseTick > stallThreshold) {
-        const goalId = agent.roadmap[agent.goalIndex];
-        events.push({
-          tick: world.tick,
-          kind: 'stall',
-          message: `Agent stalled at goal "${goalId}" — ${describeBottleneck(world, goalId)}`,
-        });
-        stalled = true;
-        break;
-      }
+      if (recordStall()) break;
     }
   }
 
@@ -1098,6 +1188,61 @@ export function simulate(
     unlocks,
     finalWorld: world,
     stalled,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Strategy-accessible helpers (exported wrappers around internal helpers)
+// ---------------------------------------------------------------------------
+//
+// Strategies live in their own file; expose these so they can implement
+// comp / warehouse / predicate-producer detours without re-deriving the
+// logic.
+
+export function pursueCompUpgradeExt(world: WorldState): AgentDecision | null {
+  return pursueCompUpgrade(world);
+}
+export function pursueWarehouseExt(world: WorldState, value: number): AgentDecision | null {
+  return pursueWarehouse(world, value);
+}
+export function pursuePredicateProducerExt(
+  world: WorldState,
+  pred: PredicateId,
+): AgentDecision | null {
+  return pursuePredicateProducer(world, pred);
+}
+export function mostNeededFocusExt(world: WorldState, cost: CostItem[]): ProductionFocus | null {
+  return mostNeededFocus(world, cost);
+}
+export function nextCompUpgradeExt(world: WorldState): LitEntry | null {
+  return nextCompUpgrade(world);
+}
+export function entryForCellTypeExt(cellType: CellType): LitEntry | null {
+  return entryForCellType(cellType);
+}
+export function infraEntryForBottleneckExt(bn: string): LitEntry | null {
+  return infraEntryForBottleneck(bn);
+}
+export function ticksToAffordExt(world: WorldState, cost: CostItem[]): number {
+  return ticksToAfford(world, cost);
+}
+
+// ---------------------------------------------------------------------------
+// World clone (for beam-search rollouts)
+// ---------------------------------------------------------------------------
+
+export function cloneWorld(world: WorldState): WorldState {
+  return {
+    tick: world.tick,
+    cells: new Map(world.cells),
+    cellLevels: new Map(world.cellLevels),
+    pipes: new Map(world.pipes),
+    pool: new Map(world.pool),
+    unlocked: new Set(world.unlocked),
+    purchaseCount: new Map(world.purchaseCount),
+    comprehension: world.comprehension,
+    warehouses: new Map(world.warehouses),
+    predicateStocks: new Map(world.predicateStocks),
   };
 }
 

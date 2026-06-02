@@ -22,16 +22,25 @@ full unlock table. **With the V2 combat defense tax** (`sim/adversary.ts`
 default) these stretch to ~**4h 47m** / ~**13h 31m**; CLAUDE.md keeps the
 canonical key for which figure is which.
 
-## Two tools
+## Four tools
 
-- **`run.ts`** — the core simulator. Prints unlock pacing + the basic
+- **`run.ts`** — the core simulator. Prints unlock pacing + basic
   bottleneck/cliff analysis. Use for quick "did my edit shift the
-  curve?" runs.
+  curve?" runs. Now supports `--strategy <name>`, `--config <path>`,
+  and `--scale key=value` for parameterised runs.
 - **`analyze.ts`** — the richer metric tool. Adds per-value
   consumption-vs-production flow, bottleneck distribution over the
   run, focus-time distribution, and pool snapshots at every unlock
   event. Use when investigating "where is the agent actually
-  spending time" or "is this value the binding constraint."
+  spending time" or "is this value the binding constraint." Always
+  uses the baseline speedrun-greedy strategy on the default config.
+- **`compare.ts`** — runs every registered strategy (or a chosen
+  subset) against the same roadmap + config and prints a side-by-side
+  pacing table. Use to surface where strategies diverge — i.e. where
+  the design has *real choices*.
+- **`diff.ts`** — counterfactual harness. Runs two SimConfigs
+  back-to-back and reports the pacing delta per unlock. The fastest
+  way to answer "what if I cut multiplication's M from 100 to 60?"
 - **`adversary.ts`** — the **V2 combat-balance model** (sim/ADVERSARY.md).
   Layers the Adversary (Part II) on top of the locked pacing curve and
   reports the **defense tax**, survival margin, Core-HP trace, and the
@@ -70,12 +79,30 @@ Requires Node 22.6+ (native TypeScript support). The project is on
 Node 24.
 
 ```bash
+# Basic single-strategy runs (defaults to speedrun-greedy + baseline)
 node sim/run.ts                       # default roadmap, console output
 node sim/run.ts --verbose             # print every purchase event
 node sim/run.ts --csv pacing.csv      # spreadsheet-friendly CSV
 node sim/run.ts --to multiplication   # stop at a specific roadmap entry
 node sim/run.ts --max-ticks 50000     # cap simulation runtime
 
+# Strategy + config experimentation
+node sim/run.ts --strategy comp-rush
+node sim/run.ts --config sim/configs/flat-fuel.json
+node sim/run.ts --scale operatorM.tetration=0.5 --to tetration
+node sim/run.ts --scale mechanics.warehouses=0   # toggle off via --scale
+
+# Multi-strategy comparison
+node sim/compare.ts                              # all strategies
+node sim/compare.ts --strategies speedrun-greedy,beam-search
+node sim/compare.ts --to multiplication --max-ticks 30000
+node sim/compare.ts --csv-dir /tmp/compare-runs  # one CSV per strategy
+
+# Config A/B diff
+node sim/diff.ts sim/configs/baseline.json sim/configs/cheap-mult.json
+node sim/diff.ts a.json b.json --to tetration --strategy beam-search
+
+# Deeper analysis (single-strategy baseline)
 node sim/analyze.ts                   # richer metric report
 node sim/analyze.ts --to tetration    # truncated analyze
 node sim/analyze.ts --csv-cons f.csv  # consumption CSV
@@ -114,6 +141,93 @@ pentation) vs better batteries (buy the time back at the same threat).
 The recommended lock above lands pentation at **~13h**; the suggested
 follow-up is to re-baseline DESIGN §V2.8's target to "~13h with combat."
 All knobs live in the `TUNING` block at the top of `adversary.ts`.
+
+## Strategies (Phase A.6 playtester slice)
+
+The agent's decision policy is pluggable. Each strategy in
+`sim/strategies/` exports a factory that builds a `Strategy` (see
+`sim/strategy.ts`). Built-in strategies:
+
+- **`speedrun-greedy`** — the original baked-in agent. Follows the
+  roadmap, picks bottleneck-driven actions by ROI. **Pacing-locked
+  baseline**: with the default config, this strategy reproduces
+  `sim/pacing-locked.csv` byte-for-byte. Always start tuning from
+  here.
+- **`comp-rush`** — diverts grinding-time toward the next
+  comprehension upgrade whenever the goal is reachable. Tests
+  whether comp is correctly priced vs operator unlocks.
+- **`warehouse-hoarder`** — buys typed warehouses preemptively
+  when the pool for a value is >40% full. Tests whether warehouses
+  are undervalued.
+- **`cell-spammer`** — redirects level-up purchases to fresh cell
+  clones. Tests whether levels are correctly priced vs clones.
+- **`beam-search`** — at each "what next?" moment, picks the next
+  goal by rolling out every milestone candidate in a cloned world
+  and taking the fastest. Surfaces "weird and fast" orderings the
+  hand-curated roadmap doesn't try. Rollouts have a 2000-tick
+  stall guard; ~100ms per pick.
+
+To add a new strategy:
+
+1. Create `sim/strategies/my-strategy.ts`.
+2. Export a `makeMyStrategy(roadmap)` factory returning `Strategy`.
+3. Call `registerStrategy('my-strategy', (opts) => makeMyStrategy(opts.roadmap))`.
+4. Import the file from `run.ts` and `compare.ts` (and `diff.ts` if
+   relevant) — registration happens on import.
+5. Run `node sim/compare.ts` to see where it diverges from baseline.
+
+## Configs (mechanic toggles + cost scales)
+
+`SimConfig` (see `sim/config.ts`) lets you toggle whole mechanics
+and scale cost categories without editing catalog data. Configs are
+JSON files in `sim/configs/`; CLI takes `--config <path>` and
+repeatable `--scale key=value` overrides.
+
+**Available toggles** (`mechanics.*`):
+
+- `cellLeveling` — false ⇒ level multiplier always 1; level entries
+  become no-ops. Measures the leveling-as-progression axis.
+- `ladderFuel` — false ⇒ revert to pre-α.5 flat single-block fuel
+  (1 block of value L per firing, magnitude-scaled). Measures how
+  much the ladder changed pacing.
+- `warehouses` — false ⇒ pool cap is infinite; agent never buys
+  warehouses. Measures the storage-as-progression axis.
+- `comprehensionGate` — false ⇒ no comp gate at all. Pacing
+  collapses; mostly a debugging knob.
+
+**Available scales** (`costScale.*`):
+
+- `operatorM.<id>` — multiplier on a specific Literature entry's
+  cost (e.g. `operatorM.multiplication=0.6` cuts multiplication's
+  unlock cost by 40%).
+- `compTier` / `pipe` / `warehouse` / `level` — category-wide
+  multipliers.
+
+**Example configs shipped:**
+
+- `baseline.json` — all defaults explicit (useful as a template).
+- `flat-fuel.json` — disables ladder fuel (single-block model).
+- `no-leveling.json` — disables cell leveling.
+- `no-warehouses.json` — disables pool cap.
+- `cheap-mult.json` — operatorM.multiplication=0.6.
+
+**Authoring a new config:** copy `baseline.json`, edit the keys you
+want, save under a meaningful name. JSON keys are merged onto the
+default — only specify what changes.
+
+## Regression discipline
+
+The `speedrun-greedy` strategy on the default config MUST reproduce
+`sim/pacing-locked.csv` byte-for-byte:
+
+```bash
+node sim/run.ts --csv /tmp/after.csv && diff /tmp/after.csv sim/pacing-locked.csv
+```
+
+If this diffs after a change to `core/catalog/`, `sim/simulator.ts`,
+or `sim/catalog.ts`, you've inadvertently shifted the locked baseline.
+Either revert, update `sim/pacing-locked.csv` (and `PACING_LOCKED.md`)
+deliberately, or fix the bug.
 
 ## α.5c model — Ladder Rule
 

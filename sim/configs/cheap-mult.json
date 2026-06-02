@@ -1,0 +1,7 @@
+{
+  "costScale": {
+    "operatorM": {
+      "multiplication": 0.6
+    }
+  }
+}
