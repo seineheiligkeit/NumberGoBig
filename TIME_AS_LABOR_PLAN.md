@@ -77,11 +77,21 @@ extending.
   40s fuelled** — the pressure→relief lever is real. Pinned the intended feel
   as **pacing-guard tests** (snappy opening, snappy small ops, googol >100× the
   work of 100, fuel collapses a heavy op 10×) so future tuning stays bounded.
-- ⏭️ **Next candidates:** a smarter sim driver (the greedy one shows a static
-  factory grows ~linearly — the exponential climb needs active build-out, as
-  designed; a real optimal-play agent would quantify the curve); cell dragging +
-  river manual-pickup; the global time-levers / prestige; deeper steepness
-  tuning; then the careful re-introduction of the deferred systems.
+- ✅ **Converged fuel economy + the reprocessing layer.** value-fuel (conserved),
+  per-operator labor exponents, fuel grades (tiers chain), super-linear transit
+  (big blocks freeze), the **Mill** (additive splitter → graded fuel) and the
+  **pipe-accelerator** (fueled beacon; big numbers as local power cells). See
+  TIME_AS_LABOR.md "The fuel economy".
+- ✅ **Cell dragging** (layout) + `moveCell` hook; pipes follow.
+- ✅ **Optimal-play agent** (`sim/agent.ts`) — a competent heuristic climber
+  (direct-feed = free logistics) that isolates the *production* economy. It
+  **climbs exponentially** (10³ @2m, a 10³→10⁶ build-out cliff ~26m, then
+  acceleration to 10¹⁸ @1.7h) — confirming the economy is sound and giving us a
+  legible pacing instrument. Transport friction is the layer the player adds.
+- ⏭️ **Next candidates:** tune the exponents/grades/transit-`p` against the
+  agent (e.g. the 10³→10⁶ cliff); a *logistics-aware* agent (pipes + accelerators
+  + distance) to pace the full game; Mill-output routing polish; the global
+  time-levers / prestige; then the careful re-introduction of deferred systems.
 
 ---
 
