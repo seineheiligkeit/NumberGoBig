@@ -65,10 +65,15 @@ export interface TimeTuning {
 
 export const DEFAULT_TUNING: TimeTuning = {
   baseRate: 1,
-  opWorkPerDigit: 4,
-  opWorkExponent: 1,
+  // First tuning pass (sim-read, sim/time-run.ts). Super-linear in digits so
+  // big numbers are genuinely slow to write at base — making the fuel economy
+  // the answer (the design's core tension) — while a low per-digit coefficient
+  // keeps small ops snappy. With these: a `1` is ~2 ticks, 10^6 ~37 ticks base
+  // (but ~1 tick well-fuelled), 10^100 ~34m base (~40s well-fuelled).
+  opWorkPerDigit: 2,
+  opWorkExponent: 1.5,
   opWorkFloor: 2,
-  buildBase: 24,
+  buildBase: 16,
   buildGrowth: 1.5,
   transitPerDigit: 0.6,
   transitDistanceUnit: 240,

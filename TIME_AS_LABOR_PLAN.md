@@ -69,7 +69,19 @@ extending.
   green, build clean.
   - *Note:* `value.ts` keeps the full number union (rational/irrational/complex/
     set) intact — the families return later per design, and it's pure + working.
-- ⏭️ **Next:** Phase 5 — first tuning pass (the sim instrument + `DEFAULT_TUNING`).
+- ✅ **First tuning pass.** Rebuilt `sim/time-run.ts` into a tuning report
+  (build ladder, operation-duration ladder base-vs-fuelled, driven bootstrap).
+  Read it and set an aggressive-leaning `DEFAULT_TUNING`: `opWork = 2·d^1.5`
+  (super-linear so big numbers are slow to write), `build = 16·1.5^n`. Result:
+  a `1` ≈ 2 ticks, `10^6` ≈ 37s base / ~1s fuelled, `10^100` ≈ **34m base /
+  40s fuelled** — the pressure→relief lever is real. Pinned the intended feel
+  as **pacing-guard tests** (snappy opening, snappy small ops, googol >100× the
+  work of 100, fuel collapses a heavy op 10×) so future tuning stays bounded.
+- ⏭️ **Next candidates:** a smarter sim driver (the greedy one shows a static
+  factory grows ~linearly — the exponential climb needs active build-out, as
+  designed; a real optimal-play agent would quantify the curve); cell dragging +
+  river manual-pickup; the global time-levers / prestige; deeper steepness
+  tuning; then the careful re-introduction of the deferred systems.
 
 ---
 

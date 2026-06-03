@@ -125,3 +125,36 @@ test('ticksToComplete: work / rate, Infinity at zero rate', () => {
   assert.equal(ticksToComplete(new Decimal(100), 4), 25);
   assert.equal(ticksToComplete(new Decimal(100), 0), Infinity);
 });
+
+// --- Pacing guards: pin the intended *feel* so tuning stays bounded ---------
+// These encode design targets (TIME_AS_LABOR.md §6) as ranges, not exact
+// numbers, so a tuning change that breaks the feel trips a test.
+
+test('guard: the first cell builds quickly at base rate (snappy opening)', () => {
+  const ticks = ticksToComplete(buildWork(0), DEFAULT_TUNING.baseRate);
+  assert.ok(ticks >= 6 && ticks <= 40, `first build ${ticks} ticks should be a brief, felt wait`);
+});
+
+test('guard: small operations stay snappy', () => {
+  // Successor (writes a "1") and a small sum should each be a few ticks.
+  assert.ok(ticksToComplete(operationWork(VALUE_ONE), DEFAULT_TUNING.baseRate) <= 4);
+  assert.ok(ticksToComplete(operationWork(valueOf(100)), DEFAULT_TUNING.baseRate) <= 20);
+});
+
+test('guard: steepness is aggressive — big numbers are far slower to write', () => {
+  // Writing 10^100 should dwarf writing 100 by a large factor (super-linear).
+  const big = operationWork(valueOf(1e100 as unknown as number));
+  // 1e100 isn't a safe JS number literal; build it as a real Decimal instead.
+  const bigD = operationWork({ kind: 'real', n: new Decimal('1e100') });
+  const small = operationWork(valueOf(100));
+  void big;
+  assert.ok(bigD.div(small).toNumber() > 100, 'a googol must be >100× the work of 100');
+});
+
+test('guard: fuel is the answer — a heavy op collapses from minutes to seconds', () => {
+  const w = operationWork({ kind: 'real', n: new Decimal('1e100') });
+  const base = ticksToComplete(w, DEFAULT_TUNING.baseRate);
+  const fuelled = ticksToComplete(w, DEFAULT_TUNING.baseRate + 50);
+  assert.ok(base > 600, 'a googol is a long wait at base rate (the pressure)');
+  assert.ok(fuelled < base / 10, 'a strong fuel feed is the relief');
+});
