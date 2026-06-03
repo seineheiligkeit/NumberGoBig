@@ -21,11 +21,11 @@
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import { drawPaper } from '../pixi/paper';
 import { setupRiver } from '../pixi/river';
-import { setupCamera, screenToCanvas } from '../camera';
+import { setupCamera, screenToCanvas, restoreCamera } from '../camera';
 import { pencilStrokeDouble } from '../pixi/pencil';
 import { drawValueLabel } from '../pixi/value-label';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from '../pixi/typography';
-import { valueMagnitude, type Value } from '../../../core/value';
+import { valueMagnitude, valueOf, type Value } from '../../../core/value';
 import {
   createWorld,
   placeCell,
@@ -130,6 +130,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.addChild(river);
 
   setupCamera(app, canvasLayer);
+  // Start with the canvas origin mid-screen, a touch above the river — a
+  // modest workspace, so the first cells you place land in clear view.
+  restoreCamera({ x: app.screen.width / 2, y: app.screen.height * 0.42, scale: 1 });
 
   // The model.
   const world: World = createWorld();
@@ -362,17 +365,43 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   // --- Ticker --------------------------------------------------------------
 
   let acc = 0;
+  let enginePaused = false;
   app.ticker.add((t) => {
     // Advance the model in whole ticks for determinism.
-    acc += (t.deltaMS / 1000) * TICKS_PER_SECOND;
-    while (acc >= 1) {
-      tick(world, 1);
-      acc -= 1;
+    if (!enginePaused) {
+      acc += (t.deltaMS / 1000) * TICKS_PER_SECOND;
+      while (acc >= 1) {
+        tick(world, 1);
+        acc -= 1;
+      }
     }
     syncCells();
     syncBlocks();
     scoreStore.set(formatScore(totalScore(world)));
   });
+
+  // --- DEV inspection hooks ------------------------------------------------
+  // In dev builds, expose the engine so a headless Playwright harness can
+  // drive and assert the real game (place cells, advance time deterministically,
+  // read score/pool). The view stays the view; this is just a test seam.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __nbg?: unknown }).__nbg = {
+      world,
+      setPaused: (p: boolean) => {
+        enginePaused = p;
+      },
+      tick: (n = 1) => tick(world, n),
+      place: (kind: CellKind, x = 0, y = 0) => placeCell(world, kind, x, y),
+      feed: (cellId: number, port: number, n: number) => feedOperand(world, cellId, port, valueOf(n)),
+      addLoose: (n: number, x = 0, y = 0) => addLoose(world, valueOf(n), x, y),
+      score: () => totalScore(world).toString(),
+      poolSize: () => world.pool.length,
+      cellState: (id: number) => {
+        const c = world.cells.get(id);
+        return c ? { built: c.built, build: buildFraction(c), op: opFraction(c), kind: c.kind } : null;
+      },
+    };
+  }
 
   // --- Resize --------------------------------------------------------------
 
