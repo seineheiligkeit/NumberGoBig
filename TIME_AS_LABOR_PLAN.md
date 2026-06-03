@@ -14,6 +14,36 @@ extending.
 > rewrite the renderer or the canvas. We do delete or disable everything in the
 > "deferred" list of the design doc.
 
+> **Architecture decision (taken during build): pure engine + thin view.**
+> Per the audit (the 1542-line `world/index.ts` god module mixes simulation
+> with Svelte stores and Pixi hooks; pure `core/` is "the highest-leverage,
+> lowest-cost" thing to test), the new game's logic lives in a **pure, headless,
+> fully-tested simulation engine** — `core/engine.ts` over `core/time.ts` — with
+> **no Pixi/Svelte/DOM**. It *is* the simulation: tickable, deterministic,
+> `node --test`-able, sim-drivable (`sim/time-run.ts`). The renderer becomes a
+> thin **view** that holds a `World`, ticks it, and draws it. This means the old
+> `world/index.ts` is **retired wholesale** rather than surgically de-tangled
+> — lower risk, and it gives us a model we can fully reason about and test.
+>
+> **Test stack:** `npm test` → `node --test 'core/**/*.test.ts'` (native TS,
+> **zero new dependencies** — same path the sim already uses). Test files are
+> excluded from `svelte-check` so app code stays free of `node:` builtins.
+
+### Progress log
+
+- ✅ **Test infrastructure** — `npm test` (node --test, dependency-free).
+- ✅ **`core/time.ts`** — the cost math (Phases 1.1 / 2.1 / 4.1), 13 tests.
+- ✅ **`core/engine.ts`** — the pure headless engine: build time, op time,
+  fuel acceleration, transport time×distance, loose pool, Total Score. This
+  is the **logic of Phases 1–4**, fully tested (15 engine tests, 28 total).
+- ✅ **`sim/time-run.ts`** — headless pacing instrument (the time-model
+  analogue of `sim/run.ts`). Already shows the economy behaves sensibly: a
+  static under-supplied factory grows ~linearly; the exponential climb needs
+  active build-out + a wider successor farm (as designed).
+- ⏭️ **Next: the view.** Phase 0 (strip old `src/` layers) + build the Pixi
+  renderer/interaction over the engine. The model is done; this wires it to
+  the screen. Largest remaining chunk.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline
