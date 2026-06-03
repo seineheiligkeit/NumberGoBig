@@ -48,9 +48,9 @@ function takeLargest(world: World): Value | null {
   if (world.pool.length === 0) return null;
   let bestIdx = 0;
   for (let i = 1; i < world.pool.length; i++) {
-    if (valueMagnitude(world.pool[i]).gt(valueMagnitude(world.pool[bestIdx]))) bestIdx = i;
+    if (valueMagnitude(world.pool[i].value).gt(valueMagnitude(world.pool[bestIdx].value))) bestIdx = i;
   }
-  return world.pool.splice(bestIdx, 1)[0];
+  return world.pool.splice(bestIdx, 1)[0].value;
 }
 
 /** Pull the smallest loose block (good cheap fuel). */
@@ -58,9 +58,9 @@ function takeSmallest(world: World): Value | null {
   if (world.pool.length === 0) return null;
   let bestIdx = 0;
   for (let i = 1; i < world.pool.length; i++) {
-    if (valueMagnitude(world.pool[i]).lt(valueMagnitude(world.pool[bestIdx]))) bestIdx = i;
+    if (valueMagnitude(world.pool[i].value).lt(valueMagnitude(world.pool[bestIdx].value))) bestIdx = i;
   }
-  return world.pool.splice(bestIdx, 1)[0];
+  return world.pool.splice(bestIdx, 1)[0].value;
 }
 
 /** A simple greedy auto-player: feed idle operators, fuel busy ones. */

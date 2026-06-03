@@ -89,17 +89,36 @@ export interface SimPipe {
   inFlight: { value: Value; work: Decimal; progress: Decimal } | null;
 }
 
+/**
+ * A loose block sitting on the canvas. Position is a first-class simulation
+ * concept (distance affects transport), and the view needs identity to render
+ * and drag individual blocks — so loose blocks carry both.
+ */
+export interface LooseBlock {
+  id: number;
+  value: Value;
+  x: number;
+  y: number;
+}
+
 export interface World {
   tuning: TimeTuning;
   cells: Map<number, SimCell>;
   pipes: Map<number, SimPipe>;
   /** Loose blocks on the canvas (outputs with nowhere to go). */
-  pool: Value[];
+  pool: LooseBlock[];
   nextId: number;
 }
 
 export function createWorld(tuning: TimeTuning = DEFAULT_TUNING): World {
   return { tuning, cells: new Map(), pipes: new Map(), pool: [], nextId: 1 };
+}
+
+/** Materialise a loose block at a position. Internal + setup helper. */
+function pushLoose(world: World, value: Value, x: number, y: number): LooseBlock {
+  const block: LooseBlock = { id: world.nextId++, value, x, y };
+  world.pool.push(block);
+  return block;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,15 +184,15 @@ export function feedOperand(world: World, cellId: number, port: number, value: V
 export function injectFuel(world: World, cellId: number, value: Value): void {
   const cell = world.cells.get(cellId);
   if (!cell) {
-    world.pool.push(value);
+    pushLoose(world, value, 0, 0);
     return;
   }
   applyFuel(world, cell, value);
 }
 
-/** Drop a loose block onto the canvas (setup / manual play). */
-export function addLoose(world: World, value: Value): void {
-  world.pool.push(value);
+/** Drop a loose block onto the canvas (setup / manual play). Returns its id. */
+export function addLoose(world: World, value: Value, x = 0, y = 0): number {
+  return pushLoose(world, value, x, y).id;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +266,7 @@ function emit(world: World, cell: SimCell, port: number, value: Value): void {
       return;
     }
   }
-  world.pool.push(value);
+  pushLoose(world, value, cell.x + 60, cell.y);
 }
 
 function tickPipes(world: World, base: number): void {
@@ -264,7 +283,7 @@ function tickPipes(world: World, base: number): void {
 function deliver(world: World, pipe: SimPipe, value: Value): void {
   const dest = world.cells.get(pipe.toCell);
   if (!dest) {
-    world.pool.push(value);
+    pushLoose(world, value, 0, 0);
     return;
   }
   if (pipe.fuel) {
@@ -276,7 +295,7 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
   if (dest.built && pipe.toPort >= 0 && pipe.toPort < dest.operands.length && dest.operands[pipe.toPort] === null) {
     dest.operands[pipe.toPort] = value;
   } else {
-    world.pool.push(value);
+    pushLoose(world, value, dest.x - 60, dest.y);
   }
 }
 
@@ -296,7 +315,7 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
     return;
   }
   // No active work to accelerate — the block isn't wasted, it lands loose.
-  world.pool.push(value);
+  pushLoose(world, value, cell.x, cell.y + 40);
 }
 
 function pipeDistance(world: World, pipe: SimPipe): number {
@@ -313,7 +332,7 @@ function pipeDistance(world: World, pipe: SimPipe): number {
 /** Total Score: the magnitude of every block you currently possess. */
 export function totalScore(world: World): Decimal {
   let sum = Decimal.dZero;
-  for (const v of world.pool) sum = sum.add(valueMagnitude(v));
+  for (const b of world.pool) sum = sum.add(valueMagnitude(b.value));
   for (const cell of world.cells.values()) {
     for (const o of cell.operands) if (o) sum = sum.add(valueMagnitude(o));
     if (cell.op) for (const h of cell.op.heldInputs) sum = sum.add(valueMagnitude(h));
@@ -328,7 +347,7 @@ export function totalScore(world: World): Decimal {
 export function poolCountOf(world: World, target: number): number {
   const t = new Decimal(target);
   let count = 0;
-  for (const v of world.pool) if (valueMagnitude(v).eq(t)) count++;
+  for (const b of world.pool) if (valueMagnitude(b.value).eq(t)) count++;
   return count;
 }
 
@@ -339,6 +358,22 @@ export function poolSize(world: World): number {
 
 export function getCell(world: World, id: number): SimCell | undefined {
   return world.cells.get(id);
+}
+
+/** Remove a loose block by id and return it (for the view's drag pickup). */
+export function takeLooseById(world: World, id: number): LooseBlock | null {
+  const idx = world.pool.findIndex((b) => b.id === id);
+  if (idx < 0) return null;
+  return world.pool.splice(idx, 1)[0];
+}
+
+/** Reposition a loose block (the view dragging it around the canvas). */
+export function moveLoose(world: World, id: number, x: number, y: number): void {
+  const b = world.pool.find((b) => b.id === id);
+  if (b) {
+    b.x = x;
+    b.y = y;
+  }
 }
 
 /** Fraction of a cell's construction complete, 0..1. */

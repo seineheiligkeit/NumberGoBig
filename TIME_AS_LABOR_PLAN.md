@@ -40,9 +40,22 @@ extending.
   analogue of `sim/run.ts`). Already shows the economy behaves sensibly: a
   static under-supplied factory grows ~linearly; the exponential climb needs
   active build-out + a wider successor farm (as designed).
-- ⏭️ **Next: the view.** Phase 0 (strip old `src/` layers) + build the Pixi
-  renderer/interaction over the engine. The model is done; this wires it to
-  the screen. Largest remaining chunk.
+- ✅ **View slice A — the model on screen.** `src/lib/view/game-view.ts` is a
+  thin Pixi renderer + interaction over the engine (reusing paper / river /
+  camera / value-label / pencil): place cells from a toolbar (they **sketch in**
+  over build time), Successors tap the river and pencil out `1`s into a
+  positioned pool, **drag loose blocks** onto operand ports to feed operators or
+  onto the fuel socket of a working cell to burn them, operations **pencil in**
+  their result with a progress meter, live Total Score. `main.ts`/`App.svelte`
+  rewired to the new view; the old `src/` layers are now **dormant**
+  (unreferenced — Vite no longer bundles them) pending deletion in a cleanup
+  slice. check 0/0, build clean.
+  - *Runtime/visual verification is by play session* (`npm run dev`) — rendering
+    isn't unit-testable; a Playwright headless smoke test is a candidate
+    follow-up.
+- ⏭️ **Next:** view slice B — **pipes + transport distance** (the map) and
+  river manual-pickup; then the Phase 0 deletion pass (remove the dormant old
+  layers); then Phase 5 tuning (sim re-point).
 
 ---
 
