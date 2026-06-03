@@ -53,9 +53,23 @@ extending.
   - *Runtime/visual verification is by play session* (`npm run dev`) — rendering
     isn't unit-testable; a Playwright headless smoke test is a candidate
     follow-up.
-- ⏭️ **Next:** view slice B — **pipes + transport distance** (the map) and
-  river manual-pickup; then the Phase 0 deletion pass (remove the dormant old
-  layers); then Phase 5 tuning (sim re-point).
+- ✅ **Playwright harness + DEV hooks** — `npm run test:e2e` drives the real
+  game headlessly (env's Chromium + software WebGL). Caught a real crash-on-load
+  the type-check missed. `window.__nbg` is the inspection seam.
+- ✅ **View slice B — pipes + transport distance.** Two-click pipe tool; pencil
+  pipe lines with a block that **slides** along as transit progresses
+  (magnitude × distance). The canvas is now a map.
+- ✅ **Phase 0 deletion pass.** Removed all dormant layers: the old `src/`
+  (adversary, sets, comprehension, world, interaction, persistence, bots,
+  cultivation, blueprints, filters, the old pipe/UI/dev presets), the obsolete
+  `sim/` (ladder/comprehension model), and the now-unreferenced `core/`
+  (catalog, classify, warehouse-rules, cost, sets, cell-geometry). `cell-types`
+  slimmed to the 6 constructive operators. **Core is now just `value`, `time`,
+  `engine`, `cell-types`** (+ tests). 810→807 files; check 0/0, 28 unit + 4 e2e
+  green, build clean.
+  - *Note:* `value.ts` keeps the full number union (rational/irrational/complex/
+    set) intact — the families return later per design, and it's pure + working.
+- ⏭️ **Next:** Phase 5 — first tuning pass (the sim instrument + `DEFAULT_TUNING`).
 
 ---
 

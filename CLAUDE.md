@@ -4,6 +4,18 @@ A parody incremental game in which the player constructs the natural numbers
 — and eventually all of mathematics — from a river of zeros. Solo project.
 Web-first.
 
+> **⚠️ Branch note — `time-as-labor` prototype.** This branch is a ground-up
+> reconception around **time as the core resource** (build time, operation
+> time ∝ magnitude, distance, fuel-buys-speed). It has **deleted** most of what
+> this file documents below (the comprehension spine, the fuel ladder, the
+> Adversary, Sets, the old `world`/`interaction`/`sim`). The current
+> architecture is a **pure tested engine** (`core/{value,time,engine,
+> cell-types}.ts`) with a thin Pixi **view** (`src/lib/view/`), driven by
+> `npm test` (node --test) + `npm run test:e2e` (Playwright). **The authority
+> for this branch is [TIME_AS_LABOR.md](./TIME_AS_LABOR.md) and
+> [TIME_AS_LABOR_PLAN.md](./TIME_AS_LABOR_PLAN.md).** Everything below describes
+> the pre-prototype main game and is retained for when deferred systems return.
+
 ## Authoritative documents
 
 These two files are the project's north stars. Read them before significant
