@@ -282,6 +282,43 @@ test('the canvas is a map: a big block is frozen but its small pieces flow', () 
   assert.ok(big > small * 5, 'a big block is dramatically slower to move than a small one');
 });
 
+// --- The Mill (additive splitter) ------------------------------------------
+
+test('Mill splits a block into pieces summing to the same value (conserved)', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'mill');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(800));
+  const before = score(w); // 800 staged
+  run(w, 50); // grind (cheap) + emit
+  assert.equal(poolCountOf(w, 100), 8, '800 → 8 × 100');
+  assert.equal(score(w), before, 'milling conserves score (additive split)');
+});
+
+// --- The pipe-accelerator --------------------------------------------------
+
+test('an accelerator boosts the transit of nearby pipes', () => {
+  function arriveTicks(withAccel: boolean): number {
+    const w = createWorld();
+    const src = placeCell(w, 'addition', 0, 0);
+    const dst = placeCell(w, 'multiplication', 300, 0);
+    let accel = -1;
+    if (withAccel) accel = placeCell(w, 'accelerator', 150, 0); // over the pipe midpoint
+    while ([src, dst, ...(withAccel ? [accel] : [])].some((id) => !getCell(w, id)!.built)) tick(w, 1);
+    placePipe(w, src, 0, dst, 0);
+    if (withAccel) injectFuel(w, accel, valueOf(1e6)); // a big power cell → strong boost
+    feedOperand(w, src, 0, valueOf(500));
+    feedOperand(w, src, 1, valueOf(500)); // → 1000 emitted into the pipe
+    let t = 0;
+    while (getCell(w, dst)!.operands[0] === null && t < 500000) {
+      tick(w, 1);
+      t++;
+    }
+    return t;
+  }
+  assert.ok(arriveTicks(true) < arriveTicks(false), 'a charged accelerator speeds the supply line');
+});
+
 // --- The bootstrap loop (Phase 3 §3) ---------------------------------------
 
 test('bootstrap: a small successor farm produces a rising score, faster when wider', () => {

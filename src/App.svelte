@@ -11,6 +11,8 @@
     { tool: 'addition', label: '+  Addition' },
     { tool: 'multiplication', label: '×  Multiplication' },
     { tool: 'exponentiation', label: '^  Exponentiation' },
+    { tool: 'mill', label: 'M  Mill (split → fuel)' },
+    { tool: 'accelerator', label: '»  Accelerator' },
     { tool: 'pipe', label: '↳  Pipe' },
   ];
 

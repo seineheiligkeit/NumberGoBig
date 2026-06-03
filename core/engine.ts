@@ -33,25 +33,47 @@ import {
   DEFAULT_TUNING,
   buildWork,
   fuelValue,
+  magnitudeDigits,
   minFuelDenomination,
   operationWork,
   transitWork,
   type TimeTuning,
 } from './time.ts';
 
-/** The constructive operators the prototype ships with (TIME_AS_LABOR.md §1). */
+/** The constructive operators + the two reprocessing objects. */
 export type CellKind =
   | 'successor'
   | 'addition'
   | 'multiplication'
   | 'exponentiation'
   | 'tetration'
-  | 'pentation';
+  | 'pentation'
+  | 'mill' // additive splitter — liquefies a block into a graded fuel stream
+  | 'accelerator'; // beacon — burns fuel to boost surrounding pipe throughput
+
+/** Operator kinds that go through core `operate()` (== the `CellType` union). */
+type OperatorKind = Exclude<CellKind, 'mill' | 'accelerator'>;
+
+/** True for the constructive operator cells (those that go through operate()). */
+function isOperator(kind: CellKind): kind is OperatorKind {
+  return kind !== 'mill' && kind !== 'accelerator';
+}
 
 /** Operand ports a kind exposes (Successor taps the free river — 0 operands). */
 export function operandArity(kind: CellKind): number {
-  return kind === 'successor' ? 0 : 2;
+  if (kind === 'successor' || kind === 'accelerator') return 0;
+  if (kind === 'mill') return 1;
+  return 2;
 }
+
+/** How many equal pieces a Mill splits a block into per pass (chain to grind
+ *  finer). Score-conserved: N pieces of V/N sum to V. */
+export const MILL_PIECES = 8;
+
+const ACCEL_RADIUS = 260; // pipes within this distance of an accelerator are boosted
+const ACCEL_GAIN = 2.5; // boost = 1 + GAIN·log10(charge+1), capped
+const ACCEL_MAX_BOOST = 24;
+const ACCEL_DECAY = 0.996; // charge drained per tick (slow fade)
 
 /** An operation in progress inside a cell. */
 interface ActiveOp {
@@ -79,6 +101,8 @@ export interface SimCell {
   operands: (Value | null)[];
   /** The current operation, or null when idle. */
   op: ActiveOp | null;
+  /** Accelerator only: stored fuel value, providing the boost; decays per tick. */
+  charge: Decimal;
 }
 
 export interface SimPipe {
@@ -144,6 +168,7 @@ export function placeCell(world: World, kind: CellKind, x = 0, y = 0): number {
     buildWork: buildWork(owned, world.tuning),
     operands: new Array(operandArity(kind)).fill(null),
     op: null,
+    charge: Decimal.dZero,
   });
   return id;
 }
@@ -207,7 +232,40 @@ export function tick(world: World, dt = 1): void {
   const base = world.tuning.baseRate * dt;
   tickConstruction(world, base);
   tickOperations(world, base);
+  tickAccelerators(world);
   tickPipes(world, base);
+}
+
+/** Accelerators drain their charge slowly each tick (it provides the boost). */
+function tickAccelerators(world: World): void {
+  for (const cell of world.cells.values()) {
+    if (cell.kind !== 'accelerator' || !cell.built) continue;
+    if (cell.charge.gt(Decimal.dZero)) cell.charge = cell.charge.mul(ACCEL_DECAY);
+  }
+}
+
+/** A built accelerator's transit boost, from its stored charge. */
+function acceleratorBoost(charge: Decimal): number {
+  if (charge.lte(Decimal.dZero)) return 1;
+  const b = 1 + ACCEL_GAIN * charge.add(1).log10().toNumber();
+  return Math.min(ACCEL_MAX_BOOST, b);
+}
+
+/** Max boost from any built accelerator covering a pipe's midpoint. */
+function pipeBoost(world: World, pipe: SimPipe): number {
+  const a = world.cells.get(pipe.fromCell);
+  const b = world.cells.get(pipe.toCell);
+  if (!a || !b) return 1;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  let boost = 1;
+  for (const cell of world.cells.values()) {
+    if (cell.kind !== 'accelerator' || !cell.built) continue;
+    if (Math.hypot(cell.x - mx, cell.y - my) <= ACCEL_RADIUS) {
+      boost = Math.max(boost, acceleratorBoost(cell.charge));
+    }
+  }
+  return boost;
 }
 
 function tickConstruction(world: World, base: number): void {
@@ -224,13 +282,14 @@ function tickConstruction(world: World, base: number): void {
 function tickOperations(world: World, base: number): void {
   for (const cell of world.cells.values()) {
     if (!cell.built) continue;
+    if (cell.kind === 'accelerator') continue; // handled in tickAccelerators
 
     // Start an op if idle and ready.
     if (cell.op === null) {
       if (cell.kind === 'successor') {
         // Taps the river: a free zero in, a 1 out. Always ready.
         startOp(world, cell, [VALUE_ZERO]);
-      } else if (cell.operands.every((o) => o !== null)) {
+      } else if (cell.operands.length > 0 && cell.operands.every((o) => o !== null)) {
         const inputs = cell.operands as Value[];
         cell.operands = new Array(cell.operands.length).fill(null);
         startOp(world, cell, inputs);
@@ -248,15 +307,36 @@ function tickOperations(world: World, base: number): void {
   }
 }
 
+/** The Mill's additive split: N equal pieces summing to the input (conserved).
+ *  Pieces below value 1 aren't worth splitting further — pass through. */
+function millEmits(v: Value): { portIndex: number; value: Value }[] {
+  const mag = valueMagnitude(v);
+  if (mag.lte(Decimal.dOne)) return [{ portIndex: 0, value: v }];
+  const piece = mag.div(MILL_PIECES);
+  const out: { portIndex: number; value: Value }[] = [];
+  for (let i = 0; i < MILL_PIECES; i++) out.push({ portIndex: 0, value: { kind: 'real', n: piece } });
+  return out;
+}
+
 function startOp(world: World, cell: SimCell, inputs: Value[]): void {
-  const result = operate(cell.kind, inputs);
-  const emits = result.emits.map((e) => ({ portIndex: e.portIndex, value: e.value }));
-  // Labor = digits(output)^k for this operator (the largest emit). An empty
-  // result (a refusal) still "completes" at the floor so the cell doesn't
-  // deadlock, but emits nothing.
-  const work = emits.length
-    ? emits.reduce((mx, e) => Decimal.max(mx, operationWork(e.value, cell.kind, world.tuning)), Decimal.dZero)
-    : new Decimal(world.tuning.opWorkFloor);
+  let emits: { portIndex: number; value: Value }[];
+  if (cell.kind === 'mill') {
+    // Liquefy: split the input into a graded fuel stream (score-conserved).
+    emits = millEmits(inputs[0]);
+  } else if (isOperator(cell.kind)) {
+    emits = operate(cell.kind, inputs).emits.map((e) => ({ portIndex: e.portIndex, value: e.value }));
+  } else {
+    emits = []; // accelerators never reach startOp
+  }
+  // Labor: milling is cheap processing (≈ digits of the input); a constructive
+  // op is digits(output)^k for its operator. Empty result still completes at
+  // the floor so the cell never deadlocks.
+  const work =
+    cell.kind === 'mill'
+      ? Decimal.max(magnitudeDigits(inputs[0]), new Decimal(world.tuning.opWorkFloor))
+      : emits.length
+        ? emits.reduce((mx, e) => Decimal.max(mx, operationWork(e.value, cell.kind, world.tuning)), Decimal.dZero)
+        : new Decimal(world.tuning.opWorkFloor);
   cell.op = {
     heldInputs: inputs,
     emits,
@@ -281,7 +361,9 @@ function emit(world: World, cell: SimCell, port: number, value: Value): void {
 function tickPipes(world: World, base: number): void {
   for (const pipe of world.pipes.values()) {
     if (pipe.inFlight === null) continue;
-    pipe.inFlight.progress = pipe.inFlight.progress.add(base);
+    // In-flight blocks advance at base × any covering accelerator's boost.
+    const step = base * pipeBoost(world, pipe);
+    pipe.inFlight.progress = pipe.inFlight.progress.add(step);
     if (pipe.inFlight.progress.gte(pipe.inFlight.work)) {
       deliver(world, pipe, pipe.inFlight.value);
       pipe.inFlight = null;
@@ -319,6 +401,12 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
  */
 function applyFuel(world: World, cell: SimCell, value: Value): void {
   const fv = fuelValue(value);
+  // An accelerator stores fuel as charge — including a whole big number dropped
+  // in as a "power cell" (its huge value = a huge, long-fading boost).
+  if (cell.kind === 'accelerator') {
+    cell.charge = cell.charge.add(fv);
+    return;
+  }
   if (!cell.built) {
     cell.buildProgress = cell.buildProgress.add(fv);
     if (cell.buildProgress.gte(cell.buildWork)) {
@@ -409,3 +497,11 @@ export function opFraction(cell: SimCell): number {
   if (!cell.op || cell.op.work.lte(0)) return 0;
   return Math.min(1, cell.op.progress.div(cell.op.work).toNumber());
 }
+
+/** An accelerator's current transit boost (1 = none), for the view. */
+export function cellBoost(cell: SimCell): number {
+  return cell.kind === 'accelerator' ? acceleratorBoost(cell.charge) : 1;
+}
+
+/** Accelerator coverage radius (canvas px), for the view's halo. */
+export const ACCELERATOR_RADIUS = ACCEL_RADIUS;

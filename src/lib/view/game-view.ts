@@ -41,6 +41,8 @@ import {
   operandArity,
   buildFraction,
   opFraction,
+  cellBoost,
+  ACCELERATOR_RADIUS,
   type World,
   type SimCell,
   type SimPipe,
@@ -67,6 +69,8 @@ const GLYPH: Record<CellKind, string> = {
   exponentiation: '^',
   tetration: '↑↑',
   pentation: '↑↑↑',
+  mill: 'M',
+  accelerator: '»',
 };
 
 // --- Per-entity visual caches ----------------------------------------------
@@ -80,6 +84,8 @@ interface CellVisual {
   ghost: Container | null; // output-in-progress numeral
   ghostKey: string; // identity of the value currently ghosted
   builtFlourished: boolean;
+  halo: Graphics | null; // accelerator coverage radius
+  info: Text | null; // accelerator boost readout
 }
 
 interface BlockVisual {
@@ -287,6 +293,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   function portAt(x: number, y: number): { cellId: number; port: number; fuel: boolean } | null {
     for (const cell of world.cells.values()) {
       if (!cell.built) continue;
+      // An accelerator's whole body is a fuel intake (drop a block — even a big
+      // one as a power cell — anywhere on it).
+      if (cell.kind === 'accelerator') {
+        if (Math.abs(x - cell.x) <= CELL_W / 2 + 6 && Math.abs(y - cell.y) <= CELL_H / 2 + 6) {
+          return { cellId: cell.id, port: -1, fuel: true };
+        }
+        continue;
+      }
       const L = portLayout(cell.kind);
       for (let i = 0; i < L.operands.length; i++) {
         const px = cell.x + L.operands[i].x;
@@ -429,9 +443,22 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
     const meter = new Graphics();
 
+    // Accelerator: a faint dashed coverage halo (drawn once, under the cell).
+    let halo: Graphics | null = null;
+    let info: Text | null = null;
+    if (cell.kind === 'accelerator') {
+      halo = new Graphics();
+      halo.circle(0, 0, ACCELERATOR_RADIUS).stroke({ color: GRAPHITE, width: 1, alpha: 0.18 });
+      info = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 16, fill: GRAPHITE } });
+      info.anchor.set(0.5);
+      info.position.set(0, CELL_H / 2 + 16);
+      root.addChildAt(halo, 0);
+    }
+
     root.addChild(ports, outline, glyph, meter);
+    if (info) root.addChild(info);
     canvasLayer.addChild(root);
-    return { root, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false };
+    return { root, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -443,6 +470,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (cell.built && !vis.builtFlourished) {
       vis.builtFlourished = true;
       drawPortMarkers(vis.ports, cell.kind);
+    }
+
+    // Accelerator: show its live boost (and pulse the halo when charged).
+    if (cell.kind === 'accelerator' && vis.info && vis.halo) {
+      const boost = cellBoost(cell);
+      vis.info.text = boost > 1.05 ? `×${boost.toFixed(1)}` : 'idle';
+      vis.halo.alpha = 0.12 + 0.012 * Math.min(20, boost);
+      return; // accelerators have no op ghost/meter
     }
 
     // Output ghost: a faint numeral that darkens as the op completes.
@@ -547,6 +582,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       pipe: (fromCell: number, toCell: number, toPort: number, fuel = false) =>
         placePipe(world, fromCell, 0, toCell, toPort, { fuel }),
       feed: (cellId: number, port: number, n: number) => feedOperand(world, cellId, port, valueOf(n)),
+      fuel: (cellId: number, n: number) => injectFuel(world, cellId, valueOf(n)),
       addLoose: (n: number, x = 0, y = 0) => addLoose(world, valueOf(n), x, y),
       score: () => totalScore(world).toString(),
       poolSize: () => world.pool.length,
@@ -598,13 +634,14 @@ function drawCellOutline(g: Graphics): void {
 
 function drawPortMarkers(g: Graphics, kind: CellKind): void {
   g.clear();
+  if (kind === 'accelerator') return; // whole body is the fuel intake; no ports
   const L = portLayout(kind);
   for (const op of L.operands) {
     g.circle(op.x, op.y, PORT_R).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
   }
   // Fuel socket — a small open square at the bottom (distinct from round operands).
   g.rect(L.fuel.x - 9, L.fuel.y - 9, 18, 18).stroke({ color: GRAPHITE, width: 1.1, alpha: 0.5 });
-  // Output nub.
+  // Output nub (not for the Mill's many-piece output — still useful as a hint).
   g.circle(L.output.x, L.output.y, 5).fill({ color: GRAPHITE, alpha: 0.5 });
 }
 

@@ -15,6 +15,7 @@ interface NBG {
   place(kind: string, x?: number, y?: number): number;
   pipe(fromCell: number, toCell: number, toPort: number, fuel?: boolean): number;
   feed(cellId: number, port: number, n: number): boolean;
+  fuel(cellId: number, n: number): void;
   addLoose(n: number, x?: number, y?: number): number;
   score(): string;
   poolSize(): number;
@@ -123,4 +124,17 @@ test('a pipe carries a Successor 1 into an Addition over time', async ({ page })
   const built = await page.evaluate((i) => window.__nbg.cellState(i)!.built, a);
   expect(built).toBe(true);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBeGreaterThan(0);
+});
+
+test('a Mill liquefies a block into graded fuel, conserving score', async ({ page }) => {
+  await bootPaused(page);
+  const m = await page.evaluate(() => window.__nbg.place('mill', 0, 0));
+  await steps(page, 26); // build
+  await page.evaluate((i) => window.__nbg.feed(i, 0, 8000), m); // → 8 × 1000
+  const before = await page.evaluate(() => Number(window.__nbg.score()));
+  await steps(page, 40);
+  const after = await page.evaluate(() => Number(window.__nbg.score()));
+  expect(after).toBe(before); // additive split conserves value
+  // the loose pool now holds the milled pieces
+  expect(await page.evaluate(() => window.__nbg.poolSize())).toBeGreaterThanOrEqual(8);
 });
