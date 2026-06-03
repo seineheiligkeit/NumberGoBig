@@ -66,9 +66,11 @@ export function operandArity(kind: CellKind): number {
   return 2;
 }
 
-/** How many equal pieces a Mill splits a block into per pass (chain to grind
- *  finer). Score-conserved: N pieces of V/N sum to V. */
-export const MILL_PIECES = 8;
+/** The Mill splits toward this fuel grade (value per piece), capped at
+ *  MILL_MAX_PIECES per pass. So a small/medium block liquefies in one pass; a
+ *  huge block is coarsened (chain mills to grind finer). Score-conserved. */
+export const MILL_TARGET_GRADE = 100;
+export const MILL_MAX_PIECES = 16;
 
 const ACCEL_RADIUS = 260; // pipes within this distance of an accelerator are boosted
 const ACCEL_GAIN = 2.5; // boost = 1 + GAIN·log10(charge+1), capped
@@ -312,9 +314,12 @@ function tickOperations(world: World, base: number): void {
 function millEmits(v: Value): { portIndex: number; value: Value }[] {
   const mag = valueMagnitude(v);
   if (mag.lte(Decimal.dOne)) return [{ portIndex: 0, value: v }];
-  const piece = mag.div(MILL_PIECES);
+  // Aim for ~MILL_TARGET_GRADE per piece; cap the count so we never explode.
+  const want = mag.div(MILL_TARGET_GRADE).ceil().toNumber();
+  const count = Math.max(2, Math.min(MILL_MAX_PIECES, Number.isFinite(want) ? want : MILL_MAX_PIECES));
+  const piece = mag.div(count);
   const out: { portIndex: number; value: Value }[] = [];
-  for (let i = 0; i < MILL_PIECES; i++) out.push({ portIndex: 0, value: { kind: 'real', n: piece } });
+  for (let i = 0; i < count; i++) out.push({ portIndex: 0, value: { kind: 'real', n: piece } });
   return out;
 }
 
