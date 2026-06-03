@@ -109,10 +109,22 @@ extending.
      wall** (needs refined fuel, not 1s). Climbing higher demands a *wider*
      factory (parallel feed) + real fuel refinement — the intended engineering
      challenge, now demonstrated.
-- ⏭️ **Next candidates:** tune exponents/grades/transit-`p` against the agents;
-  a *width-aware* layout agent (parallel feed to deep stages) to climb past the
-  plateau; Mill-output routing polish; global time-levers / prestige; then
-  re-introduction of deferred systems.
+- ✅ **Width-aware factory agent** (`sim/factory-agent.ts`, rebuilt as a balanced
+  binary multiplication tree — each node fed by two distinct children, one per
+  port, so width doubles toward the base to match the 2-in/1-out rule). Findings:
+  - **Depth 4 works and SUSTAINS the root** (2^(2^4)=65,536): 47 cells, 93 pipes,
+    142 actions, score ~4e6 — the tree fills in ~2h then holds, where the chain
+    only plateaued.
+  - **Depth 5 stalls at 16** (95 cells): the shared successor base can't supply
+    enough throughput to fill a 32-leaf tree, and fuelling deep nodes by tapping
+    lower levels *steals from operand flow* → cascading starvation. **Finding:**
+    each extra squaring level ~doubles the factory AND needs dedicated
+    (non-stealing) graded fuel — a real scaling wall that's part agent-naivety,
+    part a signal the throughput economy may be too steep (a tuning question).
+- ⏭️ **Next candidates:** decide if the 2×-factory-per-level cost is right or
+  wants softening (tune transit-`p`/grades, or add a higher-throughput primitive);
+  a smarter agent (adaptive base sizing + dedicated fuel plants); Mill-output
+  routing; global time-levers / prestige; then deferred systems.
 
 ---
 
