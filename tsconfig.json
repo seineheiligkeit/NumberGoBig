@@ -20,5 +20,6 @@
     "verbatimModuleSyntax": true
   },
   "include": ["core/**/*.ts", "src/**/*.ts", "src/**/*.js", "src/**/*.svelte"],
+  "exclude": ["**/*.test.ts"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
