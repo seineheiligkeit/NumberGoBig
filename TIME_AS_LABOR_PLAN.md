@@ -121,10 +121,25 @@ extending.
     each extra squaring level ~doubles the factory AND needs dedicated
     (non-stealing) graded fuel — a real scaling wall that's part agent-naivety,
     part a signal the throughput economy may be too steep (a tuning question).
-- ⏭️ **Next candidates:** decide if the 2×-factory-per-level cost is right or
-  wants softening (tune transit-`p`/grades, or add a higher-throughput primitive);
-  a smarter agent (adaptive base sizing + dedicated fuel plants); Mill-output
-  routing; global time-levers / prestige; then deferred systems.
+- ✅ **Managing agent** (`sim/manager.ts`) + engine `removeCell`/`removePipe`
+  (held blocks return to the pool — nothing destroyed). The decisive test:
+  - A *static* factory plateaus (~65,536). A factory that is **actively managed**
+    — shuttling loose blocks into cells, amplifying the frontier, fuelling
+    working ops, and **rebalancing** (place/remove/shift capacity) — climbs the
+    frontier to **~10²⁴** (peak 4.8e24), 86 cells, via ~87k feeds + ~63k fuels +
+    100 rebalances.
+  - **Conclusion:** the big-number difficulty is *good puzzle difficulty*, not a
+    design wall. There is no hard stall (the free river makes Total Score rise
+    forever); the *frontier* requires constant fiddling and rethinking — exactly
+    the intended feel. The static-factory plateau was an artifact of the agent
+    lacking a player's verbs (manage / reroute / remove / hand-carry), not the
+    economy.
+  - *Note:* the greedy manager's frontier is **volatile** (sawtooths as it locks
+    the biggest blocks into very long ops) — a steadier strategy is a refinement,
+    not a blocker.
+- ⏭️ **Next candidates:** wire reroute/remove + manual-shuttle into the *view*
+  (so a human can do what the manager does); tune curve steepness/volatility;
+  the exp-centric climb; global time-levers / prestige; then deferred systems.
 
 ---
 

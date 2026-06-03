@@ -201,6 +201,32 @@ export function placePipe(
   return id;
 }
 
+/** Remove a pipe; any in-flight block is returned to the loose pool (nothing is
+ *  destroyed). Rerouting = removePipe + placePipe. */
+export function removePipe(world: World, id: number): void {
+  const p = world.pipes.get(id);
+  if (!p) return;
+  if (p.inFlight) {
+    const c = world.cells.get(p.fromCell);
+    pushLoose(world, p.inFlight.value, c ? c.x : 0, c ? c.y : 0);
+  }
+  world.pipes.delete(id);
+}
+
+/** Remove a cell. Its staged operands, in-progress inputs, and any held output
+ *  return to the loose pool; its connected pipes are removed (their in-flight
+ *  blocks also returned). Accelerator charge is lost. Nothing else is destroyed. */
+export function removeCell(world: World, id: number): void {
+  const cell = world.cells.get(id);
+  if (!cell) return;
+  for (const o of cell.operands) if (o) pushLoose(world, o, cell.x, cell.y);
+  if (cell.op) for (const h of cell.op.heldInputs) pushLoose(world, h, cell.x, cell.y);
+  for (const [pid, p] of world.pipes) {
+    if (p.fromCell === id || p.toCell === id) removePipe(world, pid);
+  }
+  world.cells.delete(id);
+}
+
 /** Manually stage an operand on a built cell's port (models a hand-drop). */
 export function feedOperand(world: World, cellId: number, port: number, value: Value): boolean {
   const cell = world.cells.get(cellId);

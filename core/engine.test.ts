@@ -17,6 +17,7 @@ import {
   createWorld,
   placeCell,
   placePipe,
+  removeCell,
   feedOperand,
   injectFuel,
   addLoose,
@@ -294,6 +295,19 @@ test('emit fans out fairly: one producer can feed both operand ports of a consum
   placePipe(w, s, 0, a, 1); // → operand 1
   run(w, 400);
   assert.ok(poolCountOf(w, 2) >= 1, 'the addition fired (1+1→2), so both ports were fed');
+});
+
+test('removeCell / removePipe return held blocks to the pool (nothing destroyed)', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'multiplication');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(50));
+  feedOperand(w, m, 1, valueOf(50));
+  const before = score(w); // 100 staged
+  removeCell(w, m);
+  assert.equal(getCell(w, m), undefined, 'cell gone');
+  assert.equal(score(w), before, 'its staged operands returned to the pool (score conserved)');
+  assert.equal(poolCountOf(w, 50), 2);
 });
 
 // --- The Mill (additive splitter) ------------------------------------------
