@@ -94,10 +94,25 @@ extending.
   tunable constraint with working player levers: a far builder **starves** on one
   pipe (distance 2000 → 37% throughput), and **parallel pipes** (→75%) and
   **accelerators** (→100%) recover it. The supply-line decisions matter.
-- ⏭️ **Next candidates:** tune exponents/grades/transit-`p` against the agents
-  (the 10³→10⁶ cliff; the distance at which one pipe starves); a full
-  layout+wiring agent (operands piped too); Mill-output routing polish; the
-  global time-levers / prestige; then re-introduction of deferred systems.
+- ✅ **Fully faithful factory agent** (`sim/factory-agent.ts`) — auto-builds and
+  runs a *fully piped* factory (operands AND fuel through real pipes), logs
+  every action, and reports the build timeline, factory size, action count, and
+  climb. It surfaced two real findings:
+  1. **Engine fix:** emit picked the *first empty pipe*, so feeding both operand
+     ports of one consumer starved port 1 → the multiplication never fired and
+     everything spilled loose. Replaced with **fair round-robin emit** (a
+     per-cell cursor); now fan-out works (pinned by a test). With it, the
+     squaring chain climbs 2→4→16→256→**65,536**.
+  2. **A naive squaring chain plateaus** (~65,536 here, 15 cells / 21 pipes /
+     37 actions, score 7.6e6 in ~3h) because each squaring stage is 2-in/1-out
+     (throughput **halves per stage**) AND the top stage hits the **fuel-grade
+     wall** (needs refined fuel, not 1s). Climbing higher demands a *wider*
+     factory (parallel feed) + real fuel refinement — the intended engineering
+     challenge, now demonstrated.
+- ⏭️ **Next candidates:** tune exponents/grades/transit-`p` against the agents;
+  a *width-aware* layout agent (parallel feed to deep stages) to climb past the
+  plateau; Mill-output routing polish; global time-levers / prestige; then
+  re-introduction of deferred systems.
 
 ---
 

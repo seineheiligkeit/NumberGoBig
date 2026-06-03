@@ -105,6 +105,8 @@ export interface SimCell {
   op: ActiveOp | null;
   /** Accelerator only: stored fuel value, providing the boost; decays per tick. */
   charge: Decimal;
+  /** Round-robin cursor over this cell's attached output pipes (fair fan-out). */
+  emitCursor: number;
 }
 
 export interface SimPipe {
@@ -171,6 +173,7 @@ export function placeCell(world: World, kind: CellKind, x = 0, y = 0): number {
     operands: new Array(operandArity(kind)).fill(null),
     op: null,
     charge: Decimal.dZero,
+    emitCursor: 0,
   });
   return id;
 }
@@ -353,11 +356,24 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
 
 /** Route an emitted block: into an attached empty pipe, else the loose pool. */
 function emit(world: World, cell: SimCell, port: number, value: Value): void {
+  // Round-robin across the pipes attached to this output port, so a producer
+  // feeding several destinations (e.g. both operand ports of a multiplication)
+  // distributes fairly instead of always loading the first pipe and starving
+  // the rest. The cursor rotates per cell.
+  const attached: SimPipe[] = [];
   for (const pipe of world.pipes.values()) {
-    if (pipe.fromCell === cell.id && pipe.fromPort === port && pipe.inFlight === null) {
-      const dist = pipeDistance(world, pipe);
-      pipe.inFlight = { value, work: transitWork(value, dist, world.tuning), progress: Decimal.dZero };
-      return;
+    if (pipe.fromCell === cell.id && pipe.fromPort === port) attached.push(pipe);
+  }
+  if (attached.length > 0) {
+    const n = attached.length;
+    for (let k = 0; k < n; k++) {
+      const pipe = attached[(cell.emitCursor + k) % n];
+      if (pipe.inFlight === null) {
+        const dist = pipeDistance(world, pipe);
+        pipe.inFlight = { value, work: transitWork(value, dist, world.tuning), progress: Decimal.dZero };
+        cell.emitCursor = (cell.emitCursor + k + 1) % n;
+        return;
+      }
     }
   }
   pushLoose(world, value, cell.x + 60, cell.y);

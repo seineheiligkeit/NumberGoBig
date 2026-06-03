@@ -282,6 +282,20 @@ test('the canvas is a map: a big block is frozen but its small pieces flow', () 
   assert.ok(big > small * 5, 'a big block is dramatically slower to move than a small one');
 });
 
+test('emit fans out fairly: one producer can feed both operand ports of a consumer', () => {
+  // A successor's 1s, piped to BOTH operand ports of an addition, must fill
+  // both (round-robin) so the addition fires — not starve port 1 (the bug the
+  // faithful factory agent surfaced). Without fair fan-out this deadlocks.
+  const w = createWorld();
+  const s = placeCell(w, 'successor', 0, 0);
+  const a = placeCell(w, 'addition', 150, 0);
+  while (!getCell(w, s)!.built || !getCell(w, a)!.built) tick(w, 1);
+  placePipe(w, s, 0, a, 0); // → operand 0
+  placePipe(w, s, 0, a, 1); // → operand 1
+  run(w, 400);
+  assert.ok(poolCountOf(w, 2) >= 1, 'the addition fired (1+1→2), so both ports were fed');
+});
+
 // --- The Mill (additive splitter) ------------------------------------------
 
 test('Mill splits a block into pieces summing to the same value (conserved)', () => {
