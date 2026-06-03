@@ -88,10 +88,16 @@ extending.
   **climbs exponentially** (10³ @2m, a 10³→10⁶ build-out cliff ~26m, then
   acceleration to 10¹⁸ @1.7h) — confirming the economy is sound and giving us a
   legible pacing instrument. Transport friction is the layer the player adds.
-- ⏭️ **Next candidates:** tune the exponents/grades/transit-`p` against the
-  agent (e.g. the 10³→10⁶ cliff); a *logistics-aware* agent (pipes + accelerators
-  + distance) to pace the full game; Mill-output routing polish; the global
-  time-levers / prestige; then the careful re-introduction of deferred systems.
+- ✅ **Logistics-aware pacing tool** (`sim/logistics.ts`) — builds a real piped
+  factory (fuel plant → k pipes ± accelerator → fuel-gated builder) and measures
+  throughput vs distance/parallelism/accelerators. Confirms transport is a real,
+  tunable constraint with working player levers: a far builder **starves** on one
+  pipe (distance 2000 → 37% throughput), and **parallel pipes** (→75%) and
+  **accelerators** (→100%) recover it. The supply-line decisions matter.
+- ⏭️ **Next candidates:** tune exponents/grades/transit-`p` against the agents
+  (the 10³→10⁶ cliff; the distance at which one pipe starves); a full
+  layout+wiring agent (operands piped too); Mill-output routing polish; the
+  global time-levers / prestige; then re-introduction of deferred systems.
 
 ---
 
