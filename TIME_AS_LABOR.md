@@ -65,9 +65,83 @@ not blocked — it is merely *slow*, and you can always pay to hurry it. That
 softness is the point: the player is never walled, only ever deciding **wait,
 or spend**.
 
+## The fuel economy — converged model (the backbone)
+
+A number has **two sizes**, and the entire economy is the tension between them:
+
+- **Value** (magnitude) = what a number is *worth* — as score, and as fuel.
+- **Digits** (log) = what it *cost to create*.
+
+For small numbers these are close; for big numbers the gap is enormous (a `10⁶`
+is worth a million but cost ~7 digits to make). **That gap is the game.** You
+cheaply *create* gigantic value, but gigantic value is *unwieldy* to move and
+use. The factory exists to convert between **frozen** value (big, cheap-to-make,
+nearly impossible to move) and **liquid** value (small, movable, burnable).
+
+The full assignment of "which size do we mean where":
+
+| Quantity | Measured in | Why |
+|---|---|---|
+| **Score** | **value** | wealth = what you possess |
+| **Fuel content** (burned for op progress) | **value** | conserved under decomposition → no "shatter-to-1s" exploit; a handful of correctly-graded blocks powers an op |
+| **Operation cost** (ticks of labor) | **digits^k**, `k` *per operator*, steepening up the hierarchy | sub-linear in value, so climbing stays net-positive; steep `k` makes higher operators dramatically more labor-intensive |
+| **Min fuel denomination** (per op) | scales with the op's labor | a big op *refuses* small fuel → **fuel grades** → each tier needs the previous tier's grade → the areas chain |
+| **Build cost** | count, per type | the RTS repurchase |
+| **Transit** | **value^p** (super-linear) | big blocks are *frozen* — must be decomposed (or processed locally) to move/use |
+
+**The synthesis in one line:** *digits are what it cost; value is what it's
+worth; transit punishes worth super-linearly — so the value you cheaply created
+is frozen until you spend cheap effort to liquefy it.*
+
+### Why this all synergizes (the emergent fuel ladder)
+
+Because `fuel = value` and `op-cost = digits^k`, the fuel a single operation
+needs is roughly a number the *previous tier* produces, and the **minimum
+denomination** forbids feeding it anything smaller. So:
+
+- A multiplication's labor ≈ a 5-digit number → its fuel grade ≈ **the
+  Addition/Successor area's output**.
+- An exponentiation's labor ≈ a ~7-digit number → fuel grade ≈ **the
+  Multiplication area's output**.
+- …and so on. Each tier is fuelled by the tier below it, **enforced by the
+  grade rule, not designed in**. "Production runs ahead of utilization" becomes
+  literal: to run the top, the whole pyramid below must be producing fuel.
+
+### The areas (emergent, not designed)
+
+- **Fuel Farm** — mass production of small numbers (liquid, freely pipeable).
+- **Production** — operators making big numbers (frozen value = score), fuelled
+  from the Farm, kept fast by accelerators.
+- **Reprocessing** — Mills liquefying big numbers back into graded fuel;
+  accelerators burning big numbers locally for transport power.
+
+Locality is *forced* by the transit law: a high-tier op needs high-grade (big)
+fuel, and big fuel is super-linearly hard to move — so each tier must produce
+its grade *near* where it's consumed, with only modest cross-area flow. That's
+the multi-area factory, falling straight out of the math.
+
+### The two new objects
+
+- **The Mill** — an *additive* splitter (`V → smaller blocks summing to V`,
+  score-conserved). It does **not** multiply fuel (value is conserved); it
+  **liquefies** a frozen block into a deliverable stream at a chosen grade. The
+  reason to decompose is *delivery*, never fuel gain.
+- **The Pipe-Accelerator** — a placed beacon that **consumes fuel to boost the
+  throughput of surrounding pipes** (transit is divided by the local boost). A
+  freshly-made *big* number can be dropped into an adjacent accelerator as a
+  long-burning **power cell** — its huge value = a huge local boost — giving big
+  numbers a spatial sink without having to pipe them anywhere. The player's
+  fork: **liquefy** (Mill into a distributed stream) or **burn whole** (local
+  power cell).
+
+> **Multiplicative decomposition (Factor → primes) is NOT a fuel tool** — it
+> collapses score (factors *sum* to almost nothing) and yields little fuel. It
+> returns later as a *prime-currency* tool, not here.
+
 ### Work and rate
 
 Formally, for the simulator and the engine:
+
 
 - An action has a **work cost** `W` (in "number-seconds").
 - It completes at **rate** `R = baseRate + burnRate`.

@@ -1,18 +1,11 @@
 // sim/time-run.ts
 //
-// Tuning instrument for the Time-as-Labor prototype. The engine
-// (core/engine.ts) is the simulation; this reports the *shape* of the economy
-// the current DEFAULT_TUNING produces, so we can tune by reading rather than
-// guessing. Three sections:
-//
-//   1. Build ladder   — how long the Nth cell of a kind takes to construct.
-//   2. Operation ladder — how long it takes to write an output of magnitude
-//      10^k, at base rate vs. with a steady fuel feed (the wait-vs-burn knob).
-//   3. Driven bootstrap — a greedy auto-player over a small factory, reporting
-//      the score curve and time-to-thresholds (the felt opening).
-//
-// All durations are model ticks (1 tick = 1 second of play). The view runs a
-// few ticks/second so the prototype feels alive; that's presentation only.
+// Observation/tuning instrument for the converged Time-as-Labor economy.
+// Reports the *shape* the current DEFAULT_TUNING produces so we tune by
+// reading. Sections:
+//   1. Operation labor + fuel grade, per operator, across output sizes.
+//   2. Transit freeze — how value^p makes big blocks immovable.
+//   3. Driven bootstrap — a greedy auto-player (grade-aware fuelling).
 //
 // Usage: node sim/time-run.ts [--ticks 6000] [--successors 4]
 
@@ -24,6 +17,7 @@ import {
   tick,
   totalScore,
   poolSize,
+  getCell,
   type World,
   type CellKind,
 } from '../core/engine.ts';
@@ -32,72 +26,75 @@ import {
   DEFAULT_TUNING,
   buildWork,
   operationWork,
+  minFuelDenomination,
+  transitWork,
   ticksToComplete,
 } from '../core/time.ts';
+import Decimal from 'break_eternity.js';
 
 const T = DEFAULT_TUNING;
 
 function fmt(x: number): string {
   if (!Number.isFinite(x)) return '∞';
-  if (x >= 1e6 || (x > 0 && x < 0.01)) return x.toExponential(2);
+  if (x !== 0 && (Math.abs(x) >= 1e6 || Math.abs(x) < 0.01)) return x.toExponential(1);
   return x.toLocaleString('en-US', { maximumFractionDigits: 1 });
 }
-
 function secs(ticks: number): string {
   if (!Number.isFinite(ticks)) return '∞';
   if (ticks < 90) return `${ticks.toFixed(0)}s`;
   if (ticks < 5400) return `${(ticks / 60).toFixed(1)}m`;
-  return `${(ticks / 3600).toFixed(1)}h`;
+  if (ticks < 1.3e5) return `${(ticks / 3600).toFixed(1)}h`;
+  return `${(ticks / 3.15e7).toExponential(1)}yr`;
 }
+const real = (s: string): Value => ({ kind: 'real', n: new Decimal(s) });
 
-function buildLadder(): void {
-  console.log('Build ladder (Nth cell of a kind, at baseRate):');
-  console.log('  N | build work |   ticks |  ~time');
-  console.log('  --+------------+---------+-------');
-  for (let n = 0; n < 6; n++) {
-    const w = buildWork(n).toNumber();
-    const ticks = ticksToComplete(buildWork(n), T.baseRate);
-    console.log(`  ${n + 1} | ${fmt(w).padStart(10)} | ${fmt(ticks).padStart(7)} | ${secs(ticks).padStart(6)}`);
+function laborTable(): void {
+  const ops: CellKind[] = ['addition', 'multiplication', 'exponentiation'];
+  console.log('Operation labor (ticks) & fuel grade, per operator × output size:');
+  console.log('  output |   add (grade) |   mul (grade) |   exp (grade)');
+  console.log('  -------+---------------+---------------+--------------');
+  for (const k of [2, 4, 6, 9, 12]) {
+    const out = real(`1e${k}`);
+    const cells = ops.map((op) => {
+      const w = operationWork(out, op);
+      const g = minFuelDenomination(w);
+      return `${secs(ticksToComplete(w, T.baseRate)).padStart(6)} (${fmt(g.toNumber())})`;
+    });
+    console.log(`  10^${String(k).padEnd(2)} | ${cells.map((c) => c.padStart(13)).join(' | ')}`);
   }
+  console.log('  (grade = min fuel denomination the op accepts; base-rate ticks shown)');
   console.log('');
 }
 
-function opLadder(): void {
-  const feeds = [0, 10, 50];
-  console.log('Operation ladder (write an output of magnitude 10^k):');
-  console.log('  output | op work |   base | ' + feeds.slice(1).map((f) => `+${f}/t`.padStart(8)).join(' | '));
-  console.log('  -------+---------+--------+' + feeds.slice(1).map(() => '---------').join('+'));
-  for (const k of [0, 1, 2, 3, 6, 9, 12, 30, 100]) {
-    const v: Value = valueOf(Math.pow(10, Math.min(k, 308)));
-    // For very large k, build the magnitude via string to dodge Number limits.
-    const value: Value = k <= 300 ? v : { kind: 'real', n: valueOf(1).n };
-    const w = operationWork(value);
-    const cells = feeds.map((f) => secs(ticksToComplete(w, T.baseRate + f)));
+function transitTable(): void {
+  console.log('Transit freeze (adjacent pipe, no accelerator):');
+  console.log('  block |  transit  ');
+  console.log('  ------+-----------');
+  for (const k of [0, 1, 2, 3, 4, 6]) {
+    const v: Value = k === 0 ? valueOf(1) : real(`1e${k}`);
+    const tw = transitWork(v, 0);
     const label = k === 0 ? '1' : `10^${k}`;
-    console.log(
-      `  ${label.padStart(6)} | ${fmt(w.toNumber()).padStart(7)} | ${cells[0].padStart(6)} | ` +
-        cells.slice(1).map((c) => c.padStart(8)).join(' | '),
-    );
+    console.log(`  ${label.padStart(5)} | ${secs(ticksToComplete(tw, T.baseRate)).padStart(8)}`);
   }
-  console.log('  (a fast small-fuel stream is worth several +/t; this is the wait-vs-burn lever)');
+  console.log('  (small blocks flow; big blocks are frozen → must be milled to move)');
   console.log('');
 }
-
-// --- Driven bootstrap ------------------------------------------------------
 
 function takeLargest(world: World): Value | null {
-  if (world.pool.length === 0) return null;
+  if (!world.pool.length) return null;
   let b = 0;
   for (let i = 1; i < world.pool.length; i++)
     if (valueMagnitude(world.pool[i].value).gt(valueMagnitude(world.pool[b].value))) b = i;
   return world.pool.splice(b, 1)[0].value;
 }
-function takeSmallest(world: World): Value | null {
-  if (world.pool.length === 0) return null;
-  let b = 0;
-  for (let i = 1; i < world.pool.length; i++)
-    if (valueMagnitude(world.pool[i].value).lt(valueMagnitude(world.pool[b].value))) b = i;
-  return world.pool.splice(b, 1)[0].value;
+/** Take the smallest pool block whose value ≥ floor (grade-aware fuel pick). */
+function takeFuel(world: World, floor: Decimal): Value | null {
+  let best = -1;
+  for (let i = 0; i < world.pool.length; i++) {
+    const m = valueMagnitude(world.pool[i].value);
+    if (m.gte(floor) && (best < 0 || m.lt(valueMagnitude(world.pool[best].value)))) best = i;
+  }
+  return best < 0 ? null : world.pool.splice(best, 1)[0].value;
 }
 
 function drive(world: World): void {
@@ -111,7 +108,7 @@ function drive(world: World): void {
         }
       }
     } else if (world.pool.length > 2) {
-      const f = takeSmallest(world);
+      const f = takeFuel(world, cell.op.grade);
       if (f) injectFuel(world, cell.id, f);
     }
   }
@@ -119,24 +116,23 @@ function drive(world: World): void {
 
 function bootstrap(ticks: number, successors: number): void {
   const world = createWorld(T);
-  for (let i = 0; i < successors; i++) placeCell(world, 'successor', 0, i * 50);
+  for (let i = 0; i < successors; i++) placeCell(world, 'successor', 0, i * 40);
   placeCell(world, 'addition', 300, 0);
   placeCell(world, 'multiplication', 600, 0);
   placeCell(world, 'exponentiation', 900, 0);
-
   console.log(`Driven bootstrap (${successors} successors + add/mul/exp, ${ticks} ticks):`);
-  const thresholds = [10, 100, 1_000, 1e6, 1e9];
+  const thresholds = [10, 100, 1e3, 1e6, 1e9, 1e12];
   let nt = 0;
   for (let t = 1; t <= ticks; t++) {
     drive(world);
     tick(world, 1);
     const s = totalScore(world);
     while (nt < thresholds.length && s.gte(thresholds[nt])) {
-      console.log(`  score ≥ ${thresholds[nt].toLocaleString('en-US').padStart(13)} at ${secs(t).padStart(6)} (tick ${t})`);
+      console.log(`  score ≥ ${fmt(thresholds[nt]).padStart(8)} at ${secs(t).padStart(6)} (tick ${t})`);
       nt++;
     }
   }
-  console.log(`  final score ${fmt(totalScore(world).toNumber())} · pool ${poolSize(world)}`);
+  console.log(`  final score ${fmt(totalScore(world).toNumber())} · loose blocks ${poolSize(world)}`);
   console.log('');
 }
 
@@ -148,14 +144,14 @@ function main() {
     if (a[i] === '--ticks') ticks = Number(a[++i]);
     else if (a[i] === '--successors') successors = Number(a[++i]);
   }
-
-  console.log('Time-as-Labor — tuning report');
+  console.log('Time-as-Labor — converged-model tuning report');
   console.log(
-    `baseRate=${T.baseRate} opWork=${T.opWorkPerDigit}·d^${T.opWorkExponent} ` +
-      `build=${T.buildBase}·${T.buildGrowth}^n fuel=${T.fuelPerDigit}·d\n`,
+    `baseRate=${T.baseRate}  opExp=${JSON.stringify(T.opExponent)}  ` +
+      `transit=${T.transitCoeff}·v^${T.transitExp}  grade=${T.gradeCoeff}·W^${T.gradeExp}`,
   );
-  buildLadder();
-  opLadder();
+  console.log(`first build ≈ ${secs(ticksToComplete(buildWork(0), T.baseRate))}\n`);
+  laborTable();
+  transitTable();
   bootstrap(ticks, successors);
 }
 

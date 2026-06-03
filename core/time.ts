@@ -44,49 +44,64 @@ export interface TimeTuning {
    *  most important knob (and the future global time-lever). Nonzero so the
    *  game always trickles forward when idle. */
   baseRate: number;
-  /** Operation work = opWorkPerDigit · digits(output)^opWorkExponent. */
-  opWorkPerDigit: number;
-  opWorkExponent: number;
-  /** Floor so even a 1-digit operation takes a felt beat. */
+  /** Operation labor = max(floor, digits(output)^opExponent[kind]). The
+   *  exponent is PER OPERATOR and steepens up the hierarchy, so higher
+   *  operators are dramatically more labor-intensive per digit. Sub-linear in
+   *  value (digit-based), so climbing the hierarchy stays net-positive. */
+  opExponent: Record<string, number>;
   opWorkFloor: number;
   /** Build work for the Nth owned cell of a type = buildBase · buildGrowth^N. */
   buildBase: number;
   buildGrowth: number;
-  /** Transit work = transitPerDigit · (digits+1) · (distanceUnits + transitNearCost). */
-  transitPerDigit: number;
-  /** Canvas pixels per "distance unit". */
+  /** Transit work = max(floor, transitCoeff · value^transitExp · distFactor).
+   *  Super-linear in VALUE (not digits) so big blocks are frozen — they must be
+   *  decomposed (or processed locally) to move. Small blocks always move freely. */
+  transitCoeff: number;
+  transitExp: number;
   transitDistanceUnit: number;
-  /** Distance cost even for adjacent cells (so transport is never free). */
   transitNearCost: number;
   transitFloor: number;
-  /** Progress contributed by burning one fuel block = fuelPerDigit · digits(v). */
-  fuelPerDigit: number;
+  /** Min fuel denomination an op accepts = max(1, gradeCoeff · opWork^gradeExp).
+   *  A big op refuses fuel below its grade → fuel grades → the tiers chain.
+   *  gradeCoeff < 1 keeps the smallest ops accepting `1`s (the base fuel). */
+  gradeExp: number;
+  gradeCoeff: number;
 }
 
 export const DEFAULT_TUNING: TimeTuning = {
   baseRate: 1,
-  // First tuning pass (sim-read, sim/time-run.ts). Super-linear in digits so
-  // big numbers are genuinely slow to write at base — making the fuel economy
-  // the answer (the design's core tension) — while a low per-digit coefficient
-  // keeps small ops snappy. With these: a `1` is ~2 ticks, 10^6 ~37 ticks base
-  // (but ~1 tick well-fuelled), 10^100 ~34m base (~40s well-fuelled).
-  opWorkPerDigit: 2,
-  opWorkExponent: 1.5,
+  // Per-operator labor exponents (digits^k). Steepening up the hierarchy.
+  // Starting moderate; the real curve is sim-tuned (sim/time-run.ts).
+  opExponent: {
+    successor: 1,
+    addition: 2,
+    multiplication: 3,
+    exponentiation: 4,
+    tetration: 5,
+    pentation: 6,
+  },
   opWorkFloor: 2,
   buildBase: 16,
   buildGrowth: 1.5,
-  transitPerDigit: 0.6,
+  // Transit super-linear in value: a 1 ≈ free, a 100 ≈ 10 ticks, a 1000 ≈ 300,
+  // a 10⁴ ≈ frozen — so you decompose to ~100-grade fuel for fluid transport.
+  transitCoeff: 0.01,
+  transitExp: 1.5,
   transitDistanceUnit: 240,
   transitNearCost: 0.5,
   transitFloor: 1,
-  fuelPerDigit: 1,
+  // Grade ≈ gradeCoeff·sqrt(opWork): an op of labor W needs ~sqrt(W) blocks.
+  // gradeCoeff 0.3 keeps tiny ops + small adds accepting `1`s, while
+  // multiplication wants ≥~6 and exponentiation ≥~30. (Sim-tuned later.)
+  gradeExp: 0.5,
+  gradeCoeff: 0.3,
 };
 
 const dZero = Decimal.dZero;
 const dOne = Decimal.dOne;
 
 /**
- * Digit-count of a value's magnitude — the universal unit of work.
+ * Digit-count of a value's magnitude — the unit of *creation cost* (labor).
  *
  *   - 0 (and sets, magnitude 0)  → 0   (free to handle: zeros, the substrate)
  *   - 0 < |v| < 1 (fractions)    → 1   (a few chars; fractions aren't the focus)
@@ -101,10 +116,18 @@ export function magnitudeDigits(v: Value): Decimal {
   return m.log10().floor().add(1);
 }
 
-/** Work to carry out an operation, from the magnitude of its output. */
-export function operationWork(output: Value, t: TimeTuning = DEFAULT_TUNING): Decimal {
+/** Per-operator labor exponent (digits^k), defaulting to 1 for unknown kinds. */
+export function opExponentFor(kind: string, t: TimeTuning = DEFAULT_TUNING): number {
+  return t.opExponent[kind] ?? 1;
+}
+
+/**
+ * Labor of an operation: `max(floor, digits(output)^k)` where `k` is the
+ * operator's exponent. Digit-based (so climbing pays), steep at high tiers.
+ */
+export function operationWork(output: Value, kind: string, t: TimeTuning = DEFAULT_TUNING): Decimal {
   const digits = magnitudeDigits(output);
-  const raw = new Decimal(t.opWorkPerDigit).mul(digits.pow(t.opWorkExponent));
+  const raw = digits.pow(opExponentFor(kind, t));
   return Decimal.max(raw, new Decimal(t.opWorkFloor));
 }
 
@@ -119,23 +142,40 @@ export function buildWork(owned: number, t: TimeTuning = DEFAULT_TUNING): Decima
   return new Decimal(t.buildBase).mul(Decimal.pow(t.buildGrowth, n));
 }
 
-/** Work to carry a block of value `v` a distance of `distancePx` along a pipe. */
-export function transitWork(v: Value, distancePx: number, t: TimeTuning = DEFAULT_TUNING): Decimal {
-  const digits = magnitudeDigits(v);
+/**
+ * Work to carry a block of value `v` a distance of `distancePx`. Super-linear
+ * in VALUE: small blocks move freely, big blocks are frozen (and must be
+ * decomposed to move). `boost` divides the cost (a pipe-accelerator's effect).
+ */
+export function transitWork(
+  v: Value,
+  distancePx: number,
+  t: TimeTuning = DEFAULT_TUNING,
+  boost = 1,
+): Decimal {
+  const mag = valueMagnitude(v);
   const units = Math.max(0, distancePx) / t.transitDistanceUnit + t.transitNearCost;
-  const raw = new Decimal(t.transitPerDigit).mul(digits.add(1)).mul(units);
+  const raw = mag.pow(t.transitExp).mul(t.transitCoeff).mul(units).div(Math.max(1e-9, boost));
   return Decimal.max(raw, new Decimal(t.transitFloor));
 }
 
 /**
- * Progress contributed by burning one fuel block of value `v`. Measured in
- * digits, so big fuel is only marginally better per block than small — and
- * since big fuel also transits slowly, a fast stream of small denominations
- * is the efficient accelerant. The block is consumed (a real spend against
- * Total Score) by the caller.
+ * Fuel content of a block = its VALUE (magnitude). Conserved under additive
+ * decomposition (splitting a block conserves the sum), so there is no
+ * "shatter-to-1s" exploit — decomposition is a *delivery* tool, not a
+ * fuel-multiplier. The block is consumed (a real spend against Total Score).
  */
-export function fuelWork(v: Value, t: TimeTuning = DEFAULT_TUNING): Decimal {
-  return magnitudeDigits(v).mul(t.fuelPerDigit);
+export function fuelValue(v: Value): Decimal {
+  return valueMagnitude(v);
+}
+
+/**
+ * Minimum fuel denomination an operation of labor `opWork` will accept:
+ * `max(1, opWork^gradeExp)`. Smaller blocks are refused — this is what creates
+ * fuel grades and chains the tiers.
+ */
+export function minFuelDenomination(opWork: Decimal, t: TimeTuning = DEFAULT_TUNING): Decimal {
+  return Decimal.max(dOne, opWork.pow(t.gradeExp).mul(t.gradeCoeff));
 }
 
 /**

@@ -32,7 +32,8 @@ import {
 import {
   DEFAULT_TUNING,
   buildWork,
-  fuelWork,
+  fuelValue,
+  minFuelDenomination,
   operationWork,
   transitWork,
   type TimeTuning,
@@ -61,6 +62,8 @@ interface ActiveOp {
   emits: { portIndex: number; value: Value }[];
   work: Decimal;
   progress: Decimal;
+  /** Minimum fuel denomination this op accepts (fuel grade). */
+  grade: Decimal;
 }
 
 export interface SimCell {
@@ -248,13 +251,19 @@ function tickOperations(world: World, base: number): void {
 function startOp(world: World, cell: SimCell, inputs: Value[]): void {
   const result = operate(cell.kind, inputs);
   const emits = result.emits.map((e) => ({ portIndex: e.portIndex, value: e.value }));
-  // Work = the cost of writing the result (the largest emit). An empty result
-  // (a refusal) still "completes" at the floor so the cell doesn't deadlock,
-  // but emits nothing.
+  // Labor = digits(output)^k for this operator (the largest emit). An empty
+  // result (a refusal) still "completes" at the floor so the cell doesn't
+  // deadlock, but emits nothing.
   const work = emits.length
-    ? emits.reduce((mx, e) => Decimal.max(mx, operationWork(e.value, world.tuning)), Decimal.dZero)
+    ? emits.reduce((mx, e) => Decimal.max(mx, operationWork(e.value, cell.kind, world.tuning)), Decimal.dZero)
     : new Decimal(world.tuning.opWorkFloor);
-  cell.op = { heldInputs: inputs, emits, work, progress: Decimal.dZero };
+  cell.op = {
+    heldInputs: inputs,
+    emits,
+    work,
+    progress: Decimal.dZero,
+    grade: minFuelDenomination(work, world.tuning),
+  };
 }
 
 /** Route an emitted block: into an attached empty pipe, else the loose pool. */
@@ -299,11 +308,19 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
   }
 }
 
-/** Burn a fuel block: push progress on the cell's active work. Idle → pool. */
+/**
+ * Burn a fuel block: its VALUE pushes progress on the cell's active work.
+ *  - Building cells accept any fuel (construction is grade-agnostic).
+ *  - A working op accepts fuel only at or above its grade (min denomination);
+ *    sub-grade fuel is refused and returned loose. Surplus beyond completion is
+ *    wasted (the op caps at its work) — so right-sizing the denomination
+ *    matters, which is what motivates the Mill.
+ *  - An idle cell returns the block loose (nothing to accelerate).
+ */
 function applyFuel(world: World, cell: SimCell, value: Value): void {
-  const chunk = fuelWork(value, world.tuning);
+  const fv = fuelValue(value);
   if (!cell.built) {
-    cell.buildProgress = cell.buildProgress.add(chunk);
+    cell.buildProgress = cell.buildProgress.add(fv);
     if (cell.buildProgress.gte(cell.buildWork)) {
       cell.buildProgress = cell.buildWork;
       cell.built = true;
@@ -311,10 +328,14 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
     return;
   }
   if (cell.op !== null) {
-    cell.op.progress = cell.op.progress.add(chunk);
+    if (fv.gte(cell.op.grade)) {
+      cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(fv));
+    } else {
+      // Too small a denomination for this op — refused, lands loose.
+      pushLoose(world, value, cell.x, cell.y + 40);
+    }
     return;
   }
-  // No active work to accelerate — the block isn't wasted, it lands loose.
   pushLoose(world, value, cell.x, cell.y + 40);
 }
 

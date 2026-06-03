@@ -94,7 +94,7 @@ test('successor taps the river and produces 1s over time', () => {
   assert.equal(poolCountOf(w, 1), 0, 'no output yet');
 
   // One successor op produces a single 1. Work to write a "1":
-  const opTicks = Math.ceil(operationWork(VALUE_ONE).toNumber());
+  const opTicks = Math.ceil(operationWork(VALUE_ONE, 'successor').toNumber());
   run(w, opTicks + 1);
   assert.ok(poolCountOf(w, 1) >= 1, 'a 1 has been produced');
 });
@@ -172,43 +172,60 @@ test('score does not dip while an operation is in progress (inputs are held)', (
   }
 });
 
-// --- Fuel buys speed (Phase 3) ---------------------------------------------
+// --- Fuel = value, with grades (the converged model) -----------------------
 
-test('fuel makes an operation finish in fewer ticks', () => {
-  const target = valueOf(1e9).n.toNumber(); // big output → long op
+test('fuel (at or above grade) makes an operation finish in fewer ticks', () => {
+  const target = valueOf(1e9).n.toNumber(); // big output → long op (exp)
 
-  const slow = createWorld();
-  const s = placeCell(slow, 'exponentiation');
-  while (!getCell(slow, s)!.built) tick(slow, 1);
-  feedOperand(slow, s, 0, valueOf(10));
-  feedOperand(slow, s, 1, valueOf(9)); // 10^9
-  let slowTicks = 0;
-  while (poolCountOf(slow, target) === 0 && slowTicks < 100000) {
-    tick(slow, 1);
-    slowTicks++;
+  function ticksToFinish(fuelEachTick: number | null): number {
+    const w = createWorld();
+    const f = placeCell(w, 'exponentiation');
+    while (!getCell(w, f)!.built) tick(w, 1);
+    feedOperand(w, f, 0, valueOf(10));
+    feedOperand(w, f, 1, valueOf(9)); // 10^9
+    let t = 0;
+    while (poolCountOf(w, target) === 0 && t < 200000) {
+      if (fuelEachTick !== null) injectFuel(w, f, valueOf(fuelEachTick));
+      tick(w, 1);
+      t++;
+    }
+    return t;
   }
+  // 1000 is comfortably above the exp op's grade; value-fuel adds 1000/tick.
+  assert.ok(ticksToFinish(1000) < ticksToFinish(null), 'graded fuel beats baseRate alone');
+});
 
-  const fast = createWorld();
-  const f = placeCell(fast, 'exponentiation');
-  while (!getCell(fast, f)!.built) tick(fast, 1);
-  feedOperand(fast, f, 0, valueOf(10));
-  feedOperand(fast, f, 1, valueOf(9));
-  let fastTicks = 0;
-  while (poolCountOf(fast, target) === 0 && fastTicks < 100000) {
-    // shovel fuel every tick
-    injectFuel(fast, f, valueOf(100));
-    tick(fast, 1);
-    fastTicks++;
-  }
+test('fuel below the op grade is REFUSED and returned loose (fuel grades)', () => {
+  const w = createWorld();
+  const f = placeCell(w, 'exponentiation');
+  while (!getCell(w, f)!.built) tick(w, 1);
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(9)); // 10^9 → a high grade
+  tick(w, 1); // op starts
+  const before = opFraction(getCell(w, f)!);
+  // A value-1 block is far below this op's grade — it must be refused.
+  injectFuel(w, f, VALUE_ONE);
+  assert.equal(poolCountOf(w, 1), 1, 'sub-grade fuel lands back in the pool');
+  const after = opFraction(getCell(w, f)!);
+  assert.ok(after - before < 0.01, 'refused fuel did not accelerate the op');
+});
 
-  assert.ok(fastTicks < slowTicks, `fuelled op (${fastTicks}) beats unfuelled (${slowTicks})`);
+test('a tiny op DOES accept value-1 fuel (the base fuel still works low down)', () => {
+  const w = createWorld();
+  const a = placeCell(w, 'addition');
+  while (!getCell(w, a)!.built) tick(w, 1);
+  feedOperand(w, a, 0, valueOf(500));
+  feedOperand(w, a, 1, valueOf(499)); // 999, a 3-digit add → low grade (~1)
+  tick(w, 1); // op starts
+  injectFuel(w, a, VALUE_ONE);
+  // accepted → consumed (not returned to pool as a loose 1)
+  assert.equal(poolCountOf(w, 1), 0, 'a 1 is valid fuel for the smallest ops');
 });
 
 test('fuel injected at an idle cell is returned to the pool, not wasted', () => {
   const w = createWorld();
   const id = placeCell(w, 'addition');
   while (!getCell(w, id)!.built) tick(w, 1);
-  // cell is built and idle (no operands)
   assert.equal(getCell(w, id)!.op, null);
   injectFuel(w, id, valueOf(5));
   assert.equal(poolCountOf(w, 5), 1, 'idle-cell fuel lands loose');
@@ -217,15 +234,18 @@ test('fuel injected at an idle cell is returned to the pool, not wasted', () => 
 // --- Transport: time × distance (Phase 4) ----------------------------------
 
 test('a block takes time to travel a pipe; longer pipe = longer transit', () => {
+  // Use a mid-sized block (1000) so transit is above the floor and distance
+  // actually registers. Source = an addition that outputs 1000 (500+500).
   function transitTicks(distance: number): number {
     const w = createWorld();
-    const src = placeCell(w, 'successor', 0, 0);
-    const dst = placeCell(w, 'addition', distance, 0);
+    const src = placeCell(w, 'addition', 0, 0);
+    const dst = placeCell(w, 'multiplication', distance, 0);
     while (!getCell(w, src)!.built || !getCell(w, dst)!.built) tick(w, 1);
-    placePipe(w, src, 0, dst, 0); // successor's 1 → addition operand 0
-    // run until the addition has a staged operand on port 0
+    placePipe(w, src, 0, dst, 0);
+    feedOperand(w, src, 0, valueOf(500));
+    feedOperand(w, src, 1, valueOf(500)); // → 1000 emitted into the pipe
     let ticks = 0;
-    while (getCell(w, dst)!.operands[0] === null && ticks < 100000) {
+    while (getCell(w, dst)!.operands[0] === null && ticks < 500000) {
       tick(w, 1);
       ticks++;
     }
@@ -236,25 +256,30 @@ test('a block takes time to travel a pipe; longer pipe = longer transit', () => 
   assert.ok(far > near, 'a longer supply line is slower');
 });
 
-test('the canvas is a map: keeping fuel close accelerates more cheaply', () => {
-  // Same fuel feeding the same op, delivered from near vs far. Near should
-  // land more fuel-chunks within a fixed window (because each trip is shorter).
-  function chunksDelivered(distance: number, windowTicks: number): number {
+test('the canvas is a map: a big block is frozen but its small pieces flow', () => {
+  // A large block crawls down a pipe (super-linear transit); a small one zips.
+  function arriveTicks(fuelValue: number): number {
     const w = createWorld();
-    const op = placeCell(w, 'exponentiation', 0, 0);
-    const depot = placeCell(w, 'successor', distance, 0); // emits 1s as fuel
-    while (!getCell(w, op)!.built || !getCell(w, depot)!.built) tick(w, 1);
-    feedOperand(w, op, 0, valueOf(10));
-    feedOperand(w, op, 1, valueOf(12)); // 10^12, a long op
-    placePipe(w, depot, 0, op, -1, { fuel: true });
-    const startFrac = opFraction(getCell(w, op)!);
-    run(w, windowTicks);
-    // progress beyond what baseRate alone would give is the fuel's contribution
-    return opFraction(getCell(w, op)!) - startFrac;
+    const src = placeCell(w, 'addition', 0, 0);
+    const dst = placeCell(w, 'multiplication', 200, 0);
+    while (!getCell(w, src)!.built || !getCell(w, dst)!.built) tick(w, 1);
+    placePipe(w, src, 0, dst, 0);
+    // Stage a block at the source's output by hand: drop it loose, then it's
+    // already there — instead, emit it by feeding src an op that outputs it.
+    // Simpler: addLoose into the pipe isn't supported; feed src to produce it.
+    // Use feedOperand on src to make `fuelValue` (a+0)... addition needs 2 ops.
+    feedOperand(w, src, 0, valueOf(fuelValue));
+    feedOperand(w, src, 1, valueOf(0));
+    let t = 0;
+    while (getCell(w, dst)!.operands[0] === null && t < 500000) {
+      tick(w, 1);
+      t++;
+    }
+    return t;
   }
-  const near = chunksDelivered(0, 400);
-  const far = chunksDelivered(3000, 400);
-  assert.ok(near >= far, 'closer fuel depot delivers at least as much progress');
+  const small = arriveTicks(100);
+  const big = arriveTicks(100000);
+  assert.ok(big > small * 5, 'a big block is dramatically slower to move than a small one');
 });
 
 // --- The bootstrap loop (Phase 3 §3) ---------------------------------------
