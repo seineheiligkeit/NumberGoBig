@@ -35,6 +35,7 @@ import {
   totalScore,
   takeLooseById,
   moveLoose,
+  moveCell,
   addLoose,
   feedOperand,
   injectFuel,
@@ -94,9 +95,10 @@ interface BlockVisual {
 
 interface PipeVisual {
   root: Container;
-  line: Graphics; // drawn once (endpoints are static — cells don't move yet)
+  line: Graphics; // redrawn when an endpoint cell moves
   flight: Container | null; // the block sliding along the pipe
   flightKey: string;
+  endKey: string; // last endpoint positions, to detect a move
 }
 
 export interface GameViewHandle {
@@ -174,6 +176,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   // Drag state for a loose block being moved.
   let drag: { id: number; root: Container } | null = null;
+  // Drag state for a cell being repositioned (grab offset keeps it under cursor).
+  let cellDrag: { id: number; dx: number; dy: number } | null = null;
 
   // --- Interaction ---------------------------------------------------------
 
@@ -252,6 +256,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     lastPointer = p;
     if (drag) {
       drag.root.position.set(p.x, p.y);
+    } else if (cellDrag) {
+      moveCell(world, cellDrag.id, p.x - cellDrag.dx, p.y - cellDrag.dy);
     } else if (tool === 'pipe' && pipeSource !== null) {
       drawPipeGhost();
     }
@@ -261,6 +267,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.on('pointerupoutside', (e) => endDrag(e.global.x, e.global.y));
 
   function endDrag(globalX: number, globalY: number): void {
+    cellDrag = null;
     if (!drag) return;
     const id = drag.id;
     const p = canvasPoint(globalX, globalY);
@@ -377,29 +384,39 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
   }
 
+  function endpointsKey(a: { x: number; y: number }, b: { x: number; y: number }): string {
+    return `${a.x.toFixed(0)},${a.y.toFixed(0)}|${b.x.toFixed(0)},${b.y.toFixed(0)}`;
+  }
+
+  function drawPipeLine(vis: PipeVisual, pipe: SimPipe, a: { x: number; y: number }, b: { x: number; y: number }): void {
+    vis.line.clear();
+    // Redrawn when an endpoint moves (re-wobbles during a drag; stable at rest).
+    pencilStroke(vis.line, [a, b], { color: GRAPHITE, width: pipe.fuel ? 1.1 : 1.6, alpha: 0.55 });
+    vis.line.circle(a.x, a.y, 3).fill({ color: GRAPHITE, alpha: 0.6 });
+    vis.line.circle(b.x, b.y, 4).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
+    vis.endKey = endpointsKey(a, b);
+  }
+
   function makePipeVisual(pipe: SimPipe): PipeVisual {
     const root = new Container();
     const line = new Graphics();
-    const src = world.cells.get(pipe.fromCell);
-    const dst = world.cells.get(pipe.toCell);
-    if (src && dst) {
-      const a = endpointPos(src, -1, false);
-      const b = endpointPos(dst, pipe.toPort, pipe.fuel);
-      // Drawn once — cells don't move yet, so the wobble doesn't shimmer.
-      pencilStroke(line, [a, b], { color: GRAPHITE, width: pipe.fuel ? 1.1 : 1.6, alpha: 0.55 });
-      // Endpoint dots: filled source, hollow dest.
-      line.circle(a.x, a.y, 3).fill({ color: GRAPHITE, alpha: 0.6 });
-      line.circle(b.x, b.y, 4).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
-    }
+    const vis: PipeVisual = { root, line, flight: null, flightKey: '', endKey: '' };
     root.addChild(line);
     pipeLayer.addChild(root);
-    return { root, line, flight: null, flightKey: '' };
+    const src = world.cells.get(pipe.fromCell);
+    const dst = world.cells.get(pipe.toCell);
+    if (src && dst) drawPipeLine(vis, pipe, endpointPos(src, -1, false), endpointPos(dst, pipe.toPort, pipe.fuel));
+    return vis;
   }
 
   function updatePipeVisual(pipe: SimPipe, vis: PipeVisual): void {
     const src = world.cells.get(pipe.fromCell);
     const dst = world.cells.get(pipe.toCell);
     if (!src || !dst) return;
+    const ea = endpointPos(src, -1, false);
+    const eb = endpointPos(dst, pipe.toPort, pipe.fuel);
+    // Re-project the line if either endpoint cell moved (cell dragging).
+    if (endpointsKey(ea, eb) !== vis.endKey) drawPipeLine(vis, pipe, ea, eb);
     if (!pipe.inFlight) {
       if (vis.flight) {
         vis.flight.destroy({ children: true });
@@ -430,6 +447,20 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     const root = new Container();
     root.position.set(cell.x, cell.y);
     root.zIndex = 1;
+    root.eventMode = 'static';
+    root.cursor = 'move';
+    // Grab the cell body (when no tool is active) to reposition it; connected
+    // pipes follow. Ports/blocks sit on top and stop propagation, so this only
+    // fires on the bare body.
+    root.on('pointerdown', (e) => {
+      if (tool || drag) return; // placement/pipe mode, or a block grab, wins
+      e.stopPropagation();
+      const id = cell.id;
+      const c = world.cells.get(id);
+      if (!c) return;
+      const p = canvasPoint(e.global.x, e.global.y);
+      cellDrag = { id, dx: p.x - c.x, dy: p.y - c.y };
+    });
 
     const ports = new Graphics();
     const outline = new Graphics();
@@ -581,6 +612,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       place: (kind: CellKind, x = 0, y = 0) => placeCell(world, kind, x, y),
       pipe: (fromCell: number, toCell: number, toPort: number, fuel = false) =>
         placePipe(world, fromCell, 0, toCell, toPort, { fuel }),
+      moveCell: (id: number, x: number, y: number) => moveCell(world, id, x, y),
       feed: (cellId: number, port: number, n: number) => feedOperand(world, cellId, port, valueOf(n)),
       fuel: (cellId: number, n: number) => injectFuel(world, cellId, valueOf(n)),
       addLoose: (n: number, x = 0, y = 0) => addLoose(world, valueOf(n), x, y),

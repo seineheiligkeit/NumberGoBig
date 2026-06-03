@@ -490,6 +490,16 @@ export function moveLoose(world: World, id: number, x: number, y: number): void 
   }
 }
 
+/** Reposition a cell (the view dragging it). Connected pipes follow because
+ *  pipe geometry is derived from cell positions. */
+export function moveCell(world: World, id: number, x: number, y: number): void {
+  const c = world.cells.get(id);
+  if (c) {
+    c.x = x;
+    c.y = y;
+  }
+}
+
 /** Fraction of a cell's construction complete, 0..1. */
 export function buildFraction(cell: SimCell): number {
   if (cell.built) return 1;

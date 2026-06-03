@@ -17,10 +17,12 @@ interface NBG {
   feed(cellId: number, port: number, n: number): boolean;
   fuel(cellId: number, n: number): void;
   addLoose(n: number, x?: number, y?: number): number;
+  moveCell(id: number, x: number, y: number): void;
   score(): string;
   poolSize(): number;
   pipeCount(): number;
   cellState(id: number): { built: boolean; build: number; op: number; kind: string } | null;
+  world: { cells: Map<number, { x: number; y: number; built: boolean }> };
 }
 
 declare global {
@@ -137,4 +139,28 @@ test('a Mill liquefies a block into graded fuel, conserving score', async ({ pag
   expect(after).toBe(before); // additive split conserves value
   // the loose pool now holds the milled pieces
   expect(await page.evaluate(() => window.__nbg.poolSize())).toBeGreaterThanOrEqual(8);
+});
+
+test('cells can be dragged to reposition the factory', async ({ page }) => {
+  await bootPaused(page);
+  const s = await page.evaluate(() => {
+    const n = window.__nbg;
+    const id = n.place('successor', -250, 0);
+    for (let i = 0; i < 30; i++) n.tick(1); // build
+    return id;
+  });
+  // Camera origin sits at (w/2, h*0.42); the cell at canvas (-250,0) maps there.
+  const box = (await page.locator('canvas').boundingBox())!;
+  const cx = box.width / 2;
+  const cy = box.height * 0.42;
+  await page.mouse.move(cx - 250, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx - 250 + 40, cy + 60, { steps: 5 });
+  await page.mouse.up();
+  const pos = await page.evaluate((id) => {
+    const c = window.__nbg.world.cells.get(id)!;
+    return { x: c.x, y: c.y };
+  }, s);
+  expect(pos.x).toBeGreaterThan(-250);
+  expect(pos.y).toBeGreaterThan(0);
 });
