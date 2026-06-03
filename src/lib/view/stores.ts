@@ -9,11 +9,15 @@
 import { writable } from 'svelte/store';
 import type { CellKind } from '../../../core/engine';
 
+/** What the player is about to place / draw. `'pipe'` is the two-click pipe
+ *  tool; a CellKind is a cell to drop; null is the idle pointer. */
+export type Tool = CellKind | 'pipe';
+
 /** Formatted Total Score for the header. */
 export const scoreStore = writable('0');
 
-/** The cell kind the player is about to place (toolbar → click canvas), or null. */
-export const placingStore = writable<CellKind | null>(null);
+/** The active tool (toolbar → click canvas), or null. */
+export const toolStore = writable<Tool | null>(null);
 
 /** A short dry-academic note, or null. */
 export const noteStore = writable<string | null>(null);

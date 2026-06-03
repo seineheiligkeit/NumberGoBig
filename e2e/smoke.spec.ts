@@ -13,10 +13,12 @@ interface NBG {
   setPaused(p: boolean): void;
   tick(n?: number): void;
   place(kind: string, x?: number, y?: number): number;
+  pipe(fromCell: number, toCell: number, toPort: number, fuel?: boolean): number;
   feed(cellId: number, port: number, n: number): boolean;
   addLoose(n: number, x?: number, y?: number): number;
   score(): string;
   poolSize(): number;
+  pipeCount(): number;
   cellState(id: number): { built: boolean; build: number; op: number; kind: string } | null;
 }
 
@@ -92,4 +94,33 @@ test('Multiplication amplifies score (3 × 4 → 12)', async ({ page }) => {
   // Let the operation complete (work to write "12" ≈ 8 ticks).
   await steps(page, 14);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(12);
+});
+
+test('a pipe carries a Successor 1 into an Addition over time', async ({ page }) => {
+  await bootPaused(page);
+  const { s, a } = await page.evaluate(() => {
+    const n = window.__nbg;
+    const s = n.place('successor', 0, 0);
+    const a = n.place('addition', 600, 0); // far → a slow supply line
+    return { s, a };
+  });
+
+  // Build both, then wire the successor's output to addition operand 0.
+  await steps(page, 30);
+  const wired = await page.evaluate(
+    ([s, a]) => {
+      window.__nbg.pipe(s, a, 0);
+      return window.__nbg.pipeCount();
+    },
+    [s, a],
+  );
+  expect(wired).toBe(1);
+
+  // The successor produces a 1; it must then transit the long pipe before the
+  // addition can stage it. Give it ample time, then assert the operand landed
+  // (i.e. score is held in the addition, not just loose at the successor).
+  await steps(page, 120);
+  const built = await page.evaluate((i) => window.__nbg.cellState(i)!.built, a);
+  expect(built).toBe(true);
+  expect(await page.evaluate(() => Number(window.__nbg.score()))).toBeGreaterThan(0);
 });

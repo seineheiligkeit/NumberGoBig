@@ -26,9 +26,11 @@ import { pencilStrokeDouble } from '../pixi/pencil';
 import { drawValueLabel } from '../pixi/value-label';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from '../pixi/typography';
 import { valueMagnitude, valueOf, type Value } from '../../../core/value';
+import { pencilStroke } from '../pixi/pencil';
 import {
   createWorld,
   placeCell,
+  placePipe,
   tick,
   totalScore,
   takeLooseById,
@@ -41,9 +43,10 @@ import {
   opFraction,
   type World,
   type SimCell,
+  type SimPipe,
   type CellKind,
 } from '../../../core/engine';
-import { scoreStore, placingStore } from './stores';
+import { scoreStore, toolStore, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
 
@@ -83,8 +86,24 @@ interface BlockVisual {
   root: Container;
 }
 
+interface PipeVisual {
+  root: Container;
+  line: Graphics; // drawn once (endpoints are static — cells don't move yet)
+  flight: Container | null; // the block sliding along the pipe
+  flightKey: string;
+}
+
 export interface GameViewHandle {
   destroy(): void;
+}
+
+/** World-space position of a pipe endpoint (source output / dest operand|fuel). */
+function endpointPos(cell: SimCell, port: number, fuel: boolean): { x: number; y: number } {
+  const L = portLayout(cell.kind);
+  if (fuel) return { x: cell.x + L.fuel.x, y: cell.y + L.fuel.y };
+  if (port < 0) return { x: cell.x + L.output.x, y: cell.y + L.output.y };
+  const op = L.operands[port] ?? L.output;
+  return { x: cell.x + op.x, y: cell.y + op.y };
 }
 
 /** Local-space operand/fuel/output port positions for a cell kind. */
@@ -140,6 +159,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   // Visual caches keyed by engine id.
   const cellVisuals = new Map<number, CellVisual>();
   const blockVisuals = new Map<number, BlockVisual>();
+  const pipeVisuals = new Map<number, PipeVisual>();
+
+  // Pipe layer sits under cells/blocks so lines read as the substrate.
+  const pipeLayer = new Container();
+  pipeLayer.zIndex = 0;
+  canvasLayer.addChild(pipeLayer);
 
   // Drag state for a loose block being moved.
   let drag: { id: number; root: Container } | null = null;
@@ -153,23 +178,77 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     return screenToCanvas(globalX, globalY);
   }
 
-  // Place a cell where the player clicks while in placement mode.
-  let placing: CellKind | null = null;
-  const unsubPlacing = placingStore.subscribe((k) => (placing = k));
+  // The active tool (cell to place, or the pipe tool), mirrored from the store.
+  let tool: Tool | null = null;
+
+  // Pipe placement: first click picks a source output, second a dest port.
+  let pipeSource: number | null = null;
+  let lastPointer = { x: 0, y: 0 };
+  const pipeGhost = new Graphics();
+  pipeGhost.zIndex = 50;
+  canvasLayer.addChild(pipeGhost);
+
+  // Subscribe AFTER the pipe state above exists — Svelte fires the subscriber
+  // synchronously on subscribe, and it touches pipeSource / drawPipeGhost.
+  const unsubTool = toolStore.subscribe((t) => {
+    tool = t;
+    if (t !== 'pipe') pipeSource = null; // leaving pipe mode cancels a pending source
+    drawPipeGhost();
+  });
 
   app.stage.on('pointerdown', (e) => {
     if (drag) return; // a block grab handles its own pointerdown
-    if (placing) {
-      const p = canvasPoint(e.global.x, e.global.y);
-      placeCell(world, placing, p.x, p.y);
-      placingStore.set(null);
+    const p = canvasPoint(e.global.x, e.global.y);
+
+    if (tool === 'pipe') {
+      handlePipeClick(p.x, p.y);
+      return;
+    }
+    if (tool) {
+      placeCell(world, tool, p.x, p.y);
+      toolStore.set(null);
     }
   });
 
+  function handlePipeClick(x: number, y: number): void {
+    if (pipeSource === null) {
+      const src = outputPortAt(x, y);
+      if (src !== null) {
+        pipeSource = src;
+        drawPipeGhost();
+      }
+      return;
+    }
+    const dest = portAt(x, y);
+    if (dest && dest.cellId !== pipeSource) {
+      placePipe(world, pipeSource, 0, dest.cellId, dest.port, { fuel: dest.fuel });
+    }
+    // Either committed or clicked empty space → end the gesture, stay in tool.
+    pipeSource = null;
+    drawPipeGhost();
+  }
+
+  /** Ghost line from the chosen source to the cursor while wiring a pipe. */
+  function drawPipeGhost(): void {
+    pipeGhost.clear();
+    if (tool !== 'pipe' || pipeSource === null) return;
+    const src = world.cells.get(pipeSource);
+    if (!src) return;
+    const a = endpointPos(src, -1, false);
+    pipeGhost
+      .moveTo(a.x, a.y)
+      .lineTo(lastPointer.x, lastPointer.y)
+      .stroke({ color: GRAPHITE, width: 1.5, alpha: 0.4 });
+  }
+
   app.stage.on('pointermove', (e) => {
-    if (!drag) return;
     const p = canvasPoint(e.global.x, e.global.y);
-    drag.root.position.set(p.x, p.y);
+    lastPointer = p;
+    if (drag) {
+      drag.root.position.set(p.x, p.y);
+    } else if (tool === 'pipe' && pipeSource !== null) {
+      drawPipeGhost();
+    }
   });
 
   app.stage.on('pointerup', (e) => endDrag(e.global.x, e.global.y));
@@ -221,6 +300,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     return null;
   }
 
+  /** Find a built cell whose output nub is near a canvas point (pipe source). */
+  function outputPortAt(x: number, y: number): number | null {
+    for (const cell of world.cells.values()) {
+      if (!cell.built) continue;
+      const o = endpointPos(cell, -1, false);
+      if (Math.hypot(x - o.x, y - o.y) <= PORT_R + 6) return cell.id;
+    }
+    return null;
+  }
+
   // --- Render sync ---------------------------------------------------------
 
   function syncCells(): void {
@@ -259,6 +348,68 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         blockVisuals.delete(id);
       }
     }
+  }
+
+  function syncPipes(): void {
+    for (const pipe of world.pipes.values()) {
+      if (!pipeVisuals.has(pipe.id)) pipeVisuals.set(pipe.id, makePipeVisual(pipe));
+      updatePipeVisual(pipe, pipeVisuals.get(pipe.id)!);
+    }
+    for (const [id, vis] of pipeVisuals) {
+      if (!world.pipes.has(id)) {
+        vis.root.destroy({ children: true });
+        pipeVisuals.delete(id);
+      }
+    }
+  }
+
+  function makePipeVisual(pipe: SimPipe): PipeVisual {
+    const root = new Container();
+    const line = new Graphics();
+    const src = world.cells.get(pipe.fromCell);
+    const dst = world.cells.get(pipe.toCell);
+    if (src && dst) {
+      const a = endpointPos(src, -1, false);
+      const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+      // Drawn once — cells don't move yet, so the wobble doesn't shimmer.
+      pencilStroke(line, [a, b], { color: GRAPHITE, width: pipe.fuel ? 1.1 : 1.6, alpha: 0.55 });
+      // Endpoint dots: filled source, hollow dest.
+      line.circle(a.x, a.y, 3).fill({ color: GRAPHITE, alpha: 0.6 });
+      line.circle(b.x, b.y, 4).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
+    }
+    root.addChild(line);
+    pipeLayer.addChild(root);
+    return { root, line, flight: null, flightKey: '' };
+  }
+
+  function updatePipeVisual(pipe: SimPipe, vis: PipeVisual): void {
+    const src = world.cells.get(pipe.fromCell);
+    const dst = world.cells.get(pipe.toCell);
+    if (!src || !dst) return;
+    if (!pipe.inFlight) {
+      if (vis.flight) {
+        vis.flight.destroy({ children: true });
+        vis.flight = null;
+        vis.flightKey = '';
+      }
+      return;
+    }
+    // The block slides from source to dest as transit progresses.
+    const a = endpointPos(src, -1, false);
+    const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+    const f = Math.min(1, pipe.inFlight.progress.div(pipe.inFlight.work).toNumber());
+    const v = pipe.inFlight.value;
+    const key = `${v.kind}:${valueMagnitude(v).toString()}`;
+    if (vis.flightKey !== key) {
+      if (vis.flight) vis.flight.destroy({ children: true });
+      vis.flight = drawValueLabel(v.kind === 'real' ? v : { kind: 'real', n: valueMagnitude(v) }, {
+        baseFontSize: 18,
+        color: GRAPHITE,
+      });
+      vis.root.addChild(vis.flight);
+      vis.flightKey = key;
+    }
+    if (vis.flight) vis.flight.position.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f);
   }
 
   function makeCellVisual(cell: SimCell): CellVisual {
@@ -375,6 +526,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         acc -= 1;
       }
     }
+    syncPipes();
     syncCells();
     syncBlocks();
     scoreStore.set(formatScore(totalScore(world)));
@@ -392,10 +544,13 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       },
       tick: (n = 1) => tick(world, n),
       place: (kind: CellKind, x = 0, y = 0) => placeCell(world, kind, x, y),
+      pipe: (fromCell: number, toCell: number, toPort: number, fuel = false) =>
+        placePipe(world, fromCell, 0, toCell, toPort, { fuel }),
       feed: (cellId: number, port: number, n: number) => feedOperand(world, cellId, port, valueOf(n)),
       addLoose: (n: number, x = 0, y = 0) => addLoose(world, valueOf(n), x, y),
       score: () => totalScore(world).toString(),
       poolSize: () => world.pool.length,
+      pipeCount: () => world.pipes.size,
       cellState: (id: number) => {
         const c = world.cells.get(id);
         return c ? { built: c.built, build: buildFraction(c), op: opFraction(c), kind: c.kind } : null;
@@ -415,7 +570,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   return {
     destroy() {
       window.removeEventListener('resize', onResize);
-      unsubPlacing();
+      unsubTool();
       app.destroy(true, { children: true });
     },
   };

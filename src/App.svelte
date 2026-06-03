@@ -1,17 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
-  import { scoreStore, placingStore } from './lib/view/stores';
-  import type { CellKind } from '../core/engine';
+  import { scoreStore, toolStore, type Tool } from './lib/view/stores';
 
   let canvasContainer: HTMLDivElement;
   let handle: GameViewHandle | null = null;
 
-  const tools: { kind: CellKind; label: string }[] = [
-    { kind: 'successor', label: '{ }  Successor' },
-    { kind: 'addition', label: '+  Addition' },
-    { kind: 'multiplication', label: '×  Multiplication' },
-    { kind: 'exponentiation', label: '^  Exponentiation' },
+  const tools: { tool: Tool; label: string }[] = [
+    { tool: 'successor', label: '{ }  Successor' },
+    { tool: 'addition', label: '+  Addition' },
+    { tool: 'multiplication', label: '×  Multiplication' },
+    { tool: 'exponentiation', label: '^  Exponentiation' },
+    { tool: 'pipe', label: '↳  Pipe' },
   ];
 
   onMount(() => {
@@ -21,9 +21,16 @@
     return () => handle?.destroy();
   });
 
-  function pick(kind: CellKind) {
-    placingStore.set($placingStore === kind ? null : kind);
+  function pick(tool: Tool) {
+    toolStore.set($toolStore === tool ? null : tool);
   }
+
+  const hint = (t: Tool | null): string =>
+    t === 'pipe'
+      ? 'Click an output, then an input port…'
+      : t
+        ? 'Click the page to place…'
+        : '';
 </script>
 
 <main>
@@ -38,12 +45,12 @@
     <h2>Literature</h2>
     <p class="hint">Place a cell, then drop blocks onto its ports.</p>
     {#each tools as t}
-      <button class:active={$placingStore === t.kind} onclick={() => pick(t.kind)}>
+      <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
         {t.label}
       </button>
     {/each}
-    {#if $placingStore}
-      <p class="placing">Click the page to place…</p>
+    {#if $toolStore}
+      <p class="placing">{hint($toolStore)}</p>
     {/if}
   </aside>
 </main>
