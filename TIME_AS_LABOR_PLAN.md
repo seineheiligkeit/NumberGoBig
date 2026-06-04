@@ -349,3 +349,15 @@ be reintroduced *onto a foundation that actually works*.
 operators. Lowest-risk, highest-clarity: it gets us to a clean, buildable
 minimal builder we can then bolt the clock onto, and it forces an honest
 inventory of what the cut systems were touching.
+
+- ✅ **Dev playtest instruments** — a live monitor (FRONTIER, time, cells/working,
+  pipes/loose) + a speed control (⏸ 1× 3× 10× 30×, via `speedStore`).
+- ✅ **Smart-vs-naive strategy probe** (`sim/strategy-test.ts`). Answer to "can a
+  smart superhuman beat the naive cap?": **yes, hugely.** The naive `spread`
+  strategy *collapses* with APM (1.27e30 @1/s → 3.44e10 @30/s — fragments value);
+  the smart `concentrate` (one frontier + out-fuel the digits³-growing op) holds
+  ~e23–e24 and beats naive-at-high-APM by ~13 orders. So strategy quality is a
+  massive skill edge — the intended deep puzzle. (Caveat: raw "more APM →
+  bigger frontier on a *fixed* farm" is fuel-SUPPLY-capped; the unbounded lever
+  is also building more fuel production, which is itself active play. Huge runs
+  overflow to slow layer-3 Decimals, so the probe caps its window.)
