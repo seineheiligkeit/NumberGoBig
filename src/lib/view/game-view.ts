@@ -31,6 +31,8 @@ import {
   createWorld,
   placeCell,
   placePipe,
+  removeCell,
+  removePipe,
   tick,
   totalScore,
   takeLooseById,
@@ -188,6 +190,15 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     return screenToCanvas(globalX, globalY);
   }
 
+  // Track Shift via the keyboard (more robust than Pixi's event modifier) —
+  // shift-click deletes cells/pipes.
+  let shiftHeld = false;
+  const onKey = (e: KeyboardEvent): void => {
+    shiftHeld = e.shiftKey;
+  };
+  window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKey);
+
   // The active tool (cell to place, or the pipe tool), mirrored from the store.
   let tool: Tool | null = null;
 
@@ -209,6 +220,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.on('pointerdown', (e) => {
     if (drag) return; // a block grab handles its own pointerdown
     const p = canvasPoint(e.global.x, e.global.y);
+
+    // Shift-click a pipe to delete it (reroute = delete + re-draw). Cells handle
+    // their own shift-click delete (they sit on top and stop propagation).
+    if (shiftHeld) {
+      const pid = findPipeAt(p.x, p.y);
+      if (pid !== null) removePipe(world, pid);
+      return;
+    }
 
     if (tool === 'pipe') {
       handlePipeClick(p.x, p.y);
@@ -317,6 +336,27 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const fx = cell.x + L.fuel.x;
       const fy = cell.y + L.fuel.y;
       if (Math.hypot(x - fx, y - fy) <= PORT_R + 6) return { cellId: cell.id, port: -1, fuel: true };
+    }
+    return null;
+  }
+
+  /** Find a pipe whose line is near a canvas point (for shift-click delete). */
+  function findPipeAt(x: number, y: number, tol = 9): number | null {
+    for (const pipe of world.pipes.values()) {
+      const src = world.cells.get(pipe.fromCell);
+      const dst = world.cells.get(pipe.toCell);
+      if (!src || !dst) continue;
+      const a = endpointPos(src, -1, false);
+      const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+      // distance from point to segment ab
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len2 = dx * dx + dy * dy || 1;
+      let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
+      t = Math.max(0, Math.min(1, t));
+      const px = a.x + t * dx;
+      const py = a.y + t * dy;
+      if (Math.hypot(x - px, y - py) <= tol) return pipe.id;
     }
     return null;
   }
@@ -458,6 +498,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const id = cell.id;
       const c = world.cells.get(id);
       if (!c) return;
+      // Shift-click deletes the cell (held blocks return to the pool). The
+      // rethinking/rebalancing verb — connected pipes go too.
+      if (shiftHeld) {
+        removeCell(world, id);
+        return;
+      }
       const p = canvasPoint(e.global.x, e.global.y);
       cellDrag = { id, dx: p.x - c.x, dy: p.y - c.y };
     });
@@ -613,6 +659,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       pipe: (fromCell: number, toCell: number, toPort: number, fuel = false) =>
         placePipe(world, fromCell, 0, toCell, toPort, { fuel }),
       moveCell: (id: number, x: number, y: number) => moveCell(world, id, x, y),
+      removeCell: (id: number) => removeCell(world, id),
+      removePipe: (id: number) => removePipe(world, id),
       feed: (cellId: number, port: number, n: number) => feedOperand(world, cellId, port, valueOf(n)),
       fuel: (cellId: number, n: number) => injectFuel(world, cellId, valueOf(n)),
       addLoose: (n: number, x = 0, y = 0) => addLoose(world, valueOf(n), x, y),
@@ -638,6 +686,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   return {
     destroy() {
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('keyup', onKey);
       unsubTool();
       app.destroy(true, { children: true });
     },

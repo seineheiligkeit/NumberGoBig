@@ -45,7 +45,7 @@
 
   <aside class="shelf">
     <h2>Literature</h2>
-    <p class="hint">Place a cell, then drop blocks onto its ports.</p>
+    <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
     {#each tools as t}
       <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
         {t.label}

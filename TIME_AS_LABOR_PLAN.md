@@ -137,9 +137,19 @@ extending.
   - *Note:* the greedy manager's frontier is **volatile** (sawtooths as it locks
     the biggest blocks into very long ops) — a steadier strategy is a refinement,
     not a blocker.
-- ⏭️ **Next candidates:** wire reroute/remove + manual-shuttle into the *view*
-  (so a human can do what the manager does); tune curve steepness/volatility;
-  the exp-centric climb; global time-levers / prestige; then deferred systems.
+- ✅ **The manager's verbs in the human game.** Manual shuttle was already there
+  (drag blocks onto ports); added **shift-click to delete a cell or pipe**
+  (reroute = delete + re-draw) backed by `removeCell`/`removePipe`. Shift tracked
+  via a window key listener (robust vs Pixi's event modifier); e2e covers a real
+  shift-click delete. So a human can now do everything the managing agent did:
+  place, move, wire, shuttle, fuel, delete/rebalance.
+- ⏭️ **Now: a careful tuning pass.** With both agents (production `sim/agent.ts`,
+  logistics `sim/logistics.ts`, static `sim/factory-agent.ts`, managing
+  `sim/manager.ts`) we can read the curve from several angles. Levers:
+  per-operator exponents, grades (`gradeCoeff`/`gradeExp`), transit `p`/coeff,
+  build scaling, baseRate. Targets to decide: opening feel, the volatility of the
+  managed climb, the cost-per-magnitude steepness. Then: global time-levers /
+  prestige; exp-centric climb; deferred systems.
 
 ---
 

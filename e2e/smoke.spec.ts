@@ -18,6 +18,8 @@ interface NBG {
   fuel(cellId: number, n: number): void;
   addLoose(n: number, x?: number, y?: number): number;
   moveCell(id: number, x: number, y: number): void;
+  removeCell(id: number): void;
+  removePipe(id: number): void;
   score(): string;
   poolSize(): number;
   pipeCount(): number;
@@ -163,4 +165,21 @@ test('cells can be dragged to reposition the factory', async ({ page }) => {
   }, s);
   expect(pos.x).toBeGreaterThan(-250);
   expect(pos.y).toBeGreaterThan(0);
+});
+
+test('shift-click deletes a cell (the rebalancing verb)', async ({ page }) => {
+  await bootPaused(page);
+  const id = await page.evaluate(() => {
+    const n = window.__nbg;
+    const id = n.place('multiplication', 0, 0);
+    for (let i = 0; i < 30; i++) n.tick(1); // build
+    return id;
+  });
+  // Cell at canvas (0,0) → screen centre (w/2, h*0.42). Shift-click it.
+  const box = (await page.locator('canvas').boundingBox())!;
+  await page
+    .locator('canvas')
+    .click({ position: { x: box.width / 2, y: box.height * 0.42 }, modifiers: ['Shift'] });
+  const gone = await page.evaluate((i) => !window.__nbg.world.cells.get(i), id);
+  expect(gone).toBe(true);
 });
