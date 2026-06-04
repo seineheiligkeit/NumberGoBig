@@ -357,7 +357,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // their own shift-click delete (they sit on top and stop propagation).
     if (shiftHeld) {
       const pid = findPipeAt(p.x, p.y);
-      if (pid !== null) removePipe(world, pid);
+      if (pid !== null) {
+        juice.eraser(p.x, p.y, 18, 12); // erase where the pipe was clicked (it's thin)
+        removePipe(world, pid);
+      }
       return;
     }
 
@@ -662,8 +665,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const c = world.cells.get(id);
       if (!c) return;
       // Shift-click deletes the cell (held blocks return to the pool). The
-      // rethinking/rebalancing verb — connected pipes go too.
+      // rethinking/rebalancing verb — connected pipes go too. An eraser scrub
+      // sells the removal.
       if (shiftHeld) {
+        juice.eraser(c.x, c.y, CELL_W / 2, CELL_H / 2);
         removeCell(world, id);
         return;
       }

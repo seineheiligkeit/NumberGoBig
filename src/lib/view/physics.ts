@@ -34,6 +34,7 @@ const STIFF = 22; // spring angular frequency (ω)
 const ZETA = 0.55; // damping ratio (<1 → a little overshoot = the pop)
 const GRAVITY = 240; // px/s² on dust
 const MAX_DUST = 400; // hard cap so a fast/zoomed factory can't flood particles
+const ERASER_PINK = 0xd99a9a; // the notebook eraser — diegetic, instantly readable
 
 interface Spring {
   scale: number;
@@ -51,6 +52,15 @@ interface Dust {
   alpha: number;
 }
 
+/** A generic timed tween (0→1 over `dur` seconds), for one-shot FX like the
+ *  eraser sweep. `fn(k)` runs each step; `done()` once at the end. */
+interface Anim {
+  t: number;
+  dur: number;
+  fn: (k: number) => void;
+  done?: () => void;
+}
+
 export interface JuiceLayer {
   /** Scale-pop a container (settles to 1). Safe on synced containers. */
   punch(target: Container, amount?: number): void;
@@ -58,6 +68,9 @@ export interface JuiceLayer {
   lean(target: Container, angle: number): void;
   /** Spray graphite shavings at a world-space point. */
   burst(x: number, y: number, count?: number, spread?: number): void;
+  /** Play an eraser scrub over a world-space box: a pink eraser sweeps across,
+   *  shedding shavings, and leaves a fading graphite smudge. */
+  eraser(x: number, y: number, halfW: number, halfH: number): void;
   /** Advance springs + particles by real elapsed ms. Call from the ticker. */
   step(dtMs: number): void;
   destroy(): void;
@@ -66,6 +79,10 @@ export interface JuiceLayer {
 export function createJuice(fxLayer: Container): JuiceLayer {
   const springs = new Map<Container, Spring>();
   const dust: Dust[] = [];
+  const anims: Anim[] = [];
+  const tween = (dur: number, fn: (k: number) => void, done?: () => void): void => {
+    anims.push({ t: 0, dur, fn, done });
+  };
 
   const springOf = (t: Container): Spring => {
     let s = springs.get(t);
@@ -104,8 +121,57 @@ export function createJuice(fxLayer: Container): JuiceLayer {
       }
     },
 
+    eraser(x, y, halfW, halfH) {
+      if (JUICE <= 0) return;
+      // The eraser sweeps across the box, sheds shavings, leaves a smudge.
+      const ew = 24;
+      const eh = 16;
+      const er = new Graphics();
+      er.roundRect(-ew / 2, -eh / 2, ew, eh, 3).fill({ color: ERASER_PINK, alpha: 0.92 });
+      er.roundRect(-ew / 2, -eh / 2, ew, eh * 0.4, 3).fill({ color: 0xffffff, alpha: 0.35 }); // ferrule highlight
+      fxLayer.addChild(er);
+      const smudge = new Graphics();
+      fxLayer.addChild(smudge);
+      const x0 = x - halfW - 10;
+      const x1 = x + halfW + 10;
+      tween(
+        0.22,
+        (k) => {
+          const ex = x0 + (x1 - x0) * k;
+          er.position.set(ex, y);
+          er.alpha = 1 - Math.max(0, (k - 0.7) / 0.3);
+          if (Math.random() < 0.7) this.burst(ex, y + (Math.random() - 0.5) * 2 * halfH, 1, 26);
+          smudge.clear();
+          smudge.ellipse(x, y, halfW * 0.9, halfH * 0.7).fill({ color: GRAPHITE, alpha: 0.12 * Math.sin(Math.PI * k) });
+        },
+        () => {
+          er.destroy();
+          // A faint graphite smudge lingers a beat where the drawing was.
+          tween(
+            0.4,
+            (k) => {
+              smudge.clear();
+              smudge.ellipse(x, y, halfW * 0.8, halfH * 0.6).fill({ color: GRAPHITE, alpha: 0.13 * (1 - k) });
+            },
+            () => smudge.destroy(),
+          );
+        },
+      );
+    },
+
     step(dtMs) {
       const dt = Math.min(0.05, dtMs / 1000); // clamp so a frame hitch can't blow up the spring
+
+      for (let i = anims.length - 1; i >= 0; i--) {
+        const a = anims[i];
+        a.t += dt;
+        const k = Math.min(1, a.t / a.dur);
+        a.fn(k);
+        if (k >= 1) {
+          a.done?.();
+          anims.splice(i, 1);
+        }
+      }
 
       for (const [t, s] of springs) {
         if (t.destroyed) {
@@ -159,6 +225,7 @@ export function createJuice(fxLayer: Container): JuiceLayer {
       springs.clear();
       for (const d of dust) if (!d.g.destroyed) d.g.destroy();
       dust.length = 0;
+      anims.length = 0; // FX graphics are torn down with the fxLayer
     },
   };
 }
