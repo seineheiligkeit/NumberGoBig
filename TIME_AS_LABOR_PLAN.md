@@ -151,6 +151,25 @@ extending.
   managed climb, the cost-per-magnitude steepness. Then: global time-levers /
   prestige; exp-centric climb; deferred systems.
 
+  **Tuning lens — human action budget (`sim/manager.ts` rate-limited).** Goal:
+  *idle is always fine (score rises), active is always more efficient, always
+  something worth doing — without robotic APM.* Findings from the rate sweep
+  (auto-piped backbone = idle baseline + rate-limited manual amplification):
+  - **Idle is genuinely fine:** rate 0 → score rises forever (free river), small
+    frontier. The auto-pipes carry the idle half. ✓
+  - **Active play is hugely rewarding:** ~1 action / 4s (66 actions total)
+    rockets the frontier from 26 → 3.9e13. Always something very worth doing. ✓
+  - **But it's a CLIFF, not a gradient:** rate saturates immediately (0.25/sec
+    and 4/sec give the *same* 3.9e13 with the same ~66 actions). The ceiling is
+    factory SIZE, not APM — and each amplification ~**squares** the frontier
+    (doubly-exponential per action), so a handful of actions → astronomical jump.
+  - **Tuning implication:** for a smooth "every action helps a bit, faster play
+    steadily out-paces slower" gradient, the *efficient* play should be
+    **incremental** (frontier × a moderate graded fuel block) rather than
+    **squaring the two biggest**. Tune grades + op-costs so streaming moderate
+    multipliers is the best play, not spiky squaring. That makes APM rewarding
+    without a cliff and keeps "always something to do" true at every rate.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline
