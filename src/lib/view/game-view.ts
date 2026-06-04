@@ -99,6 +99,8 @@ interface PipeVisual {
   flight: Container | null; // the block sliding along the pipe
   flightKey: string;
   endKey: string; // last endpoint positions, to detect a move
+  path: Pt[]; // cached bezier samples (the curve the block rides)
+  cum: number[]; // cumulative arc length per sample
 }
 
 export interface GameViewHandle {
@@ -132,6 +134,99 @@ function portLayout(kind: CellKind): {
     fuel: { x: 0, y: CELL_H / 2 },
     output: { x: CELL_W / 2, y: 0 },
   };
+}
+
+// --- Pipe geometry (port-aware bezier) -------------------------------------
+
+interface Pt {
+  x: number;
+  y: number;
+}
+
+/** Outward axis a pipe leaves/enters a port along — so the curve exits the
+ *  source's output nub rightward, and arrives along the dest port's own axis
+ *  (operands on the left, the fuel socket from below). */
+function portDir(port: number, fuel: boolean): Pt {
+  if (fuel) return { x: 0, y: 1 }; // fuel socket sits at the bottom
+  if (port < 0) return { x: 1, y: 0 }; // output nub on the right
+  return { x: -1, y: 0 }; // operand ports on the left
+}
+
+/** Sample a cubic bezier whose tangents leave `a`/`b` along `da`/`db`. Control
+ *  distance is clamped to [24, len/2] so short hops don't loop. */
+function cubicSamples(a: Pt, da: Pt, b: Pt, db: Pt, n = 28): Pt[] {
+  const len = Math.hypot(b.x - a.x, b.y - a.y);
+  const d = Math.max(24, Math.min(len / 2, len * 0.42));
+  const c1 = { x: a.x + da.x * d, y: a.y + da.y * d };
+  const c2 = { x: b.x + db.x * d, y: b.y + db.y * d };
+  const pts: Pt[] = [];
+  for (let i = 0; i <= n; i++) {
+    const t = i / n;
+    const mt = 1 - t;
+    const w0 = mt * mt * mt;
+    const w1 = 3 * mt * mt * t;
+    const w2 = 3 * mt * t * t;
+    const w3 = t * t * t;
+    pts.push({
+      x: w0 * a.x + w1 * c1.x + w2 * c2.x + w3 * b.x,
+      y: w0 * a.y + w1 * c1.y + w2 * c2.y + w3 * b.y,
+    });
+  }
+  return pts;
+}
+
+/** Cumulative arc length at each sampled point (for even, magnitude-honest
+ *  travel along the curve rather than along the chord). */
+function cumLengths(pts: Pt[]): number[] {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) {
+    cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+  }
+  return cum;
+}
+
+/** Position at fraction `f` of total arc length along a sampled polyline. */
+function pointAt(pts: Pt[], cum: number[], f: number): Pt {
+  if (pts.length === 0) return { x: 0, y: 0 };
+  const total = cum[cum.length - 1] || 1;
+  const target = Math.max(0, Math.min(1, f)) * total;
+  for (let i = 1; i < pts.length; i++) {
+    if (cum[i] >= target) {
+      const seg = cum[i] - cum[i - 1] || 1;
+      const t = (target - cum[i - 1]) / seg;
+      return {
+        x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t,
+        y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t,
+      };
+    }
+  }
+  return pts[pts.length - 1];
+}
+
+/** Lay faint graphite dots along a polyline at a fixed arc-length step — the
+ *  dashed "ink-flow" look for fuel lines. */
+function dottedAlong(g: Graphics, pts: Pt[], cum: number[], step: number, r: number, alpha: number): void {
+  const total = cum[cum.length - 1] || 1;
+  for (let s = 0; s <= total; s += step) {
+    const p = pointAt(pts, cum, s / total);
+    g.circle(p.x, p.y, r).fill({ color: GRAPHITE, alpha });
+  }
+}
+
+/** Shortest distance from a point to a sampled polyline (curve hit-test). */
+function distToPolyline(pts: Pt[], x: number, y: number): number {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1];
+    const b = pts[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy || 1;
+    let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    best = Math.min(best, Math.hypot(x - (a.x + t * dx), y - (a.y + t * dy)));
+  }
+  return best;
 }
 
 export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> {
@@ -262,10 +357,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     const src = world.cells.get(pipeSource);
     if (!src) return;
     const a = endpointPos(src, -1, false);
-    pipeGhost
-      .moveTo(a.x, a.y)
-      .lineTo(lastPointer.x, lastPointer.y)
-      .stroke({ color: GRAPHITE, width: 1.5, alpha: 0.4 });
+    const b = lastPointer;
+    // Curve out of the source nub and arrive smoothly at the cursor (we don't
+    // yet know the dest port, so aim back along the chord).
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    const L = Math.hypot(dx, dy) || 1;
+    const pts = cubicSamples(a, portDir(-1, false), b, { x: dx / L, y: dy / L });
+    pipeGhost.moveTo(pts[0].x, pts[0].y);
+    for (let i = 1; i < pts.length; i++) pipeGhost.lineTo(pts[i].x, pts[i].y);
+    pipeGhost.stroke({ color: GRAPHITE, width: 1.5, alpha: 0.4 });
   }
 
   app.stage.on('pointermove', (e) => {
@@ -338,23 +439,21 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     return null;
   }
 
-  /** Find a pipe whose line is near a canvas point (for shift-click delete). */
+  /** Find a pipe whose curve is near a canvas point (for shift-click delete).
+   *  Prefer the cached samples; fall back to recomputing for a fresh pipe. */
   function findPipeAt(x: number, y: number, tol = 9): number | null {
     for (const pipe of world.pipes.values()) {
-      const src = world.cells.get(pipe.fromCell);
-      const dst = world.cells.get(pipe.toCell);
-      if (!src || !dst) continue;
-      const a = endpointPos(src, -1, false);
-      const b = endpointPos(dst, pipe.toPort, pipe.fuel);
-      // distance from point to segment ab
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len2 = dx * dx + dy * dy || 1;
-      let t = ((x - a.x) * dx + (y - a.y) * dy) / len2;
-      t = Math.max(0, Math.min(1, t));
-      const px = a.x + t * dx;
-      const py = a.y + t * dy;
-      if (Math.hypot(x - px, y - py) <= tol) return pipe.id;
+      const vis = pipeVisuals.get(pipe.id);
+      let pts = vis?.path;
+      if (!pts || pts.length < 2) {
+        const src = world.cells.get(pipe.fromCell);
+        const dst = world.cells.get(pipe.toCell);
+        if (!src || !dst) continue;
+        const a = endpointPos(src, -1, false);
+        const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+        pts = cubicSamples(a, portDir(-1, false), b, portDir(pipe.toPort, pipe.fuel));
+      }
+      if (distToPolyline(pts, x, y) <= tol) return pipe.id;
     }
     return null;
   }
@@ -426,10 +525,22 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     return `${a.x.toFixed(0)},${a.y.toFixed(0)}|${b.x.toFixed(0)},${b.y.toFixed(0)}`;
   }
 
-  function drawPipeLine(vis: PipeVisual, pipe: SimPipe, a: { x: number; y: number }, b: { x: number; y: number }): void {
+  function drawPipeLine(vis: PipeVisual, pipe: SimPipe, a: Pt, b: Pt): void {
     vis.line.clear();
+    // Port-aware curve: leaves the source output rightward, arrives along the
+    // dest port's own axis. Cached so the in-flight block rides it by arc length.
+    const pts = cubicSamples(a, portDir(-1, false), b, portDir(pipe.toPort, pipe.fuel));
+    const cum = cumLengths(pts);
+    vis.path = pts;
+    vis.cum = cum;
     // Redrawn when an endpoint moves (re-wobbles during a drag; stable at rest).
-    pencilStroke(vis.line, [a, b], { color: GRAPHITE, width: pipe.fuel ? 1.1 : 1.6, alpha: 0.55 });
+    if (pipe.fuel) {
+      // Fuel lines read as a faint dashed channel (distinct from solid operand
+      // lines, lighter weight — "thin supply line").
+      dottedAlong(vis.line, pts, cum, 8, 1.1, 0.45);
+    } else {
+      pencilStroke(vis.line, pts, { color: GRAPHITE, width: 1.6, alpha: 0.55 });
+    }
     vis.line.circle(a.x, a.y, 3).fill({ color: GRAPHITE, alpha: 0.6 });
     vis.line.circle(b.x, b.y, 4).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
     vis.endKey = endpointsKey(a, b);
@@ -438,7 +549,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   function makePipeVisual(pipe: SimPipe): PipeVisual {
     const root = new Container();
     const line = new Graphics();
-    const vis: PipeVisual = { root, line, flight: null, flightKey: '', endKey: '' };
+    const vis: PipeVisual = { root, line, flight: null, flightKey: '', endKey: '', path: [], cum: [0] };
     root.addChild(line);
     pipeLayer.addChild(root);
     const src = world.cells.get(pipe.fromCell);
@@ -463,9 +574,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       }
       return;
     }
-    // The block slides from source to dest as transit progresses.
-    const a = endpointPos(src, -1, false);
-    const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+    // The block slides along the pipe curve as transit progresses.
     const f = Math.min(1, pipe.inFlight.progress.div(pipe.inFlight.work).toNumber());
     const v = pipe.inFlight.value;
     const key = `${v.kind}:${valueMagnitude(v).toString()}`;
@@ -478,7 +587,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.root.addChild(vis.flight);
       vis.flightKey = key;
     }
-    if (vis.flight) vis.flight.position.set(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f);
+    if (vis.flight) {
+      const p = pointAt(vis.path, vis.cum, f);
+      vis.flight.position.set(p.x, p.y);
+    }
   }
 
   function makeCellVisual(cell: SimCell): CellVisual {
