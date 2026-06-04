@@ -34,3 +34,8 @@ export const statsStore = writable({ cells: 0, pipes: 0, loose: 0, elapsed: 0, w
 /** Playback speed in engine ticks per real second (0 = paused). The dev speed
  *  control writes this; the ticker reads it. */
 export const speedStore = writable(3);
+
+/** The most recently reached magnitude milestone (e.g. "a googol"), or null.
+ *  The view sets it once when the frontier first crosses a threshold; the
+ *  narrator (P4) reacts. */
+export const milestoneStore = writable<string | null>(null);

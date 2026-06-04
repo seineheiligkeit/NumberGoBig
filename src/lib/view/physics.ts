@@ -71,6 +71,9 @@ export interface JuiceLayer {
   /** Play an eraser scrub over a world-space box: a pink eraser sweeps across,
    *  shedding shavings, and leaves a fading graphite smudge. */
   eraser(x: number, y: number, halfW: number, halfH: number): void;
+  /** A milestone flourish at a world-space point: an expanding ring + a generous
+   *  spray of shavings. The "numbers go BIG" celebratory beat. */
+  flash(x: number, y: number): void;
   /** Advance springs + particles by real elapsed ms. Call from the ticker. */
   step(dtMs: number): void;
   destroy(): void;
@@ -156,6 +159,21 @@ export function createJuice(fxLayer: Container): JuiceLayer {
             () => smudge.destroy(),
           );
         },
+      );
+    },
+
+    flash(x, y) {
+      if (JUICE <= 0) return;
+      this.burst(x, y, 14, 90);
+      const ring = new Graphics();
+      fxLayer.addChild(ring);
+      tween(
+        0.5,
+        (k) => {
+          ring.clear();
+          ring.circle(x, y, 12 + 64 * k).stroke({ color: GRAPHITE, width: 2.4 * (1 - k), alpha: 0.5 * (1 - k) });
+        },
+        () => ring.destroy(),
       );
     },
 

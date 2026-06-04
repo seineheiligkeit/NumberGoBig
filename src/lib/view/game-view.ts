@@ -53,7 +53,7 @@ import {
   type CellKind,
 } from '../../../core/engine';
 import { createJuice, setJuice } from './physics';
-import { scoreStore, toolStore, frontierStore, statsStore, speedStore, type Tool } from './stores';
+import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
 
@@ -650,7 +650,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
     if (vis.flight) {
       const p = pointAt(vis.path, vis.cum, f);
-      vis.flight.position.set(p.x, p.y);
+      // Heavy blocks sag the line — a weight on a string, dipping most mid-pipe.
+      const sag = blockHeaviness(v) * 16 * Math.sin(Math.PI * f);
+      vis.flight.position.set(p.x, p.y + sag);
     }
   }
 
@@ -910,6 +912,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       ],
       { color: GRAPHITE, width: 1.4 },
     );
+    drawHeaviness(g, BLOCK_R, blockHeaviness(value)); // heavy numbers read frozen/dense
     body.addChild(g);
 
     const label = drawValueLabel(value.kind === 'real' ? value : { kind: 'real', n: valueMagnitude(value) }, {
@@ -930,6 +933,22 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   }
 
   // --- Ticker --------------------------------------------------------------
+
+  // Magnitude milestones — the first time the frontier crosses each, a flourish
+  // fires and the narrator (P4) is notified. Thresholds < 1e308 so the plain
+  // `Decimal.gte(number)` works; the tower check uses `.layer`.
+  const reachedMilestones = new Set<string>();
+  const MILESTONES: { key: string; label: string; hit: (m: ReturnType<typeof valueMagnitude>) => boolean }[] = [
+    { key: '1e3', label: 'one thousand', hit: (m) => m.gte(1e3) },
+    { key: '1e6', label: 'one million', hit: (m) => m.gte(1e6) },
+    { key: '1e9', label: 'one billion', hit: (m) => m.gte(1e9) },
+    { key: '1e12', label: 'one trillion', hit: (m) => m.gte(1e12) },
+    { key: '1e18', label: 'a quintillion', hit: (m) => m.gte(1e18) },
+    { key: '1e30', label: '10³⁰', hit: (m) => m.gte(1e30) },
+    { key: '1e60', label: '10⁶⁰', hit: (m) => m.gte(1e60) },
+    { key: 'googol', label: 'a googol — 10¹⁰⁰', hit: (m) => m.gte(1e100) },
+    { key: 'tower', label: 'a power tower', hit: (m) => m.layer >= 2 },
+  ];
 
   let acc = 0;
   let enginePaused = false;
@@ -956,7 +975,20 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     monitorAccum += t.deltaMS;
     if (monitorAccum >= 250) {
       monitorAccum = 0;
-      frontierStore.set(formatScore(frontierOf(world)));
+      const fi = frontierInfo(world);
+      frontierStore.set(formatScore(fi.mag));
+      // Milestone crossings — flourish at the frontier block + notify the narrator.
+      let hit: string | null = null;
+      for (const ms of MILESTONES) {
+        if (!reachedMilestones.has(ms.key) && ms.hit(fi.mag)) {
+          reachedMilestones.add(ms.key);
+          hit = ms.label;
+        }
+      }
+      if (hit) {
+        juice.flash(fi.x, fi.y);
+        milestoneStore.set(hit);
+      }
       let working = 0;
       for (const c of world.cells.values()) if (c.op) working++;
       statsStore.set({ cells: world.cells.size, pipes: world.pipes.size, loose: world.pool.length, elapsed: elapsedTicks, working });
@@ -1033,6 +1065,34 @@ function drawClogMark(g: Graphics, x: number, y: number): void {
   g.stroke({ color: JAM_TINT, width: 1.8, alpha: 0.4 + 0.45 * pulse });
 }
 
+/** How "heavy" a value reads, 0..1 — small fuel is light/liquid, big numbers are
+ *  frozen. Ramps 0 at magnitude 100 → 1 at 10⁵+ (and any layer≥1 tower). This
+ *  is a *visual* echo of the transit law (transit ∝ value^1.5), not a new rule. */
+function blockHeaviness(v: Value): number {
+  const m = valueMagnitude(v);
+  if (m.lte(100)) return 0;
+  const digits = m.log10().toNumber();
+  if (!Number.isFinite(digits)) return 1; // astronomically large → fully frozen
+  return Math.max(0, Math.min(1, (digits - 2) / 3));
+}
+
+/** Crosshatch the interior of a block to read as dense/heavy graphite. Denser
+ *  and darker the heavier the value. Clipped to the inner square. */
+function drawHeaviness(g: Graphics, R: number, h: number): void {
+  if (h <= 0.02) return;
+  const inner = R - 3;
+  const spacing = 14 - 9 * h; // denser when heavier
+  for (let o = -2 * inner; o <= 2 * inner; o += spacing) {
+    const a0 = Math.max(-inner, -inner - o);
+    const a1 = Math.min(inner, inner - o);
+    if (a1 > a0) g.moveTo(a0, a0 + o).lineTo(a1, a1 + o); // slope +1
+    const b0 = Math.max(-inner, o - inner);
+    const b1 = Math.min(inner, o + inner);
+    if (b1 > b0) g.moveTo(b0, -b0 + o).lineTo(b1, -b1 + o); // slope -1
+  }
+  g.stroke({ color: GRAPHITE, width: 0.8, alpha: 0.08 + 0.22 * h });
+}
+
 /** A faint dashed square — the "drop a block here" hint on an empty operand
  *  port. `alpha` is pulsed by the caller for the partial/waiting state. */
 function dashedSquare(g: Graphics, cx: number, cy: number, half: number, alpha: number): void {
@@ -1085,20 +1145,27 @@ function formatScore(d: ReturnType<typeof totalScore>): string {
 }
 
 /** The biggest single magnitude anywhere — pool, staged operands, in-progress
- *  outputs. The real "numbers go big" metric (distinct from Total Score). */
-function frontierOf(world: World): ReturnType<typeof totalScore> {
+ *  outputs — and WHERE it is (world coords), for the milestone flourish. The
+ *  real "numbers go big" metric (distinct from Total Score). */
+function frontierInfo(world: World): { mag: ReturnType<typeof totalScore>; x: number; y: number } {
   let max = valueMagnitude(valueOf(0));
-  const consider = (v: Value): void => {
+  let mx = 0;
+  let my = 0;
+  const consider = (v: Value, x: number, y: number): void => {
     const m = valueMagnitude(v);
-    if (m.gt(max)) max = m;
+    if (m.gt(max)) {
+      max = m;
+      mx = x;
+      my = y;
+    }
   };
-  for (const b of world.pool) consider(b.value);
+  for (const b of world.pool) consider(b.value, b.x, b.y);
   for (const c of world.cells.values()) {
-    for (const o of c.operands) if (o) consider(o);
+    for (const o of c.operands) if (o) consider(o, c.x, c.y);
     if (c.op) {
-      for (const h of c.op.heldInputs) consider(h);
-      for (const e of c.op.emits) consider(e.value);
+      for (const h of c.op.heldInputs) consider(h, c.x, c.y);
+      for (const e of c.op.emits) consider(e.value, c.x, c.y);
     }
   }
-  return max;
+  return { mag: max, x: mx, y: my };
 }
