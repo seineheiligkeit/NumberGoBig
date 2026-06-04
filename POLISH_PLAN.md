@@ -40,8 +40,11 @@ fakery), **bezier** pipes, **any juice layer** (no pop/recoil/dust — the old
   juice layer gained dust, scale-punch, the eraser tween, and a `JUICE` scalar.
   *Hard-won lesson:* never scale or spawn interactive FX on a hit-tested
   container — visuals go in an inner `body`, the FX layer is `eventMode:'none'`.
-- ⏭️ **P3 — Legibility & the whoosh** (next).
-- ◻️ **P4 — Notebook & onboarding finish.**
+- ✅ **P3 — Legibility & the whoosh** (cell states at a glance · the burn
+  whoosh off the `recentBurn` rising edge · heavy/crosshatched frozen blocks +
+  pipe sag + milestone flash). Engine gained `recentBurn`; the view gained a
+  `milestoneStore` hook for the narrator.
+- ⏭️ **P4 — Notebook & onboarding finish** (next).
 
 ## Sequencing (interleaved by dependency + impact-per-effort)
 
