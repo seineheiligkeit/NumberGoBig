@@ -94,6 +94,7 @@ interface CellVisual {
   info: Text | null; // accelerator boost readout
   clog: Graphics | null; // output back-pressure mark (lazy)
   idleHint: Graphics; // drop-zone hints on empty operand ports when idle
+  prevBurn: number; // last frame's recentBurn — for whoosh rising-edge detection
   outlinePath: Pt[]; // stable wobble path for the outline (revealed as it builds)
   outlineCum: number[]; // cumulative arc length of outlinePath
 }
@@ -439,17 +440,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const block = takeLooseById(world, id);
       if (block) {
         if (target.fuel) {
+          // The whoosh fires off the burn rising-edge in updateCellVisual (so
+          // hand-drop and pipe-fed fuel feel identical, and a fuel block bounced
+          // off an idle cell doesn't falsely ignite).
           injectFuel(world, target.cellId, block.value);
-          // Spark at the fuel port — "throwing coal in the furnace".
-          const fc = world.cells.get(target.cellId);
-          if (fc) {
-            const L = portLayout(fc.kind);
-            const fx = fc.kind === 'accelerator' ? fc.x : fc.x + L.fuel.x;
-            const fy = fc.kind === 'accelerator' ? fc.y : fc.y + L.fuel.y;
-            juice.burst(fx, fy, 4, 28);
-            const fv = cellVisuals.get(fc.id);
-            if (fv) juice.punch(fv.body, 0.14);
-          }
         } else if (!feedOperand(world, target.cellId, target.port, block.value)) {
           // Port was occupied / cell busy — drop it back where it landed.
           // (takeLooseById already removed it; re-add at the drop point.)
@@ -740,7 +734,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (info) body.addChild(info);
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, outlinePath, outlineCum };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -772,6 +766,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const burn = Math.min(1, cell.recentBurn);
       vis.outline.alpha = 0.82 + 0.18 * burn;
       vis.glyph.alpha = 0.82 + 0.18 * burn;
+      // The whoosh — an ignition (cold→hot) sprays a graphite puff at the fuel
+      // port and pops the cell ("coal in the furnace"). Driven by the burn
+      // rising edge, so it fires for BOTH hand-dropped and pipe-delivered fuel
+      // and only when something actually burned (idle returns don't ignite).
+      if (burn > 0.8 && vis.prevBurn < 0.5) {
+        const L = portLayout(cell.kind);
+        const fx = cell.kind === 'accelerator' ? cell.x : cell.x + L.fuel.x;
+        const fy = cell.kind === 'accelerator' ? cell.y : cell.y + L.fuel.y;
+        juice.burst(fx, fy, 7, 42);
+        juice.punch(vis.body, 0.2);
+      }
+      vis.prevBurn = burn;
     }
 
     // Output back-pressure: all output pipes full → result spilling loose. Drawn
@@ -839,11 +845,15 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         }
       }
       // Clock-sweep ring around the operator glyph — legible even for long ops
-      // where the written numeral inches forward imperceptibly.
+      // where the written numeral inches forward imperceptibly. The arc presses
+      // bolder while fuelled, so a burn reads as a felt lurch forward.
       const R = 19;
+      const burn = Math.min(1, cell.recentBurn);
       vis.meter.circle(0, 0, R).stroke({ color: GRAPHITE, width: 1, alpha: 0.14 });
       if (f > 0.001) {
-        vis.meter.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).stroke({ color: GRAPHITE, width: 2, alpha: 0.5 });
+        vis.meter
+          .arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2)
+          .stroke({ color: GRAPHITE, width: 2 + 1.6 * burn, alpha: 0.5 + 0.35 * burn });
       }
     } else if (vis.ghost) {
       // Op just completed (ghost present, op now null): pop the cell and spray a
