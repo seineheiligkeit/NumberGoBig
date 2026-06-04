@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
-  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, type Tool } from './lib/view/stores';
+  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, type Tool } from './lib/view/stores';
+  import Marginalia from './Marginalia.svelte';
 
   let canvasContainer: HTMLDivElement;
   let handle: GameViewHandle | null = null;
@@ -69,7 +70,7 @@
   <aside class="shelf">
     <h2>Literature</h2>
     <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
-    {#each tools as t}
+    {#each tools.filter((t) => $unlockedTools.includes(t.tool)) as t (t.tool)}
       <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
         {t.label}
       </button>
@@ -78,6 +79,12 @@
       <p class="placing">{hint($toolStore)}</p>
     {/if}
   </aside>
+
+  {#if $statsStore.cells === 0}
+    <div class="onboard">Pick <b>Successor</b>, then click the river — it taps the zeros for ones.</div>
+  {/if}
+
+  <Marginalia />
 </main>
 
 <style>
@@ -156,6 +163,24 @@
     font-size: 12px;
     font-style: italic;
     opacity: 0.8;
+  }
+  .onboard {
+    position: absolute;
+    left: 50%;
+    bottom: 40px;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    background: rgba(251, 247, 238, 0.9);
+    border: 1px dashed rgba(58, 58, 58, 0.35);
+    border-radius: 6px;
+    font-family: var(--pencil-font, 'Kalam', cursive);
+    font-size: 15px;
+    color: #3a3a3a;
+    opacity: 0.85;
+    pointer-events: none;
+  }
+  .onboard b {
+    font-weight: 600;
   }
   .monitor {
     position: absolute;

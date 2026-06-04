@@ -39,3 +39,11 @@ export const speedStore = writable(3);
  *  The view sets it once when the frontier first crosses a threshold; the
  *  narrator (P4) reacts. */
 export const milestoneStore = writable<string | null>(null);
+
+/** Tools the player has unlocked — the toolbar filters by this for a gentle
+ *  progressive reveal. You start able to make and combine ones; the amplifiers
+ *  appear as you build their prerequisites. */
+export const unlockedTools = writable<Tool[]>(['successor', 'addition', 'pipe']);
+
+/** Whether the synth audio layer is muted (the 🔊/🔇 toggle). */
+export const audioMuted = writable(false);

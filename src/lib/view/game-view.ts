@@ -53,7 +53,8 @@ import {
   type CellKind,
 } from '../../../core/engine';
 import { createJuice, setJuice } from './physics';
-import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, type Tool } from './stores';
+import { note } from './narrator';
+import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
 
@@ -290,6 +291,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   // The model.
   const world: World = createWorld();
+  note('A river of zeros below — endless, and free. Everything is built from it.', 'intro');
 
   // Visual caches keyed by engine id.
   const cellVisuals = new Map<number, CellVisual>();
@@ -760,6 +762,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       drawPortMarkers(vis.ports, cell.kind);
       juice.punch(vis.body, 0.28);
       juice.burst(cell.x, cell.y, 6, 42);
+      note('Construction complete. The apparatus is yours to feed.', 'first-build');
+      unlockToolsFor(cell.kind);
     }
 
     // Graphite weight = fuel gauge: a cell being actively fuelled is pressed
@@ -778,6 +782,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         const fy = cell.kind === 'accelerator' ? cell.y : cell.y + L.fuel.y;
         juice.burst(fx, fy, 7, 42);
         juice.punch(vis.body, 0.2);
+        note('Fuel quickens the hand — a real expense, briefly worth it.', 'first-burn');
       }
       vis.prevBurn = burn;
     }
@@ -833,6 +838,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           vis.ghostBounds = null;
         }
         vis.ghostKey = key;
+        if (cell.op.work.gte(5000)) {
+          note('This operation will conclude shortly after the sun does. Fuel it, perhaps.', 'long-op');
+        }
       }
       // Write the numeral up to the op fraction.
       if (vis.ghost) {
@@ -868,6 +876,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       juice.punch(vis.body, 0.18);
       const L = portLayout(cell.kind);
       juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
+      note('The first computation resolves. The numbers begin.', 'first-op');
     }
 
     // Idle states: a built cell with no op shows drop-zone hints on its empty
@@ -950,6 +959,23 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     { key: 'tower', label: 'a power tower', hit: (m) => m.layer >= 2 },
   ];
 
+  // Progressive tool reveal: building a prerequisite drafts the next apparatus.
+  function unlockToolsFor(kind: CellKind): void {
+    const unlock = (tool: Tool, label: string): void => {
+      unlockedTools.update((list) => {
+        if (list.includes(tool)) return list;
+        note(`New apparatus drafted: ${label}.`, `unlock-${tool}`);
+        return [...list, tool];
+      });
+    };
+    if (kind === 'addition') unlock('multiplication', 'Multiplication');
+    if (kind === 'multiplication') {
+      unlock('exponentiation', 'Exponentiation');
+      unlock('mill', 'the Mill');
+      unlock('accelerator', 'the Accelerator');
+    }
+  }
+
   let acc = 0;
   let enginePaused = false;
   let speed = 3;
@@ -988,6 +1014,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (hit) {
         juice.flash(fi.x, fi.y);
         milestoneStore.set(hit);
+        note(`The frontier reaches ${hit}.`);
       }
       let working = 0;
       for (const c of world.cells.values()) if (c.op) working++;
