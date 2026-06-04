@@ -51,7 +51,7 @@ import {
   type SimPipe,
   type CellKind,
 } from '../../../core/engine';
-import { scoreStore, toolStore, type Tool } from './stores';
+import { scoreStore, toolStore, frontierStore, statsStore, speedStore, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
 
@@ -60,10 +60,8 @@ const CELL_H = 76;
 const PORT_R = 13; // operand / fuel port hit-radius
 const BLOCK_R = 26; // loose-block half-size
 
-/** View-side playback speed: engine ticks advanced per real second. The model
- *  treats 1 tick = 1 second; we run a touch faster so the prototype feels
- *  alive while we eyeball it. Pure presentation — real pacing is sim-tuned. */
-const TICKS_PER_SECOND = 3;
+// View-side playback speed lives in `speedStore` (the dev speed control), in
+// engine ticks per real second. The model treats 1 tick = 1 second.
 
 const GLYPH: Record<CellKind, string> = {
   successor: '{ }',
@@ -629,19 +627,33 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   let acc = 0;
   let enginePaused = false;
+  let speed = 3;
+  let elapsedTicks = 0;
+  const unsubSpeed = speedStore.subscribe((s) => (speed = s));
+  let monitorAccum = 0;
   app.ticker.add((t) => {
-    // Advance the model in whole ticks for determinism.
-    if (!enginePaused) {
-      acc += (t.deltaMS / 1000) * TICKS_PER_SECOND;
+    // Advance the model in whole ticks for determinism, at the dev speed.
+    if (!enginePaused && speed > 0) {
+      acc += (t.deltaMS / 1000) * speed;
       while (acc >= 1) {
         tick(world, 1);
         acc -= 1;
+        elapsedTicks += 1;
       }
     }
     syncPipes();
     syncCells();
     syncBlocks();
     scoreStore.set(formatScore(totalScore(world)));
+    // Dev monitors — refresh a few times a second (frontier scan is O(pool)).
+    monitorAccum += t.deltaMS;
+    if (monitorAccum >= 250) {
+      monitorAccum = 0;
+      frontierStore.set(formatScore(frontierOf(world)));
+      let working = 0;
+      for (const c of world.cells.values()) if (c.op) working++;
+      statsStore.set({ cells: world.cells.size, pipes: world.pipes.size, loose: world.pool.length, elapsed: elapsedTicks, working });
+    }
   });
 
   // --- DEV inspection hooks ------------------------------------------------
@@ -689,6 +701,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKey);
       unsubTool();
+      unsubSpeed();
       app.destroy(true, { children: true });
     },
   };
@@ -732,4 +745,23 @@ function formatScore(d: ReturnType<typeof totalScore>): string {
   if (!Number.isFinite(x)) return d.toString();
   if (x >= 1e6) return x.toExponential(2);
   return Math.round(x).toLocaleString('en-US');
+}
+
+/** The biggest single magnitude anywhere — pool, staged operands, in-progress
+ *  outputs. The real "numbers go big" metric (distinct from Total Score). */
+function frontierOf(world: World): ReturnType<typeof totalScore> {
+  let max = valueMagnitude(valueOf(0));
+  const consider = (v: Value): void => {
+    const m = valueMagnitude(v);
+    if (m.gt(max)) max = m;
+  };
+  for (const b of world.pool) consider(b.value);
+  for (const c of world.cells.values()) {
+    for (const o of c.operands) if (o) consider(o);
+    if (c.op) {
+      for (const h of c.op.heldInputs) consider(h);
+      for (const e of c.op.emits) consider(e.value);
+    }
+  }
+  return max;
 }

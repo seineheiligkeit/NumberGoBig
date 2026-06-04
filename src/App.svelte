@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
-  import { scoreStore, toolStore, type Tool } from './lib/view/stores';
+  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, type Tool } from './lib/view/stores';
 
   let canvasContainer: HTMLDivElement;
   let handle: GameViewHandle | null = null;
@@ -33,6 +33,14 @@
       : t
         ? 'Click the page to place…'
         : '';
+
+  const speeds = [0, 1, 3, 10, 30];
+  function elapsed(s: number): string {
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const ss = Math.floor(s % 60);
+    return h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${ss}s` : `${ss}s`;
+  }
 </script>
 
 <main>
@@ -42,6 +50,21 @@
     <div class="sigma">Σ</div>
     <div class="value">{$scoreStore}</div>
   </header>
+
+  <aside class="monitor">
+    <div class="row big"><span>frontier</span><b>{$frontierStore}</b></div>
+    <div class="row"><span>time</span><b>{elapsed($statsStore.elapsed)}</b></div>
+    <div class="row"><span>cells / working</span><b>{$statsStore.cells} / {$statsStore.working}</b></div>
+    <div class="row"><span>pipes / loose</span><b>{$statsStore.pipes} / {$statsStore.loose}</b></div>
+    <div class="speed">
+      <span>speed</span>
+      {#each speeds as s}
+        <button class:active={$speedStore === s} onclick={() => speedStore.set(s)}>
+          {s === 0 ? '⏸' : `${s}×`}
+        </button>
+      {/each}
+    </div>
+  </aside>
 
   <aside class="shelf">
     <h2>Literature</h2>
@@ -133,5 +156,56 @@
     font-size: 12px;
     font-style: italic;
     opacity: 0.8;
+  }
+  .monitor {
+    position: absolute;
+    top: 78px;
+    right: 24px;
+    width: 200px;
+    padding: 8px 12px;
+    background: rgba(251, 247, 238, 0.92);
+    border: 1px solid rgba(58, 58, 58, 0.25);
+    border-radius: 6px;
+    font-family: var(--pencil-font, 'Kalam', cursive);
+    color: #3a3a3a;
+    font-size: 13px;
+  }
+  .monitor .row {
+    display: flex;
+    justify-content: space-between;
+    padding: 1px 0;
+  }
+  .monitor .row span {
+    opacity: 0.6;
+  }
+  .monitor .row.big b {
+    font-size: 18px;
+  }
+  .monitor .speed {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    border-top: 1px solid rgba(58, 58, 58, 0.15);
+    padding-top: 6px;
+  }
+  .monitor .speed span {
+    opacity: 0.6;
+    margin-right: 2px;
+  }
+  .monitor .speed button {
+    flex: 1;
+    padding: 3px 0;
+    background: transparent;
+    border: 1px solid rgba(58, 58, 58, 0.3);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    color: inherit;
+    cursor: pointer;
+  }
+  .monitor .speed button.active {
+    background: rgba(244, 230, 138, 0.6);
+    border-color: rgba(58, 58, 58, 0.5);
   }
 </style>

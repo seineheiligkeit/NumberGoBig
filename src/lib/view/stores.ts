@@ -21,3 +21,16 @@ export const toolStore = writable<Tool | null>(null);
 
 /** A short dry-academic note, or null. */
 export const noteStore = writable<string | null>(null);
+
+// --- Dev instruments (playtest monitors) -----------------------------------
+
+/** Formatted FRONTIER — the biggest single number anywhere (the real "numbers
+ *  go big" metric, distinct from Total Score). */
+export const frontierStore = writable('0');
+
+/** Live factory stats for the dev monitor. */
+export const statsStore = writable({ cells: 0, pipes: 0, loose: 0, elapsed: 0, working: 0 });
+
+/** Playback speed in engine ticks per real second (0 = paused). The dev speed
+ *  control writes this; the ticker reads it. */
+export const speedStore = writable(3);
