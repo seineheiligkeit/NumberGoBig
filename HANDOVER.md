@@ -7,6 +7,22 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ---
 
+## 0. Latest: the polish pass is DONE (2026-06-04)
+
+The full design/UX/polish pass (**[POLISH_PLAN.md](./POLISH_PLAN.md)**, P1–P4)
+shipped. The prototype now *feels* finished: bezier pipes + a visual-only juice
+layer (`src/lib/view/physics.ts`), real draws-itself (cells trace in, results
+written stroke-by-stroke, eraser-scrub delete, graphite-weight fuel gauge),
+four legible cell states, the burn "whoosh", heavy/crosshatched frozen blocks +
+milestone flashes, a dry-academic narrator (`narrator.ts` + `Marginalia.svelte`),
+onboarding (gated toolbar + hints), a synthesised audio layer (`audio.ts`, mute
+toggle), and notebook paper texture. The engine stayed almost untouched — it
+gained four small unit-tested pure signals (`outputStalled`, `stalled`,
+`recentBurn`) read by the view. **Next: the human playtest** (`npm run dev`) vs.
+the `sim/play.ts` baseline. Deferred-optional: area-label naming UI + minimap.
+*Key gotcha learned:* never scale or spawn interactive FX on a hit-tested
+container — visuals live in an inner `body`; the FX layer is `eventMode:'none'`.
+
 ## 1. Where the prototype stands
 
 A clean **pure-engine + thin-view** reconception of the core loop around **time

@@ -44,7 +44,17 @@ fakery), **bezier** pipes, **any juice layer** (no pop/recoil/dust — the old
   whoosh off the `recentBurn` rising edge · heavy/crosshatched frozen blocks +
   pipe sag + milestone flash). Engine gained `recentBurn`; the view gained a
   `milestoneStore` hook for the narrator.
-- ⏭️ **P4 — Notebook & onboarding finish** (next).
+- ✅ **P4 — Notebook & onboarding finish** (narrator marginalia + first-time /
+  milestone / long-op notes · onboarding: gated toolbar with progressive reveal
+  + hint banner · synthesised audio layer w/ mute · notebook paper texture).
+  New: `narrator.ts` + `Marginalia.svelte`, `audio.ts`, `unlockedTools` /
+  `audioMuted` stores. **Deferred (optional):** hand-drawn area-label naming UI
+  and a minimap — both want text input / more rendering; pick up if a playtest
+  shows the canvas needs them.
+
+**The polish pass (P1–P4) is done — the prototype is playtest-ready.** Next
+natural step is the human playtest (`npm run dev`) to compare against the
+`sim/play.ts` baseline (~1e26 idle → ~1e45 engaged over 4 h).
 
 ## Sequencing (interleaved by dependency + impact-per-effort)
 
