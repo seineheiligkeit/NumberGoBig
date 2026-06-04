@@ -107,6 +107,10 @@ export interface SimCell {
   charge: Decimal;
   /** Round-robin cursor over this cell's attached output pipes (fair fan-out). */
   emitCursor: number;
+  /** Back-pressure: true when the last emit had output pipes but all were full
+   *  (output bandwidth-bound → result spilled loose). False for a terminal cell
+   *  with no output pipe (spilling there is by design, not a clog). View-read. */
+  outputStalled: boolean;
 }
 
 export interface SimPipe {
@@ -118,6 +122,9 @@ export interface SimPipe {
   toPort: number;
   fuel: boolean;
   inFlight: { value: Value; work: Decimal; progress: Decimal } | null;
+  /** Back-pressure: true when this (operand) pipe's last delivery couldn't be
+   *  staged (dest port occupied / cell busy) and spilled loose. View-read. */
+  stalled: boolean;
 }
 
 /**
@@ -174,6 +181,7 @@ export function placeCell(world: World, kind: CellKind, x = 0, y = 0): number {
     op: null,
     charge: Decimal.dZero,
     emitCursor: 0,
+    outputStalled: false,
   });
   return id;
 }
@@ -197,6 +205,7 @@ export function placePipe(
     toPort: opts.fuel ? -1 : toPort,
     fuel: !!opts.fuel,
     inFlight: null,
+    stalled: false,
   });
   return id;
 }
@@ -398,9 +407,14 @@ function emit(world: World, cell: SimCell, port: number, value: Value): void {
         const dist = pipeDistance(world, pipe);
         pipe.inFlight = { value, work: transitWork(value, dist, world.tuning), progress: Decimal.dZero };
         cell.emitCursor = (cell.emitCursor + k + 1) % n;
+        cell.outputStalled = false;
         return;
       }
     }
+    // Output pipes exist but all are mid-transit — bandwidth-bound back-pressure.
+    cell.outputStalled = true;
+  } else {
+    cell.outputStalled = false; // terminal cell: loose output is by design
   }
   pushLoose(world, value, cell.x + 60, cell.y);
 }
@@ -432,8 +446,10 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
   // (back-pressure — the upstream block waits as a loose block).
   if (dest.built && pipe.toPort >= 0 && pipe.toPort < dest.operands.length && dest.operands[pipe.toPort] === null) {
     dest.operands[pipe.toPort] = value;
+    pipe.stalled = false;
   } else {
     pushLoose(world, value, dest.x - 60, dest.y);
+    pipe.stalled = true;
   }
 }
 

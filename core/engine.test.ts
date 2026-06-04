@@ -310,6 +310,30 @@ test('removeCell / removePipe return held blocks to the pool (nothing destroyed)
   assert.equal(poolCountOf(w, 50), 2);
 });
 
+test('back-pressure: a pipe into an occupied port stalls; a flowing pipe does not', () => {
+  const w = createWorld();
+  // Flowing case: s1, s2 → both operand ports of an addition that fires and
+  // consumes, so its feed pipes keep staging successfully → never stalled.
+  const s1 = placeCell(w, 'successor', 0, -40);
+  const s2 = placeCell(w, 'successor', 0, 40);
+  const a = placeCell(w, 'addition', 150, 0);
+  while (!getCell(w, s1)!.built || !getCell(w, s2)!.built || !getCell(w, a)!.built) tick(w, 1);
+  const p1 = placePipe(w, s1, 0, a, 0);
+  placePipe(w, s2, 0, a, 1);
+  run(w, 200);
+  assert.equal(w.pipes.get(p1)!.stalled, false, 'a pipe feeding a consuming cell flows freely');
+
+  // Blocked case: an addition with port 0 pre-occupied and never consumed; a
+  // pipe into port 0 can never stage → it reads as stalled (visible back-pressure).
+  const s3 = placeCell(w, 'successor', 0, 300);
+  const b = placeCell(w, 'addition', 150, 300);
+  while (!getCell(w, s3)!.built || !getCell(w, b)!.built) tick(w, 1);
+  feedOperand(w, b, 0, valueOf(5)); // occupy port 0 (no port 1 → never fires → never clears)
+  const pb = placePipe(w, s3, 0, b, 0);
+  run(w, 200);
+  assert.equal(w.pipes.get(pb)!.stalled, true, 'a pipe into an occupied port reads as stalled');
+});
+
 // --- The Mill (additive splitter) ------------------------------------------
 
 test('Mill splits a block into pieces summing to the same value (conserved)', () => {

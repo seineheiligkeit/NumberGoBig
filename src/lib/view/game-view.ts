@@ -25,6 +25,7 @@ import { setupCamera, screenToCanvas, restoreCamera } from '../camera';
 import { pencilStrokeDouble } from '../pixi/pencil';
 import { drawValueLabel } from '../pixi/value-label';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from '../pixi/typography';
+import { JAM_TINT } from '../colors';
 import { valueMagnitude, valueOf, type Value } from '../../../core/value';
 import { pencilStroke } from '../pixi/pencil';
 import {
@@ -88,6 +89,7 @@ interface CellVisual {
   builtFlourished: boolean;
   halo: Graphics | null; // accelerator coverage radius
   info: Text | null; // accelerator boost readout
+  clog: Graphics | null; // output back-pressure mark (lazy)
 }
 
 interface BlockVisual {
@@ -102,6 +104,7 @@ interface PipeVisual {
   endKey: string; // last endpoint positions, to detect a move
   path: Pt[]; // cached bezier samples (the curve the block rides)
   cum: number[]; // cumulative arc length per sample
+  clog: Graphics | null; // back-pressure mark at the dest end (lazy)
 }
 
 export interface GameViewHandle {
@@ -487,6 +490,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // Remove visuals for gone cells.
     for (const [id, vis] of cellVisuals) {
       if (!world.cells.has(id)) {
+        vis.clog?.destroy(); // lives in fxLayer, not a child of root
         vis.root.destroy({ children: true });
         cellVisuals.delete(id);
       }
@@ -526,6 +530,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
     for (const [id, vis] of pipeVisuals) {
       if (!world.pipes.has(id)) {
+        vis.clog?.destroy(); // lives in fxLayer, not a child of root
         vis.root.destroy({ children: true });
         pipeVisuals.delete(id);
       }
@@ -560,7 +565,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   function makePipeVisual(pipe: SimPipe): PipeVisual {
     const root = new Container();
     const line = new Graphics();
-    const vis: PipeVisual = { root, line, flight: null, flightKey: '', endKey: '', path: [], cum: [0] };
+    const vis: PipeVisual = { root, line, flight: null, flightKey: '', endKey: '', path: [], cum: [0], clog: null };
     root.addChild(line);
     pipeLayer.addChild(root);
     const src = world.cells.get(pipe.fromCell);
@@ -577,6 +582,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     const eb = endpointPos(dst, pipe.toPort, pipe.fuel);
     // Re-project the line if either endpoint cell moved (cell dragging).
     if (endpointsKey(ea, eb) !== vis.endKey) drawPipeLine(vis, pipe, ea, eb);
+    // Back-pressure: mark the dest end when deliveries can't stage.
+    if (pipe.stalled) {
+      if (!vis.clog) {
+        vis.clog = new Graphics();
+        fxLayer.addChild(vis.clog); // top layer so the cue is never covered
+      }
+      drawClogMark(vis.clog, eb.x, eb.y);
+    } else if (vis.clog) {
+      vis.clog.clear();
+    }
     if (!pipe.inFlight) {
       if (vis.flight) {
         vis.flight.destroy({ children: true });
@@ -656,7 +671,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     root.addChild(ports, outline, glyph, meter);
     if (info) root.addChild(info);
     canvasLayer.addChild(root);
-    return { root, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info };
+    return { root, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info, clog: null };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -668,6 +683,19 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (cell.built && !vis.builtFlourished) {
       vis.builtFlourished = true;
       drawPortMarkers(vis.ports, cell.kind);
+    }
+
+    // Output back-pressure: all output pipes full → result spilling loose. Drawn
+    // in the top FX layer (world space) so blocks/cells don't cover the cue.
+    if (cell.outputStalled) {
+      if (!vis.clog) {
+        vis.clog = new Graphics();
+        fxLayer.addChild(vis.clog);
+      }
+      const L = portLayout(cell.kind);
+      drawClogMark(vis.clog, cell.x + L.output.x, cell.y + L.output.y);
+    } else if (vis.clog) {
+      vis.clog.clear();
     }
 
     // Accelerator: show its live boost (and pulse the halo when charged).
@@ -838,6 +866,22 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 }
 
 // --- Drawing helpers -------------------------------------------------------
+
+/** A pulsing dashed JAM_TINT ring — the unmissable back-pressure cue. Redrawn
+ *  each frame while a stall persists (the pulse draws the eye to the jam). */
+function drawClogMark(g: Graphics, x: number, y: number): void {
+  g.clear();
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 170);
+  const r = 9;
+  const segs = 6;
+  for (let i = 0; i < segs; i++) {
+    const a0 = (i / segs) * Math.PI * 2;
+    const a1 = a0 + (Math.PI * 2 / segs) * 0.5; // half-on/half-off → dashed
+    g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
+    g.arc(x, y, r, a0, a1);
+  }
+  g.stroke({ color: JAM_TINT, width: 1.8, alpha: 0.4 + 0.45 * pulse });
+}
 
 function drawCellOutline(g: Graphics): void {
   const hw = CELL_W / 2;
