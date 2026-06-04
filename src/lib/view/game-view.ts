@@ -51,6 +51,7 @@ import {
   type SimPipe,
   type CellKind,
 } from '../../../core/engine';
+import { createJuice, setJuice } from './physics';
 import { scoreStore, toolStore, frontierStore, statsStore, speedStore, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
@@ -268,6 +269,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   const pipeLayer = new Container();
   pipeLayer.zIndex = 0;
   canvasLayer.addChild(pipeLayer);
+
+  // FX layer (dust/shavings) sits above everything, in world space so particles
+  // pan/zoom with the canvas. The juice layer is visual-only — see physics.ts.
+  const fxLayer = new Container();
+  fxLayer.zIndex = 200;
+  canvasLayer.addChild(fxLayer);
+  const juice = createJuice(fxLayer);
+  if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) setJuice(0);
 
   // Drag state for a loose block being moved.
   let drag: { id: number; root: Container } | null = null;
@@ -495,6 +504,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (!blockVisuals.has(b.id)) {
         const vis = makeBlockVisual(b.id, b.value);
         blockVisuals.set(b.id, vis);
+        vis.root.position.set(b.x, b.y);
+        juice.punch(vis.root); // a block just written/spilled into existence — pop it
       }
       const vis = blockVisuals.get(b.id)!;
       // Don't fight the drag: the dragged block follows the cursor.
@@ -691,9 +702,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.meter.rect(-w / 2, CELL_H / 2 + 14, w * f, 5).fill({ color: GRAPHITE, alpha: 0.6 });
       vis.meter.rect(-w / 2, CELL_H / 2 + 14, w, 5).stroke({ color: GRAPHITE, width: 1, alpha: 0.35 });
     } else if (vis.ghost) {
+      // Op just completed (ghost present, op now null): pop the cell and spray a
+      // few shavings at the output where the result was written.
       vis.ghost.destroy({ children: true });
       vis.ghost = null;
       vis.ghostKey = '';
+      juice.punch(vis.root, 0.18);
+      const L = portLayout(cell.kind);
+      juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
     }
   }
 
@@ -756,6 +772,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     syncPipes();
     syncCells();
     syncBlocks();
+    juice.step(t.deltaMS); // visual-only, real-time (independent of sim pause/speed)
     scoreStore.set(formatScore(totalScore(world)));
     // Dev monitors — refresh a few times a second (frontier scan is O(pool)).
     monitorAccum += t.deltaMS;
@@ -814,6 +831,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       window.removeEventListener('keyup', onKey);
       unsubTool();
       unsubSpeed();
+      juice.destroy();
       app.destroy(true, { children: true });
     },
   };
