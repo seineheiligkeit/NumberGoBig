@@ -111,6 +111,10 @@ export interface SimCell {
    *  (output bandwidth-bound → result spilled loose). False for a terminal cell
    *  with no output pipe (spilling there is by design, not a clog). View-read. */
   outputStalled: boolean;
+  /** A 0..1 "is this cell being actively fueled" glow — set to 1 when fuel is
+   *  burned into it, decaying each tick. The view draws fuelled cells darker
+   *  (graphite weight = fuel gauge). View-read. */
+  recentBurn: number;
 }
 
 export interface SimPipe {
@@ -182,6 +186,7 @@ export function placeCell(world: World, kind: CellKind, x = 0, y = 0): number {
     charge: Decimal.dZero,
     emitCursor: 0,
     outputStalled: false,
+    recentBurn: 0,
   });
   return id;
 }
@@ -274,6 +279,12 @@ export function tick(world: World, dt = 1): void {
   tickOperations(world, base);
   tickAccelerators(world);
   tickPipes(world, base);
+  // Decay the "being fuelled" glow (set to 1 by applyFuel). dt-aware so the fade
+  // is consistent whether ticked one-at-a-time or in a batch.
+  const decay = Math.pow(0.85, dt);
+  for (const cell of world.cells.values()) {
+    if (cell.recentBurn > 0) cell.recentBurn = cell.recentBurn < 1e-3 ? 0 : cell.recentBurn * decay;
+  }
 }
 
 /** Accelerators drain their charge slowly each tick (it provides the boost). */
@@ -472,6 +483,7 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
   }
   if (!cell.built) {
     cell.buildProgress = cell.buildProgress.add(fv);
+    cell.recentBurn = 1; // fuelling a build lights the glow too
     if (cell.buildProgress.gte(cell.buildWork)) {
       cell.buildProgress = cell.buildWork;
       cell.built = true;
@@ -481,6 +493,7 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
   if (cell.op !== null) {
     if (fv.gte(cell.op.grade)) {
       cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(fv));
+      cell.recentBurn = 1;
     } else {
       // Too small a denomination for this op — refused, lands loose.
       pushLoose(world, value, cell.x, cell.y + 40);

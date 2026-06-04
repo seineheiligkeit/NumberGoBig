@@ -334,6 +334,20 @@ test('back-pressure: a pipe into an occupied port stalls; a flowing pipe does no
   assert.equal(w.pipes.get(pb)!.stalled, true, 'a pipe into an occupied port reads as stalled');
 });
 
+test('recentBurn lights when a cell is fuelled and decays without more fuel', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'multiplication');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(99));
+  feedOperand(w, m, 1, valueOf(99)); // 99×99 → a real op with a >1 fuel grade
+  tick(w, 1); // start the op
+  assert.ok(getCell(w, m)!.op, 'op is running');
+  injectFuel(w, m, valueOf(100)); // burn fuel into it (≥ grade)
+  assert.equal(getCell(w, m)!.recentBurn, 1, 'fuelling lights the burn glow');
+  run(w, 12);
+  assert.ok(getCell(w, m)!.recentBurn < 0.2, 'the glow decays without further fuel');
+});
+
 // --- The Mill (additive splitter) ------------------------------------------
 
 test('Mill splits a block into pieces summing to the same value (conserved)', () => {

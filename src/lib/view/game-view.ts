@@ -439,6 +439,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (block) {
         if (target.fuel) {
           injectFuel(world, target.cellId, block.value);
+          // Spark at the fuel port — "throwing coal in the furnace".
+          const fc = world.cells.get(target.cellId);
+          if (fc) {
+            const L = portLayout(fc.kind);
+            const fx = fc.kind === 'accelerator' ? fc.x : fc.x + L.fuel.x;
+            const fy = fc.kind === 'accelerator' ? fc.y : fc.y + L.fuel.y;
+            juice.burst(fx, fy, 4, 28);
+            const fv = cellVisuals.get(fc.id);
+            if (fv) juice.punch(fv.body, 0.14);
+          }
         } else if (!feedOperand(world, target.cellId, target.port, block.value)) {
           // Port was occupied / cell busy — drop it back where it landed.
           // (takeLooseById already removed it; re-add at the drop point.)
@@ -752,6 +762,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       drawPortMarkers(vis.ports, cell.kind);
       juice.punch(vis.body, 0.28);
       juice.burst(cell.x, cell.y, 6, 42);
+    }
+
+    // Graphite weight = fuel gauge: a cell being actively fuelled is pressed
+    // darker; an unfuelled one (running at baseRate) reads fainter and slower.
+    if (cell.built) {
+      const burn = Math.min(1, cell.recentBurn);
+      vis.outline.alpha = 0.82 + 0.18 * burn;
+      vis.glyph.alpha = 0.82 + 0.18 * burn;
     }
 
     // Output back-pressure: all output pipes full → result spilling loose. Drawn
