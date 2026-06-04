@@ -22,7 +22,7 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import { drawPaper } from '../pixi/paper';
 import { setupRiver } from '../pixi/river';
 import { setupCamera, screenToCanvas, restoreCamera } from '../camera';
-import { pencilStrokeDouble } from '../pixi/pencil';
+import { pencilStrokeDouble, pencilWaypoints, strokeWaypoints } from '../pixi/pencil';
 import { drawValueLabel } from '../pixi/value-label';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from '../pixi/typography';
 import { JAM_TINT } from '../colors';
@@ -79,7 +79,8 @@ const GLYPH: Record<CellKind, string> = {
 // --- Per-entity visual caches ----------------------------------------------
 
 interface CellVisual {
-  root: Container;
+  root: Container; // interactive (hit-fill + pointerdown); never transformed
+  body: Container; // visual children; punched/scaled by the juice layer
   outline: Graphics; // drawn once; alpha ramps with build progress
   glyph: Text;
   meter: Graphics; // progress bar, redrawn each frame (no jitter → no shimmer)
@@ -90,10 +91,13 @@ interface CellVisual {
   halo: Graphics | null; // accelerator coverage radius
   info: Text | null; // accelerator boost readout
   clog: Graphics | null; // output back-pressure mark (lazy)
+  outlinePath: Pt[]; // stable wobble path for the outline (revealed as it builds)
+  outlineCum: number[]; // cumulative arc length of outlinePath
 }
 
 interface BlockVisual {
-  root: Container;
+  root: Container; // interactive (drag); never transformed
+  body: Container; // visual; punched/scaled by the juice layer
 }
 
 interface PipeVisual {
@@ -207,6 +211,26 @@ function pointAt(pts: Pt[], cum: number[], f: number): Pt {
   return pts[pts.length - 1];
 }
 
+/** The prefix of a polyline up to fraction `f` of its total arc length, with a
+ *  final interpolated point — for revealing a stroke as it's drawn. */
+function subPath(pts: Pt[], cum: number[], f: number): Pt[] {
+  if (pts.length === 0) return [];
+  const total = cum[cum.length - 1] || 1;
+  const target = Math.max(0, Math.min(1, f)) * total;
+  const out: Pt[] = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    if (cum[i] <= target) {
+      out.push(pts[i]);
+    } else {
+      const seg = cum[i] - cum[i - 1] || 1;
+      const t = (target - cum[i - 1]) / seg;
+      out.push({ x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * t, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * t });
+      break;
+    }
+  }
+  return out;
+}
+
 /** Lay faint graphite dots along a polyline at a fixed arc-length step — the
  *  dashed "ink-flow" look for fuel lines. */
 function dottedAlong(g: Graphics, pts: Pt[], cum: number[], step: number, r: number, alpha: number): void {
@@ -277,6 +301,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   // pan/zoom with the canvas. The juice layer is visual-only — see physics.ts.
   const fxLayer = new Container();
   fxLayer.zIndex = 200;
+  fxLayer.eventMode = 'none'; // purely decorative (dust + clog) — never hit-tested
   canvasLayer.addChild(fxLayer);
   const juice = createJuice(fxLayer);
   if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) setJuice(0);
@@ -509,7 +534,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         const vis = makeBlockVisual(b.id, b.value);
         blockVisuals.set(b.id, vis);
         vis.root.position.set(b.x, b.y);
-        juice.punch(vis.root); // a block just written/spilled into existence — pop it
+        juice.punch(vis.body); // a block just written/spilled into existence — pop it
       }
       const vis = blockVisuals.get(b.id)!;
       // Don't fight the drag: the dragged block follows the cursor.
@@ -646,7 +671,25 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
     const ports = new Graphics();
     const outline = new Graphics();
-    drawCellOutline(outline);
+    // Precompute one stable wobble path for the outline rectangle so the build
+    // sketch-in reveals the SAME line (no per-frame shimmer). Snaps to the
+    // filled, rounded outline on completion.
+    const hw = CELL_W / 2;
+    const hh = CELL_H / 2;
+    const outlinePath = pencilWaypoints([
+      { x: -hw, y: -hh },
+      { x: hw, y: -hh },
+      { x: hw, y: hh },
+      { x: -hw, y: hh },
+      { x: -hw, y: -hh },
+    ]);
+    const outlineCum = cumLengths(outlinePath);
+    // An invisible body fill so the cell stays grab/delete-able regardless of the
+    // (progressive, fill-on-snap) outline — hit testing uses fill geometry, not
+    // alpha, so this is clickable while staying invisible during the sketch-in.
+    const hit = new Graphics();
+    hit.rect(-hw, -hh, CELL_W, CELL_H).fill({ color: 0xffffff, alpha: 0.01 });
+    hit.eventMode = 'static';
 
     const glyph = new Text({
       text: GLYPH[cell.kind],
@@ -655,6 +698,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     glyph.anchor.set(0.5);
 
     const meter = new Graphics();
+
+    // Visual children live in an inner `body` so the juice layer can scale-punch
+    // them WITHOUT scaling the interactive root (scaling the hit-tested root
+    // breaks pointer hits — see physics.ts). The root holds only the stable
+    // hit-fill + body.
+    const body = new Container();
 
     // Accelerator: a faint dashed coverage halo (drawn once, under the cell).
     let halo: Graphics | null = null;
@@ -665,24 +714,37 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       info = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 16, fill: GRAPHITE } });
       info.anchor.set(0.5);
       info.position.set(0, CELL_H / 2 + 16);
-      root.addChildAt(halo, 0);
+      body.addChildAt(halo, 0);
     }
 
-    root.addChild(ports, outline, glyph, meter);
-    if (info) root.addChild(info);
+    body.addChild(ports, outline, glyph, meter);
+    if (info) body.addChild(info);
+    root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info, clog: null };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info, clog: null, outlinePath, outlineCum };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
     const frac = buildFraction(cell);
-    // Sketch-in: ramp alpha with build progress (stable, no per-frame jitter).
-    vis.outline.alpha = 0.25 + 0.75 * frac;
-    vis.glyph.alpha = cell.built ? 1 : 0.2 + 0.6 * frac;
 
-    if (cell.built && !vis.builtFlourished) {
+    if (!cell.built) {
+      // Sketch-in: trace the stable outline path up to build progress — a real
+      // graphite line being drawn, with a pencil tip riding the head.
+      vis.outline.clear();
+      const sub = subPath(vis.outlinePath, vis.outlineCum, frac);
+      strokeWaypoints(vis.outline, sub, { color: GRAPHITE, width: 1.6, alpha: 0.85 });
+      const head = sub[sub.length - 1];
+      if (head) vis.outline.circle(head.x, head.y, 2).fill({ color: GRAPHITE, alpha: 0.9 });
+      vis.glyph.alpha = 0.12 + 0.5 * frac; // the symbol fades in as the box forms
+    } else if (!vis.builtFlourished) {
+      // Snap to the finished cell: filled, rounded outline + a small flourish.
       vis.builtFlourished = true;
+      vis.outline.clear();
+      drawCellOutline(vis.outline);
+      vis.glyph.alpha = 1;
       drawPortMarkers(vis.ports, cell.kind);
+      juice.punch(vis.body, 0.28);
+      juice.burst(cell.x, cell.y, 6, 42);
     }
 
     // Output back-pressure: all output pipes full → result spilling loose. Drawn
@@ -720,7 +782,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         });
         const L = portLayout(cell.kind);
         vis.ghost.position.set(L.output.x + 34, L.output.y);
-        vis.root.addChild(vis.ghost);
+        vis.body.addChild(vis.ghost);
         vis.ghostKey = key;
       }
       if (vis.ghost) vis.ghost.alpha = 0.15 + 0.85 * f;
@@ -735,7 +797,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.ghost.destroy({ children: true });
       vis.ghost = null;
       vis.ghostKey = '';
-      juice.punch(vis.root, 0.18);
+      juice.punch(vis.body, 0.18);
       const L = portLayout(cell.kind);
       juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
     }
@@ -747,6 +809,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     root.eventMode = 'static';
     root.cursor = 'pointer';
 
+    // Visual children in an inner `body` so the juice layer can punch them
+    // without scaling the interactive (hit-tested) root.
+    const body = new Container();
     const g = new Graphics();
     g.roundRect(-BLOCK_R, -BLOCK_R, BLOCK_R * 2, BLOCK_R * 2, 4);
     g.fill({ color: 0xfbf7ee, alpha: 0.95 });
@@ -761,13 +826,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       ],
       { color: GRAPHITE, width: 1.4 },
     );
-    root.addChild(g);
+    body.addChild(g);
 
     const label = drawValueLabel(value.kind === 'real' ? value : { kind: 'real', n: valueMagnitude(value) }, {
       baseFontSize: 24,
       color: GRAPHITE,
     });
-    root.addChild(label);
+    body.addChild(label);
+    root.addChild(body);
 
     root.on('pointerdown', (e) => {
       e.stopPropagation();
@@ -776,7 +842,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     });
 
     canvasLayer.addChild(root);
-    return { root };
+    return { root, body };
   }
 
   // --- Ticker --------------------------------------------------------------

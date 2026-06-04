@@ -32,16 +32,22 @@ export function pencilStroke(
   points: Point[],
   options: PencilStrokeOptions,
 ): void {
-  const {
-    color,
-    width,
-    alpha = 0.88,
-    jitter = 0.6,
-    segmentsPerUnit = 0.18,
-  } = options;
-
   if (points.length < 2) return;
+  const wobble = pencilWaypoints(points, options);
+  strokeWaypoints(graphics, wobble, options);
+}
 
+/**
+ * Build the jittered waypoint list for a polyline WITHOUT drawing it. Compute it
+ * once and keep it, so a stroke that's revealed progressively (e.g. a cell
+ * sketching itself in over build time) waves the *same* graphite line rather
+ * than re-randomising — and so doesn't shimmer frame to frame.
+ */
+export function pencilWaypoints(
+  points: Point[],
+  options: Pick<PencilStrokeOptions, 'jitter' | 'segmentsPerUnit'> = {},
+): Point[] {
+  const { jitter = 0.6, segmentsPerUnit = 0.18 } = options;
   const wobble: Point[] = [];
 
   for (let i = 0; i < points.length - 1; i++) {
@@ -68,12 +74,21 @@ export function pencilStroke(
       });
     }
   }
+  return wobble;
+}
 
+/** Stroke a precomputed waypoint list (the output of `pencilWaypoints`). */
+export function strokeWaypoints(
+  graphics: Graphics,
+  wobble: Point[],
+  options: { color: number; width: number; alpha?: number },
+): void {
+  if (wobble.length < 2) return;
+  const { color, width, alpha = 0.88 } = options;
   graphics.moveTo(wobble[0].x, wobble[0].y);
   for (let i = 1; i < wobble.length; i++) {
     graphics.lineTo(wobble[i].x, wobble[i].y);
   }
-
   graphics.stroke({ color, width, alpha });
 }
 
