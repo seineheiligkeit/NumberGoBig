@@ -87,6 +87,8 @@ interface CellVisual {
   ports: Graphics; // operand + fuel port markers, drawn once on build
   ghost: Container | null; // output-in-progress numeral
   ghostKey: string; // identity of the value currently ghosted
+  ghostMask: Graphics | null; // left-to-right reveal mask (child of ghost)
+  ghostBounds: { x: number; y: number; w: number; h: number } | null; // ghost-local
   builtFlourished: boolean;
   halo: Graphics | null; // accelerator coverage radius
   info: Text | null; // accelerator boost readout
@@ -721,7 +723,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (info) body.addChild(info);
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', builtFlourished: false, halo, info, clog: null, outlinePath, outlineCum };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, outlinePath, outlineCum };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -768,7 +770,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       return; // accelerators have no op ghost/meter
     }
 
-    // Output ghost: a faint numeral that darkens as the op completes.
+    // Output result: the numeral is WRITTEN left-to-right over the op (a reveal
+    // mask), with a clock-sweep ring around the operator glyph for progress.
     vis.meter.clear();
     if (cell.op) {
       const f = opFraction(cell);
@@ -783,20 +786,48 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         const L = portLayout(cell.kind);
         vis.ghost.position.set(L.output.x + 34, L.output.y);
         vis.body.addChild(vis.ghost);
+        // Reveal mask (child → auto-destroyed with the ghost). Drawn in
+        // ghost-local space, which is centred, so it wipes left-to-right.
+        const lb = vis.ghost.getLocalBounds();
+        if (lb.width > 0.5) {
+          const gmask = new Graphics();
+          vis.ghost.addChild(gmask);
+          vis.ghost.mask = gmask;
+          vis.ghostMask = gmask;
+          vis.ghostBounds = { x: lb.x, y: lb.y, w: lb.width, h: lb.height };
+        } else {
+          vis.ghostMask = null;
+          vis.ghostBounds = null;
+        }
         vis.ghostKey = key;
       }
-      if (vis.ghost) vis.ghost.alpha = 0.15 + 0.85 * f;
-
-      // Progress meter — a pencil bar under the cell (straight lines, no jitter).
-      const w = CELL_W * 0.8;
-      vis.meter.rect(-w / 2, CELL_H / 2 + 14, w * f, 5).fill({ color: GRAPHITE, alpha: 0.6 });
-      vis.meter.rect(-w / 2, CELL_H / 2 + 14, w, 5).stroke({ color: GRAPHITE, width: 1, alpha: 0.35 });
+      // Write the numeral up to the op fraction.
+      if (vis.ghost) {
+        vis.ghost.alpha = 1;
+        if (vis.ghostMask && vis.ghostBounds) {
+          const gb = vis.ghostBounds;
+          vis.ghostMask.clear();
+          vis.ghostMask.rect(gb.x - 2, gb.y - 2, gb.w * f + 2, gb.h + 4).fill({ color: 0xffffff });
+        } else {
+          // Unmeasurable label — fall back to a darkening reveal.
+          vis.ghost.alpha = 0.15 + 0.85 * f;
+        }
+      }
+      // Clock-sweep ring around the operator glyph — legible even for long ops
+      // where the written numeral inches forward imperceptibly.
+      const R = 19;
+      vis.meter.circle(0, 0, R).stroke({ color: GRAPHITE, width: 1, alpha: 0.14 });
+      if (f > 0.001) {
+        vis.meter.arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2).stroke({ color: GRAPHITE, width: 2, alpha: 0.5 });
+      }
     } else if (vis.ghost) {
       // Op just completed (ghost present, op now null): pop the cell and spray a
       // few shavings at the output where the result was written.
       vis.ghost.destroy({ children: true });
       vis.ghost = null;
       vis.ghostKey = '';
+      vis.ghostMask = null;
+      vis.ghostBounds = null;
       juice.punch(vis.body, 0.18);
       const L = portLayout(cell.kind);
       juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
