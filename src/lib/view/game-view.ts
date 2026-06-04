@@ -93,6 +93,7 @@ interface CellVisual {
   halo: Graphics | null; // accelerator coverage radius
   info: Text | null; // accelerator boost readout
   clog: Graphics | null; // output back-pressure mark (lazy)
+  idleHint: Graphics; // drop-zone hints on empty operand ports when idle
   outlinePath: Pt[]; // stable wobble path for the outline (revealed as it builds)
   outlineCum: number[]; // cumulative arc length of outlinePath
 }
@@ -715,6 +716,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     glyph.anchor.set(0.5);
 
     const meter = new Graphics();
+    const idleHint = new Graphics();
 
     // Visual children live in an inner `body` so the juice layer can scale-punch
     // them WITHOUT scaling the interactive root (scaling the hit-tested root
@@ -734,11 +736,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       body.addChildAt(halo, 0);
     }
 
-    body.addChild(ports, outline, glyph, meter);
+    body.addChild(ports, idleHint, outline, glyph, meter);
     if (info) body.addChild(info);
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, outlinePath, outlineCum };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, outlinePath, outlineCum };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -854,6 +856,24 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       juice.punch(vis.body, 0.18);
       const L = portLayout(cell.kind);
       juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
+    }
+
+    // Idle states: a built cell with no op shows drop-zone hints on its empty
+    // operand ports (it's waiting for input). If SOME operands are staged but
+    // not all, the missing port(s) PULSE — the "waiting on the other operand"
+    // (starving) state, distinct from a fully-empty idle cell.
+    vis.idleHint.clear();
+    const arity = operandArity(cell.kind);
+    if (cell.built && !cell.op && arity > 0 && cell.kind !== 'accelerator') {
+      const L = portLayout(cell.kind);
+      const filled = cell.operands.filter((o) => o !== null).length;
+      const partial = filled > 0 && filled < arity;
+      const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 200);
+      for (let i = 0; i < L.operands.length; i++) {
+        if (cell.operands[i] != null) continue; // already fed
+        const alpha = partial ? 0.2 + 0.5 * pulse : 0.22; // partial → pulse the missing port
+        dashedSquare(vis.idleHint, L.operands[i].x, L.operands[i].y, 15, alpha);
+      }
     }
   }
 
@@ -1001,6 +1021,19 @@ function drawClogMark(g: Graphics, x: number, y: number): void {
     g.arc(x, y, r, a0, a1);
   }
   g.stroke({ color: JAM_TINT, width: 1.8, alpha: 0.4 + 0.45 * pulse });
+}
+
+/** A faint dashed square — the "drop a block here" hint on an empty operand
+ *  port. `alpha` is pulsed by the caller for the partial/waiting state. */
+function dashedSquare(g: Graphics, cx: number, cy: number, half: number, alpha: number): void {
+  const step = 5;
+  for (let d = -half; d < half; d += step * 2) {
+    g.moveTo(cx + d, cy - half).lineTo(cx + Math.min(d + step, half), cy - half);
+    g.moveTo(cx + d, cy + half).lineTo(cx + Math.min(d + step, half), cy + half);
+    g.moveTo(cx - half, cy + d).lineTo(cx - half, cy + Math.min(d + step, half));
+    g.moveTo(cx + half, cy + d).lineTo(cx + half, cy + Math.min(d + step, half));
+  }
+  g.stroke({ color: GRAPHITE, width: 1, alpha });
 }
 
 function drawCellOutline(g: Graphics): void {
