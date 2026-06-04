@@ -23,6 +23,7 @@ import {
   placeCell,
   placePipe,
   feedOperand,
+  injectFuel,
   tick,
   totalScore,
   type World,
@@ -46,6 +47,24 @@ function takeLargest(w: World, max = Infinity): Value | null {
 function takeSmallest(w: World): Value | null {
   let bi = -1;
   for (let i = 0; i < w.pool.length; i++) if (bi < 0 || mag(w.pool[i].value).lt(mag(w.pool[bi].value))) bi = i;
+  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+}
+/** Largest loose block whose value is ≤ cap (a "moderate multiplier", not the frontier). */
+function takeModerate(w: World, cap: number): Value | null {
+  let bi = -1;
+  for (let i = 0; i < w.pool.length; i++) {
+    const m = mag(w.pool[i].value).toNumber();
+    if (m >= 2 && m <= cap && (bi < 0 || mag(w.pool[i].value).gt(mag(w.pool[bi].value)))) bi = i;
+  }
+  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+}
+/** Smallest loose block whose value ≥ floor (grade-matched fuel). */
+function takeFuel(w: World, floor: Decimal): Value | null {
+  let bi = -1;
+  for (let i = 0; i < w.pool.length; i++) {
+    const m = mag(w.pool[i].value);
+    if (m.gte(floor) && (bi < 0 || m.lt(mag(w.pool[bi].value)))) bi = i;
+  }
   return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
 }
 function pushBack(w: World, v: Value | null): void {
@@ -96,24 +115,46 @@ function runManager(rate: number, ticks: number, trace = false): Result {
     build(depth, 0); // root spills 65,536s into the loose pool (no output pipe)
   }
   buildBackbone(3); // root spills ~256s (idle baseline); kept modest so the sim stays fast
-  // A few amplifier multiplications for MANUAL use (the active layer). Fed by
-  // hand from the loose pool; run at base rate (no manual fuel — we isolate the
-  // value of operand-shuttling, free of fuel-burning confounds).
-  const amps: number[] = [placePiped('multiplication', 1100, -60), placePiped('multiplication', 1100, 60), placePiped('multiplication', 1300, 0)];
+  // ONE frontier multiplication, grown INCREMENTALLY: each pass multiplies the
+  // current frontier by a moderate block (×≤1000), so the frontier's digits
+  // grow ~linearly per action (a smooth gradient) instead of doubling (a cliff).
+  // op0 = the frontier (largest loose); op1 = a moderate multiplier.
+  // N PARALLEL frontier-builders — more APM keeps more of them fed/fuelled, so
+  // active play can absorb extra actions (the factory-width APM gradient).
+  const N_FRONTIER = 4;
+  const fmults: number[] = [];
+  for (let i = 0; i < N_FRONTIER; i++) fmults.push(placePiped('multiplication', 1100, (i - 2) * 90));
+  const MULT_CAP = 1000; // each multiply grows the frontier by at most ×1000
   // Build everything instantly (the factory is already set up).
   while ([...world.cells.values()].some((c) => !c.built)) tick(world, 1);
 
+  function manageCell(fm: number): boolean {
+    const cell = world.cells.get(fm)!;
+    if (cell.op === null) {
+      if (cell.operands[0] === null) {
+        const front = takeLargest(world);
+        if (front && mag(front).gte(2)) { if (!act(() => feedOperand(world, fm, 0, front))) { pushBack(world, front); return false; } return true; }
+        pushBack(world, front); return false;
+      } else if (cell.operands[1] === null) {
+        const m = takeModerate(world, MULT_CAP);
+        if (m) { if (!act(() => feedOperand(world, fm, 1, m))) { pushBack(world, m); return false; } return true; }
+        return false;
+      }
+      return false;
+    }
+    const f = takeFuel(world, cell.op.grade);
+    if (f) { if (!act(() => injectFuel(world, fm, f))) { pushBack(world, f); return false; } return true; }
+    return false;
+  }
+
   function manage(): void {
-    for (const id of amps) {
-      if (budget < 1) break;
-      const cell = world.cells.get(id);
-      if (!cell || cell.op !== null) continue;
-      // Amplify the frontier: pair the two biggest loose blocks.
-      const x = takeLargest(world);
-      const y = takeLargest(world);
-      if (x && y && mag(x).gte(2) && mag(y).gte(2)) {
-        if (!act(() => { feedOperand(world, id, 0, x); feedOperand(world, id, 1, y); })) { pushBack(world, x); pushBack(world, y); }
-      } else { pushBack(world, x); pushBack(world, y); }
+    let progressed = true;
+    while (budget >= 1 && progressed) {
+      progressed = false;
+      for (const fm of fmults) {
+        if (budget < 1) break;
+        if (manageCell(fm)) progressed = true;
+      }
     }
     // Keep the loose pile bounded (engine bookkeeping, not a player action).
     while (world.pool.length > 1500) {
@@ -172,11 +213,9 @@ function main(): void {
   console.log('  ------------+--------------+-------------+--------------+-----------------');
   const rates: [number, string][] = [
     [0, 'pure idle (backbone only)'],
-    [0.25, '1 action / 4s'],
     [0.5, '1 action / 2s'],
     [1, '1 / sec (fast human)'],
     [2, '2 / sec (frantic)'],
-    [4, '4 / sec (superhuman)'],
   ];
   for (const [r, note] of rates) {
     const res = runManager(r, ticks);

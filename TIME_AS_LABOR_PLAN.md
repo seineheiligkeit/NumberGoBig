@@ -170,6 +170,30 @@ extending.
     multipliers is the best play, not spiky squaring. That makes APM rewarding
     without a cliff and keeps "always something to do" true at every rate.
 
+  **Incremental-gradient findings (`sim/manager.ts`, incremental + parallel).**
+  Switched the agent to incremental multiplication (frontier × a ×≤1000 block per
+  action) and re-swept the human action rate:
+  - **The temporal climb is now smooth** (rate 1: steady ~×10–×100/sample to
+    ~8.7e13, no spike) — incremental fixes the squaring cliff. ✓
+  - **Idle → active is a huge, healthy gradient** (frontier ~20 idle → e12–e19
+    active); idle never stalls (score rises). ✓
+  - **Factory WIDTH is the real APM sink.** 1 frontier-builder absorbs only ~400
+    actions (frontier ~e12) regardless of budget — it's op/fuel-bound. **4**
+    parallel builders absorb thousands of actions (scaling with the budget) and
+    reach ~e19. So active play that **builds & rebalances width** is the
+    gradient; clicking faster on a *fixed* factory saturates.
+  - **Conclusion:** the desired shape is achieved and is *healthy* — idle fine,
+    active far more efficient, the climb smooth, and the unbounded lever is
+    "build a wider factory and keep it fed," not superhuman APM. This matches the
+    "constant fiddling and rethinking" vision. The economy **constants look
+    fine** for this; the open lever is keeping **expansion always worthwhile**
+    (build-cost vs throughput) and steering play toward incremental-multiply +
+    width (design/progression), and ensuring squaring isn't a degenerate shortcut
+    (the transit-freeze + op-cost already discourage it at scale).
+- ⏭️ **Next:** verify expansion stays rewarding (build-cost vs added throughput
+  curve) so "always something to build" holds; then global time-levers /
+  prestige; exp-centric climb; deferred systems.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline
