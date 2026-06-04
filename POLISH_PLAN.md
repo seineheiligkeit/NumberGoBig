@@ -31,6 +31,18 @@ fakery), **bezier** pipes, **any juice layer** (no pop/recoil/dust — the old
 
 ---
 
+## Progress
+
+- ✅ **P1 — Foundations & quick wins** (bezier pipes · juice substrate · clog state).
+- ✅ **P2 — Draws-itself made real** (build traces in · result written out +
+  clock-sweep · eraser deletion · graphite-weight fuel gauge). Engine gained
+  pure `outputStalled` / `stalled` / `recentBurn` signals (unit-tested); the
+  juice layer gained dust, scale-punch, the eraser tween, and a `JUICE` scalar.
+  *Hard-won lesson:* never scale or spawn interactive FX on a hit-tested
+  container — visuals go in an inner `body`, the FX layer is `eventMode:'none'`.
+- ⏭️ **P3 — Legibility & the whoosh** (next).
+- ◻️ **P4 — Notebook & onboarding finish.**
+
 ## Sequencing (interleaved by dependency + impact-per-effort)
 
 Four threads were chosen; they're sequenced as four phases. **P1 lays shared
