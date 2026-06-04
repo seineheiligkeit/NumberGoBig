@@ -194,6 +194,27 @@ extending.
   curve) so "always something to build" holds; then global time-levers /
   prestige; exp-centric climb; deferred systems.
 
+  **Build-cost vs throughput (`sim/build-roi.ts`) — a real economy fix.** Payback
+  of the Nth cell = build cost ÷ throughput it adds. At the old `buildGrowth=1.5`
+  this *exploded* — the 15th cell took ~2.6h to pay back, the 21st ~29h — so
+  expansion **walled at ~10 cells**, choking the factory-WIDTH lever that the
+  whole "active play" gradient depends on. **Changed `buildGrowth` 1.5 → 1.15**
+  (mild escalation; the 13th cell now pays back in ~3m), so every next cell stays
+  worth building deep into the game. (Very-late-game width — hundreds of one
+  kind — still escalates; that's blueprints/prestige territory, not this knob.)
+
+  **APM-reward shape — strategy/feel territory, not an economy block.** Swept
+  realistic human rates (idle / 1·min⁻¹ / 1·30s⁻¹ / 1·10s⁻¹ / 1·s⁻¹ / 10·s⁻¹).
+  Idle « active is huge and monotonic up to ~1/10s; beyond that the *agent*
+  regresses (its greedy 4-builder strategy SPREADS value across builders instead
+  of concentrating one frontier) — a play-quality artifact, not the economy
+  refusing the reward. From first principles the desired shape already holds: a
+  faster *and good* player does more useful actions → more progress, with a
+  natural soft cap when the fixed factory saturates (ops/material-bound). The
+  exact "fast beats slow, 100 APM doesn't matter" feel is now best confirmed by
+  **human playtest**, since it hinges on concentrate-vs-spread play the sim agent
+  models poorly. The economy permits it; no constant change indicated here.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline

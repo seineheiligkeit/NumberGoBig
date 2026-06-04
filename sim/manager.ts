@@ -212,10 +212,12 @@ function main(): void {
   console.log('  actions/sec |   frontier   |    score    | actions used | note');
   console.log('  ------------+--------------+-------------+--------------+-----------------');
   const rates: [number, string][] = [
-    [0, 'pure idle (backbone only)'],
-    [0.5, '1 action / 2s'],
+    [0, 'idle (never touch it)'],
+    [1 / 60, '1 / min (mostly thinking)'],
+    [1 / 30, '1 / 30s (relaxed)'],
+    [0.1, '1 / 10s (engaged)'],
     [1, '1 / sec (fast human)'],
-    [2, '2 / sec (frantic)'],
+    [10, '10 / sec (superhuman)'],
   ];
   for (const [r, note] of rates) {
     const res = runManager(r, ticks);

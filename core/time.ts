@@ -82,7 +82,11 @@ export const DEFAULT_TUNING: TimeTuning = {
   },
   opWorkFloor: 2,
   buildBase: 16,
-  buildGrowth: 1.5,
+  // Mild geometric repurchase. Was 1.5, but the build-ROI sweep (sim/build-roi.ts)
+  // showed 1.5 walls expansion at ~10 cells (payback explodes), which chokes the
+  // factory-WIDTH lever that rewards active play. 1.15 keeps every next cell
+  // worth building deep into the game ("always something to build").
+  buildGrowth: 1.15,
   // Transit super-linear in value: a 1 ≈ free, a 100 ≈ 10 ticks, a 1000 ≈ 300,
   // a 10⁴ ≈ frozen — so you decompose to ~100-grade fuel for fluid transport.
   transitCoeff: 0.01,
