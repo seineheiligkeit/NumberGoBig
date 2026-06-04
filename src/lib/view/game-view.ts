@@ -54,6 +54,7 @@ import {
 } from '../../../core/engine';
 import { createJuice, setJuice } from './physics';
 import { note } from './narrator';
+import { sndSnap, sndBurn, sndErase, sndMilestone, resumeAudio } from './audio';
 import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
@@ -354,6 +355,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   });
 
   app.stage.on('pointerdown', (e) => {
+    resumeAudio(); // first user gesture unlocks the synth audio context
     if (drag) return; // a block grab handles its own pointerdown
     const p = canvasPoint(e.global.x, e.global.y);
 
@@ -363,6 +365,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const pid = findPipeAt(p.x, p.y);
       if (pid !== null) {
         juice.eraser(p.x, p.y, 18, 12); // erase where the pipe was clicked (it's thin)
+        sndErase();
         removePipe(world, pid);
       }
       return;
@@ -678,6 +681,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       // sells the removal.
       if (shiftHeld) {
         juice.eraser(c.x, c.y, CELL_W / 2, CELL_H / 2);
+        sndErase();
         removeCell(world, id);
         return;
       }
@@ -762,6 +766,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       drawPortMarkers(vis.ports, cell.kind);
       juice.punch(vis.body, 0.28);
       juice.burst(cell.x, cell.y, 6, 42);
+      sndSnap();
       note('Construction complete. The apparatus is yours to feed.', 'first-build');
       unlockToolsFor(cell.kind);
     }
@@ -782,6 +787,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         const fy = cell.kind === 'accelerator' ? cell.y : cell.y + L.fuel.y;
         juice.burst(fx, fy, 7, 42);
         juice.punch(vis.body, 0.2);
+        sndBurn();
         note('Fuel quickens the hand — a real expense, briefly worth it.', 'first-burn');
       }
       vis.prevBurn = burn;
@@ -1013,6 +1019,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       }
       if (hit) {
         juice.flash(fi.x, fi.y);
+        sndMilestone();
         milestoneStore.set(hit);
         note(`The frontier reaches ${hit}.`);
       }

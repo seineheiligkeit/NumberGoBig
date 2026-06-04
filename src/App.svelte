@@ -1,8 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
-  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, type Tool } from './lib/view/stores';
+  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, audioMuted, type Tool } from './lib/view/stores';
+  import { setAudioMuted } from './lib/view/audio';
   import Marginalia from './Marginalia.svelte';
+
+  function toggleMute() {
+    audioMuted.update((m) => {
+      setAudioMuted(!m);
+      return !m;
+    });
+  }
 
   let canvasContainer: HTMLDivElement;
   let handle: GameViewHandle | null = null;
@@ -64,6 +72,7 @@
           {s === 0 ? '⏸' : `${s}×`}
         </button>
       {/each}
+      <button class="mute" title="Mute audio" onclick={toggleMute}>{$audioMuted ? '🔇' : '🔊'}</button>
     </div>
   </aside>
 
