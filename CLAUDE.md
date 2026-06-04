@@ -11,8 +11,10 @@ Web-first.
 > Adversary, Sets, the old `world`/`interaction`/`sim`). The current
 > architecture is a **pure tested engine** (`core/{value,time,engine,
 > cell-types}.ts`) with a thin Pixi **view** (`src/lib/view/`), driven by
-> `npm test` (node --test) + `npm run test:e2e` (Playwright). **The authority
-> for this branch is [TIME_AS_LABOR.md](./TIME_AS_LABOR.md) and
+> `npm test` (node --test) + `npm run test:e2e` (Playwright). **Start a new session with
+> [HANDOVER.md](./HANDOVER.md) (fast on-ramp: state, learnings, sim toolbox,
+> known scales, what's next). The design authority is
+> [TIME_AS_LABOR.md](./TIME_AS_LABOR.md); the sliced plan + progress log is
 > [TIME_AS_LABOR_PLAN.md](./TIME_AS_LABOR_PLAN.md).** Everything below describes
 > the pre-prototype main game and is retained for when deferred systems return.
 

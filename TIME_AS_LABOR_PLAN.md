@@ -215,6 +215,38 @@ extending.
   **human playtest**, since it hinges on concentrate-vs-spread play the sim agent
   models poorly. The economy permits it; no constant change indicated here.
 
+- ✅ **Real-play-from-zero baseline** (`sim/play.ts`). A competent-player agent
+  that starts from an EMPTY canvas at a human action rate — no instant-build, no
+  pre-wired farm, **no free block-merge** (fuel is delivered one block per
+  fuel-action, so fuel throughput is a real ceiling, as for a human). It builds
+  its own fuel supply (depth-3 multiplication trees → ~256-grade fuel), grows
+  frontier multiplications by recycling the big result back as an operand, fuels
+  from a *reserved band* (never torches the frontier), and scales fuel
+  production (bounded ≤6 trees) only under sustained fuel pressure. This is the
+  **scale-of-play baseline** to compare a human playtest against:
+
+  | action rate | FRONTIER | score | cells (built) | fuel trees |
+  |---|---|---|---|---|
+  | 1 / 60 s (idle) | 3.1e26 | 1.2e24 | 25 | 1 |
+  | 1 / 30 s | 2.0e31 | 7.9e28 | 25 | 1 |
+  | 1 / 10 s | 8.3e34 | 3.3e32 | 25 | 1 |
+  | 1 / 3 s | 1.3e36 | 8.3e34 | 25 | 1 |
+  | 1 / s (engaged) | 1.4e45 | 8.9e43 | 48 | 2 |
+
+  **Findings:** (1) speed is rewarded **monotonically** (faster → higher
+  frontier; the engaged player self-scaled to a 2nd fuel tree); (2) idling never
+  stalls (river + auto-running trees keep score climbing); (3) the realistic
+  factory is **~25–50 cells** over a 4 h session — that's the scale the
+  UI/UX/animation design pass should target. Two bugs fixed en route: the early
+  version spam-built 100+ never-finishing fuel trees (now bounded), and faster
+  play was non-monotonic because the fuel selector torched the frontier result
+  as fuel (now reserved as the next operand; fuel comes from a graded band).
+
+- ⏭️ **Now: a full design / UX / polish pass** (this session's pivot). Economy
+  and scales are understood; before the human playtest we want the prototype to
+  *feel* finished — UI/UX, animation, game-feel, onboarding, readability at the
+  ~25–50-cell scale. See `HANDOVER.md` for the brainstorm agenda and learnings.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline
