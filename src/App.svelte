@@ -3,6 +3,7 @@
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
   import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, audioMuted, type Tool } from './lib/view/stores';
   import { setAudioMuted } from './lib/view/audio';
+  import { PRESETS } from './lib/view/presets';
   import Marginalia from './Marginalia.svelte';
 
   function toggleMute() {
@@ -22,6 +23,7 @@
     { tool: 'exponentiation', label: '^  Exponentiation' },
     { tool: 'mill', label: 'M  Mill (split → fuel)' },
     { tool: 'accelerator', label: '»  Accelerator' },
+    { tool: 'warehouse', label: 'W  Warehouse (store → fuel)' },
     { tool: 'pipe', label: '↳  Pipe' },
   ];
 
@@ -73,6 +75,13 @@
         </button>
       {/each}
       <button class="mute" title="Mute audio" onclick={toggleMute}>{$audioMuted ? '🔇' : '🔊'}</button>
+    </div>
+    <div class="dev">
+      <span>snapshots</span>
+      <button class="reset" title="Clear the canvas" onclick={() => handle?.reset()}>⟲ Reset</button>
+      {#each PRESETS as p (p.key)}
+        <button class="preset" title={p.blurb} onclick={() => handle?.loadPreset(p.key)}>{p.label}</button>
+      {/each}
     </div>
   </aside>
 
@@ -241,5 +250,35 @@
   .monitor .speed button.active {
     background: rgba(244, 230, 138, 0.6);
     border-color: rgba(58, 58, 58, 0.5);
+  }
+  .monitor .dev {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 6px;
+    border-top: 1px solid rgba(58, 58, 58, 0.15);
+    padding-top: 6px;
+  }
+  .monitor .dev span {
+    width: 100%;
+    opacity: 0.6;
+  }
+  .monitor .dev button {
+    flex: 1 1 auto;
+    padding: 3px 6px;
+    background: transparent;
+    border: 1px solid rgba(58, 58, 58, 0.3);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 12px;
+    color: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .monitor .dev button:hover {
+    background: rgba(58, 58, 58, 0.06);
+  }
+  .monitor .dev button.reset {
+    flex-basis: 100%;
   }
 </style>

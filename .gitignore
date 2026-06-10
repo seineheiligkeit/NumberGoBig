@@ -32,3 +32,6 @@ lerna-debug.log*
 .env
 .env.local
 .env.*.local
+
+# Agent worktrees (scratch git checkouts — never commit)
+.claude/worktrees/

@@ -242,10 +242,109 @@ extending.
   play was non-monotonic because the fuel selector torched the frontier result
   as fuel (now reserved as the next operand; fuel comes from a graded band).
 
-- ⏭️ **Now: a full design / UX / polish pass** (this session's pivot). Economy
-  and scales are understood; before the human playtest we want the prototype to
+- ⏭️ **Then: a full design / UX / polish pass** (the polish pivot). Economy and
+  scales are understood; before the human playtest we want the prototype to
   *feel* finished — UI/UX, animation, game-feel, onboarding, readability at the
   ~25–50-cell scale. See `HANDOVER.md` for the brainstorm agenda and learnings.
+  **Shipped (POLISH_PLAN.md P1–P4).**
+
+- ✅ **Loose-block stacking + dev presets + honest agents** (human-feedback pass).
+  (1) **Stacking:** identical un-piped outputs merge into one movable `×N` stack
+  (`LooseBlock.count`, gated by `World.stacking` — on in the game, off for the
+  sims). Kills the invisible-heap-on-the-port problem + a pool perf bomb;
+  economically transparent (stack of N ≡ N blocks). Output spills clear of the
+  output nub (`OUTPUT_SPILL_OFFSET`). (2) **Dev menu:** Reset + three stage
+  presets (Opening / Fuel line / Engaged) via `resetWorld` +
+  `placeCell({built:true})` + `src/lib/view/presets.ts`. (3) **Honest manager:**
+  fixed `sim/manager.ts`'s arg-shifted backbone wiring + removed its free
+  pool-merge cheat + made it stacking-aware → climbs **~1.3e36 @1/s** (was a
+  broken-backbone-inflated ~1e22). The agent must mirror the game: stacking-aware
+  `take` peels one off a stack. `strategy-test.ts` still carries the same bug
+  (deferred — manager is the one we benchmark on).
+
+- ✅ **Manager optimization + a corrected belief.** Added `--strategy
+  spread|concentrate` + `--fuel-trees N` and went hunting for a higher climb. The
+  finding overturns two long-held assumptions (from `strategy-test.ts`):
+  "concentrate ≫ spread" and "spread regresses at high APM" are **false** in the
+  honest manager. The regression is **fuel starvation**; scaling fuel production
+  fixes it and spread goes monotonic — @10/s, 1 tree ≈ 6e35 → 2 trees (50 cells)
+  ≈ 5e67 → 8 trees ≈ 3e91. Concentrate is a dead end (one fuel grade → op1/fuel
+  contention → self-starves); strategy-test's "win" was an early-stop-at-1e30
+  artifact. **Fuel production — a wider fuel plant kept fed — is the dominant
+  reach-higher lever** (matches `play.ts`'s width lesson). `HANDOVER.md` #5 updated.
+
+- ✅ **Holistic study (`sim/study.ts`) + the biggest agent win: smart fuel-depth.**
+  Instrumented the benchmark agent (action breakdown, build accounting, value-flow,
+  per-tick bottleneck attribution, pool composition) and ran 3 rates × 10k ticks.
+  Found the agent fuel-throughput-bound (80–99% starved) while leaking 15–23k
+  unusable ONES. Key insight: **fuel DENOMINATION (tree depth), not quantity, is
+  the lever** — one fuel block finishes an op iff block-value ≥ op-work (~digits³);
+  the root is 2^(2^depth), so deepening squares the denomination. The agent now
+  **scales fuel depth with the frontier** (default on; `--fuel-depth N` forces
+  fixed). Result vs old depth-3: STEADY 5.6e42 → 3.1e85 (+43 oom), FAST 6.9e69 →
+  4.0e118 (+49 oom); slow unchanged (rate-limited). Hand-consolidating 1s was a
+  proven trap (~0.5 fuel-value/action); over-building fuel also harmful (build-cost
+  wall). `HANDOVER.md` #9 added. Remaining ceiling: superhuman-rate throughput.
+
+- ✅ **Width pass — frontier width is FREE throughput (+41/+44 orders more).**
+  Chased the throughput ceiling. Key engine fact (Architecture B): each cell runs
+  at `baseRate` for free in parallel, so more frontier mults = more free
+  op-progress (NOT fragmentation — that was the fuel-scarce regime). Swept it:
+  **16 mults is the peak** at STEADY (3.1e85 → 2.7e126) and FAST (1.2e86 →
+  2.9e135), neutral at SLOW; past ~16 a single tree's fuel dilutes. Defaulted to
+  16 mults from the start. Gradual auto-width is counterproductive (adding a mult
+  mid-climb steals op0 from the leader) → off by default (`--auto-width` to
+  repro). Parallel fuel roots help only at FAST (auto-fuel builds ~9 trees).
+  **Combined two-pass total vs the original depth-3/4-mult agent (10k ticks):
+  STEADY 5.6e42 → 2.71e126 (+84 oom), FAST 6.9e69 → 3.60e162 (+93 oom)**; SLOW
+  unchanged (rate-limited). `HANDOVER.md` #10 added. NB ≥~1e90 is sawtooth-noisy.
+
+- ✅ **Consolidation + refreshed dev presets.** `runManager` now takes a single
+  `ManagerOpts` options object (was 11 positional params); all call sites + the
+  CLI + `sim/study.ts` updated, behavior identical (study unchanged). The dev-menu
+  presets (`src/lib/view/presets.ts`) were rebuilt around the agent's best-play
+  strategy: Opening · **Deep fuel** (depth-4, 65,536/op) · **Wide bank** (depth-4
+  + 8 mults) · **Engaged climb / agent's best** (depth-5 + 16 mults, ~110 cells).
+  All four verified loading + auto-running headlessly via `__nbg`, no errors.
+
+- ✅ **Auto-scaling fuel + fixed the whole sim suite.** The manager now
+  **self-scales fuel**: under sustained starvation it builds another backbone
+  (action-costed via a queue, constructed over real time), so production tracks
+  the digits³ demand — one honest curve (no `--fuel-trees` knob), spread monotonic
+  to ~1.9e53/5h @10/s (builds a 2nd tree then stops once the pool saturates).
+  Also fixed `strategy-test.ts` (same arg-shifted backbone + free-merge) and
+  `agent.ts` (free-merge in `capPool`) — all wired correctly, stacking-aware,
+  drop-not-merge pool safety. `play.ts`/`factory-agent.ts`/`logistics.ts`/
+  `time-run.ts` were already clean.
+
+- ✅ **Auto-scaling frontier width (symmetric lever) — and the insight it surfaced.**
+  The manager now also builds more frontier mults under "APM I can't spend"
+  pressure (on by default; `--no-auto-width`). **Key finding: at human action
+  rates (≤~30/s) the initial 4 mults already absorb the APM, so width never fires
+  — fuel is the only lever that binds in the human range** (self-scaling,
+  monotonic). Width engages only past ~100/s (superhuman), where it helps (×~16
+  @100/s). The manager is now a fully self-tuning best-play benchmark (fuel +
+  width). Caveat: compare strategies/levers at the SAME rate — a cross-rate
+  comparison briefly mis-read width as harmful; numbers ≥~1e60 are sawtooth-noisy.
+
+- ✅ **Fuel economy — "fuel must actually matter" (2026-06-10).** Addressed the
+  complaint that multiplicative ops are too cheap once a basic fuel line exists.
+  **Ruled out three levers, shipped one.** *Per-block digit-fuel* (`fuelLaw:
+  'digits'`) collapses the climb (−120…−150 oom) and reopens the shatter exploit
+  (digits^q sub-additive). *Fuel-tax* (an amplifier op needs `C·magnitude(output)^α`
+  of burned fuel) requires a tiered fuel ladder = **α.5c's ladder reborn**, and
+  the fuel is `frontier^α` — too big to pipe (transit-freeze caps pipe-able fuel
+  ~mag 2000); milling/force-fuel/ladder agents **all stall ~1e16–1e21**. **Landed:
+  reduced amplifier baseRate (`amplifierBaseRateScale`) + diminishing overpay
+  (`fuelOverpayExp`; a block contributes `grade^(1-p)·V^p`)** — stable, pipe-able,
+  smoothly tunable (`sim/fuel-overpay.ts`: −48…−114 oom, no collapse, *if the
+  agent fuels only the frontier and lets trees creep*). Live in the game at
+  `0.5 / 0.5` (`src/lib/view/game-view.ts` → `GAME_TUNING`), headless-verified
+  (a mult creeps to 8.7% unfuelled, streamed grade fuel finishes it → 1e6, no
+  errors). All experiment knobs **off in `DEFAULT_TUNING`** so sim baselines + the
+  45 tests are intact. **Sim-tuning the two values + the human playtest = next
+  session.** New harnesses: `fuel-overpay.ts` (the lever) + `fuel-experiment.ts` /
+  `fuel-tax.ts` / `fuel-forced.ts` (the dead-ends). See HANDOVER §0 + learning #12.
 
 ---
 

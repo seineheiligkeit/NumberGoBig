@@ -37,6 +37,14 @@ const T = DEFAULT_TUNING;
 function mag(v: Value): Decimal {
   return valueMagnitude(v);
 }
+/** Remove ONE block from pool index `bi` — peel one off a stack (decrement
+ *  count) rather than splice the whole pile, which would discard the rest. */
+function peel(w: World, bi: number): Value | null {
+  if (bi < 0) return null;
+  const b = w.pool[bi];
+  if ((b.count ?? 1) > 1) { b.count -= 1; return b.value; }
+  return w.pool.splice(bi, 1)[0].value;
+}
 /** Remove and return the largest loose block (or null). */
 function takeLargest(w: World, max = Infinity): Value | null {
   let bi = -1;
@@ -44,7 +52,7 @@ function takeLargest(w: World, max = Infinity): Value | null {
     const m = mag(w.pool[i].value).toNumber();
     if (m <= max && (bi < 0 || mag(w.pool[i].value).gt(mag(w.pool[bi].value)))) bi = i;
   }
-  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+  return peel(w, bi);
 }
 /** Remove and return the smallest loose block (or null). */
 function takeSmallest(w: World): Value | null {
@@ -52,7 +60,7 @@ function takeSmallest(w: World): Value | null {
   for (let i = 0; i < w.pool.length; i++) {
     if (bi < 0 || mag(w.pool[i].value).lt(mag(w.pool[bi].value))) bi = i;
   }
-  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+  return peel(w, bi);
 }
 /** Remove and return the smallest loose block whose value ≥ floor (or null). */
 function takeSmallestAtLeast(w: World, floor: Decimal): Value | null {
@@ -60,26 +68,18 @@ function takeSmallestAtLeast(w: World, floor: Decimal): Value | null {
   for (let i = 0; i < w.pool.length; i++) {
     if (mag(w.pool[i].value).gte(floor) && (bi < 0 || mag(w.pool[i].value).lt(mag(w.pool[bi].value)))) bi = i;
   }
-  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+  return peel(w, bi);
 }
 function pushBack(w: World, v: Value | null): void {
-  if (v) w.pool.push({ id: w.nextId++, value: v, x: 0, y: 0 });
+  if (v) w.pool.push({ id: w.nextId++, value: v, x: 0, y: 0, count: 1 });
 }
-/** Safety cap: consolidate the two smallest blocks into one (conserves value,
- *  bounds block count) when the pool grows large. Models the player keeping the
- *  loose pile under control; without it the O(pool) scans blow up. */
-const POOL_CAP = 1500;
+/** Safety cap: DROP the smallest loose blocks when the pool grows large (so the
+ *  O(pool) scans don't blow up). NOT a free merge — the old code summed the two
+ *  smallest, a consolidation the real game can't do. With stacking on the pool is
+ *  a handful of stacks, so this rarely fires. */
+const POOL_CAP = 4000;
 function capPool(w: World): void {
-  while (w.pool.length > POOL_CAP) {
-    const a = takeSmallest(w);
-    const b = takeSmallest(w);
-    if (!a || !b) {
-      pushBack(w, a);
-      pushBack(w, b);
-      break;
-    }
-    pushBack(w, valueOf(mag(a).add(mag(b)).toNumber()));
-  }
+  while (w.pool.length > POOL_CAP) takeSmallest(w);
 }
 
 // ---- The agent ------------------------------------------------------------
@@ -181,7 +181,7 @@ function main(): void {
     else if (argv[i] === '--verbose') verbose = true;
   }
 
-  const world = createWorld(T);
+  const world = createWorld(T, { stacking: true });
   const roster: Roster = { successors: 8, additions: 2, multiplications: 1, exponentiations: 1 };
 
   console.log('Time-as-Labor — optimal-play agent (production economy, free logistics)');

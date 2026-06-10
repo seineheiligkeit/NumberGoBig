@@ -21,6 +21,8 @@ import {
   feedOperand,
   injectFuel,
   addLoose,
+  moveLoose,
+  takeLooseById,
   tick,
   totalScore,
   poolCountOf,
@@ -361,6 +363,23 @@ test('Mill splits a block into pieces summing to the same value (conserved)', ()
   assert.equal(score(w), before, 'milling conserves score (additive split)');
 });
 
+// --- The warehouse (any-block store) ---------------------------------------
+
+test('warehouse: deposits stockpile, withdraws drain out a pipe (score-counted)', () => {
+  const w = createWorld();
+  const s = placeCell(w, 'successor', 0, 0);
+  const wh = placeCell(w, 'warehouse', 200, 0);
+  const wh2 = placeCell(w, 'warehouse', 400, 0);
+  while ([s, wh, wh2].some((id) => !getCell(w, id)!.built)) tick(w, 1);
+  placePipe(w, s, 0, wh, 0); // deposit: successor → warehouse
+  placePipe(w, wh, 0, wh2, 0); // withdraw: warehouse → warehouse2
+  run(w, 300);
+  const count = (id: number) => getCell(w, id)!.store.reduce((a, e) => a + e.count, 0);
+  assert.ok(count(wh) > 0, 'warehouse buffered deposited 1s');
+  assert.ok(count(wh2) > 0, 'withdrawals flowed on to the second warehouse');
+  assert.ok(score(w) >= count(wh) + count(wh2), 'warehoused blocks count toward Total Score');
+});
+
 // --- The pipe-accelerator --------------------------------------------------
 
 test('an accelerator boosts the transit of nearby pipes', () => {
@@ -428,4 +447,53 @@ test('idle world is stable (no NaNs, no spurious blocks)', () => {
   assert.equal(poolSize(w), 0);
   assert.equal(score(w), 0);
   assert.ok(Number.isFinite(score(w)));
+});
+
+// --- Loose-block stacking (the live game; OFF for the sims) -----------------
+
+test('stacking on: an un-piped producer piles its output into one movable stack', () => {
+  const w = createWorld(DEFAULT_TUNING, { stacking: true });
+  const id = placeCell(w, 'successor');
+  while (!getCell(w, id)!.built) tick(w, 1);
+  run(w, 300);
+  // Many 1s produced, but they live as ONE stack entity (the pile) — that's the
+  // moveability + perf win (no thousands of invisible blocks on the port).
+  const ones = w.pool.filter((b) => valueMagnitude(b.value).eq(1));
+  assert.equal(ones.length, 1, 'all the 1s are a single stack');
+  assert.ok(ones[0].count > 1, 'the stack counts the pile');
+  // ...and it is economically identical to that many loose 1s.
+  assert.equal(poolCountOf(w, 1), ones[0].count, 'pool count sums the stack');
+  assert.equal(score(w), ones[0].count, 'Total Score = blocks × magnitude');
+});
+
+test('stacking OFF (default — the balance sims): identical outputs stay separate', () => {
+  const w = createWorld(); // default: no merging, exactly as the agents expect
+  const id = placeCell(w, 'successor');
+  while (!getCell(w, id)!.built) tick(w, 1);
+  run(w, 300);
+  const ones = w.pool.filter((b) => valueMagnitude(b.value).eq(1));
+  assert.ok(ones.length > 1, 'each 1 is its own block (the agent manages the pool)');
+  assert.ok(ones.every((b) => b.count === 1));
+});
+
+test('stacking on: dropping a stack onto a same-value stack merges them', () => {
+  const w = createWorld(DEFAULT_TUNING, { stacking: true });
+  addLoose(w, valueOf(5), 0, 0, 3);
+  const b = addLoose(w, valueOf(5), 500, 0, 2); // far apart → distinct stacks
+  assert.equal(w.pool.length, 2, 'two stacks while apart');
+  moveLoose(w, b, 0, 0); // carry the second onto the first
+  assert.equal(w.pool.length, 1, 'merged into one');
+  assert.equal(poolCountOf(w, 5), 5, 'counts combined');
+  assert.equal(score(w), 25, 'score conserved across the merge');
+});
+
+test('stacking on: takeLooseById lifts the whole stack; feeding peels one', () => {
+  const w = createWorld(DEFAULT_TUNING, { stacking: true });
+  const sid = addLoose(w, valueOf(1), 0, 0, 5);
+  const stack = takeLooseById(w, sid);
+  assert.equal(stack!.count, 5, 'a drag lifts the whole pile');
+  assert.equal(w.pool.length, 0, 'the pile left the pool');
+  // The view feeds one and re-adds the remainder — emulate that contract.
+  addLoose(w, valueOf(1), 200, 0, stack!.count - 1);
+  assert.equal(poolCountOf(w, 1), 4, 'one consumed, four remain');
 });

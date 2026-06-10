@@ -66,6 +66,61 @@ export interface TimeTuning {
    *  gradeCoeff < 1 keeps the smallest ops accepting `1`s (the base fuel). */
   gradeExp: number;
   gradeCoeff: number;
+  /** How a fuel block's progress contribution is computed from its value:
+   *   - 'magnitude' : raw value (a 1000-block → 1000 progress). The original law.
+   *                   Because op work is only digits(output)^k (polynomial in the
+   *                   digit-count) while value is exponential, one recycled big
+   *                   output over-pays any op by astronomical margins → fuel is
+   *                   never scarce, dedicated fuel production is pointless.
+   *   - 'digits'    : (digit-count)^fuelDigitExp (a 1000-block → 3^q). Sub-linear
+   *                   in value, so a big output gives only *bounded* fuel; you
+   *                   must run (and keep widening) dedicated fuel production to
+   *                   feed the digits^k-growing ops. The intended treadmill.
+   *  This is the headline tuning lever for "fuel must chase number production". */
+  fuelLaw: 'magnitude' | 'digits';
+  /** Exponent q in (digits)^q when fuelLaw === 'digits'. q=1 is pure digit-count
+   *  (very scarce); larger q eases the scarcity. Matching q to an operator's
+   *  opExponent makes ~one recycled same-tier block finish ~one op. */
+  fuelDigitExp: number;
+  /** Fuel TAX — the "fuel must chase number production" lever. An amplifying op
+   *  (multiplication and up) gets an explicit fuel REQUIREMENT of
+   *  `fuelTaxCoeff · magnitude(output)^fuelTaxExp` that baseRate canNOT pay down —
+   *  only *burned fuel* satisfies it. So a bigger result demands proportionally
+   *  more fuel, and you must keep scaling fuel production. It's a magnitude
+   *  QUANTITY (conserved — no shatter exploit), and net-positive for
+   *  fuelTaxExp < 1 (the tax is a shrinking fraction of the output as it grows).
+   *  fuelTaxCoeff = 0 turns it off → the engine behaves exactly as before (fuel
+   *  only buys speed). Successor/addition (non-amplifiers) are never taxed. */
+  fuelTaxCoeff: number;
+  /** Exponent α in magnitude(output)^α for the fuel tax. α<1 keeps climbing
+   *  net-positive; α→1 makes the tax a near-constant fraction of output (the
+   *  grindiest treadmill); α small makes it negligible at scale. */
+  fuelTaxExp: number;
+  /** Scales the baseRate that AMPLIFIER ops (multiplication and up) accrue, in
+   *  [0,1]. 1 = full baseRate (original behavior); <1 makes amplifiers creep
+   *  slower without fuel, so fuel matters more; 0 = fuel-only (mandatory) — but
+   *  that collapses the self-fueling cascade (the free base can't feed every
+   *  amplifier), so stay above ~0.05. Successor/Addition always get full baseRate
+   *  (the free base). The stable middle ground for "fuel must matter". */
+  amplifierBaseRateScale: number;
+  /** Diminishing returns on OVERPAYING fuel. A block of magnitude V (≥ grade)
+   *  contributes effective progress `grade^(1-p) · V^p`, where p = fuelOverpayExp:
+   *    p = 1  → effective = V (no diminishing — the original behavior).
+   *    p = 0.5→ effective = √(grade·V) (a 100× block buys ~10× → 10% efficient).
+   *    p = 0  → effective = grade (any block buys exactly one grade — max penalty).
+   *  So you're most efficient paying near the grade (the op's natural
+   *  denomination), and dumping one giant block wastes most of it. This is what
+   *  makes a STREAM of right-sized fuel (→ piping/automation) the optimal play. */
+  fuelOverpayExp: number;
+  /** Magnitude FLOOR for the fuel tax: ops whose output ≤ this are free (tax 0),
+   *  and above it the tax is `C·(magnitude^α − floor^α)` (continuous at the
+   *  floor). This is essential, not cosmetic: small fuel-grade production (the
+   *  auto-piped fuel trees that have no fuel feed of their own) must run FREE, or
+   *  the whole fuel supply deadlocks. So "you don't pay a fuel tax to make small
+   *  numbers — only to push the frontier past the floor." Set it above your fuel
+   *  producers' output. 0 = tax everything above magnitude 1 (only sensible if
+   *  every amplifier has a fuel feed). */
+  fuelTaxFloor: number;
 }
 
 export const DEFAULT_TUNING: TimeTuning = {
@@ -99,6 +154,18 @@ export const DEFAULT_TUNING: TimeTuning = {
   // multiplication wants ≥~6 and exponentiation ≥~30. (Sim-tuned later.)
   gradeExp: 0.5,
   gradeCoeff: 0.3,
+  // Default to the original raw-value law so existing sims/tests/regression are
+  // byte-identical until an experiment explicitly opts into 'digits'.
+  fuelLaw: 'magnitude',
+  fuelDigitExp: 2,
+  // Fuel tax OFF by default (coeff 0): no per-op fuel requirement, so the engine
+  // is byte-identical to before until an experiment dials it in.
+  fuelTaxCoeff: 0,
+  fuelTaxExp: 0.5,
+  fuelTaxFloor: 0,
+  // Off by default: amplifiers get full baseRate and fuel pays 1:1 (original).
+  amplifierBaseRateScale: 1,
+  fuelOverpayExp: 1,
 };
 
 const dZero = Decimal.dZero;
@@ -164,13 +231,41 @@ export function transitWork(
 }
 
 /**
- * Fuel content of a block = its VALUE (magnitude). Conserved under additive
- * decomposition (splitting a block conserves the sum), so there is no
- * "shatter-to-1s" exploit — decomposition is a *delivery* tool, not a
- * fuel-multiplier. The block is consumed (a real spend against Total Score).
+ * Fuel content of a block = the progress its burning buys, per the tuning's
+ * `fuelLaw`:
+ *
+ *   - 'magnitude' (default): its raw VALUE. Conserved under additive
+ *     decomposition (splitting conserves the sum) — no "shatter-to-1s" exploit;
+ *     decomposition is a *delivery* tool, not a fuel-multiplier. But because op
+ *     work is sub-exponential (digits^k) while value is exponential, a recycled
+ *     big block over-pays any op → fuel is effectively never scarce.
+ *
+ *   - 'digits': (digit-count)^fuelDigitExp. Sub-linear in value, so a big block
+ *     buys only bounded progress and you must run dedicated fuel production that
+ *     *scales with the climb*. Still conserved-ish at the small end (a value-1
+ *     block buys 1), and still monotonic, so grading/delivery logic is unchanged.
+ *
+ * Either way the block is consumed (a real spend against Total Score).
  */
-export function fuelValue(v: Value): Decimal {
+export function fuelValue(v: Value, t: TimeTuning = DEFAULT_TUNING): Decimal {
+  if (t.fuelLaw === 'digits') return magnitudeDigits(v).pow(t.fuelDigitExp);
   return valueMagnitude(v);
+}
+
+/**
+ * The fuel TAX for an amplifying op that produces a result of the given
+ * magnitude: `fuelTaxCoeff · magnitude^fuelTaxExp`, the amount of fuel-magnitude
+ * that MUST be burned for the op to complete (baseRate can't pay it). Zero when
+ * the tax is off (coeff ≤ 0) or the output is trivial (≤ 1, e.g. a successor's
+ * `1`). The engine applies this only to amplifiers (multiplication and up) —
+ * successor/addition are plumbing and never taxed.
+ */
+export function fuelTax(outputMagnitude: Decimal, t: TimeTuning = DEFAULT_TUNING): Decimal {
+  if (t.fuelTaxCoeff <= 0) return dZero;
+  const floor = new Decimal(Math.max(1, t.fuelTaxFloor));
+  if (outputMagnitude.lte(floor)) return dZero; // small production is free (fuel trees run)
+  const above = outputMagnitude.pow(t.fuelTaxExp).sub(floor.pow(t.fuelTaxExp));
+  return Decimal.max(dZero, above).mul(t.fuelTaxCoeff);
 }
 
 /**

@@ -30,6 +30,7 @@ import { valueMagnitude, valueOf, type Value } from '../../../core/value';
 import { pencilStroke } from '../pixi/pencil';
 import {
   createWorld,
+  resetWorld,
   placeCell,
   placePipe,
   removeCell,
@@ -42,6 +43,7 @@ import {
   addLoose,
   feedOperand,
   injectFuel,
+  depositToWarehouse,
   operandArity,
   buildFraction,
   opFraction,
@@ -52,12 +54,21 @@ import {
   type SimPipe,
   type CellKind,
 } from '../../../core/engine';
+import { DEFAULT_TUNING } from '../../../core/time';
+import { PRESETS } from './presets';
 import { createJuice, setJuice } from './physics';
 import { note } from './narrator';
 import { sndSnap, sndBurn, sndErase, sndMilestone, resumeAudio } from './audio';
 import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, type Tool } from './stores';
 
 // --- View constants --------------------------------------------------------
+
+// The live economy lever (sim-validated in sim/fuel-overpay.ts): amplifiers creep
+// at a REDUCED baseRate (so fuel matters, but never 0 — that collapses the fuel
+// cascade), and overpaying fuel has diminishing returns (effective ≈
+// grade^(1-p)·V^p), so you're most efficient paying near an op's grade rather
+// than dumping one giant block. Tune these two from playtest feel.
+const GAME_TUNING = { ...DEFAULT_TUNING, amplifierBaseRateScale: 0.5, fuelOverpayExp: 0.5 };
 
 const CELL_W = 100;
 const CELL_H = 76;
@@ -76,6 +87,7 @@ const GLYPH: Record<CellKind, string> = {
   pentation: '↑↑↑',
   mill: 'M',
   accelerator: '»',
+  warehouse: 'W',
 };
 
 // --- Per-entity visual caches ----------------------------------------------
@@ -99,11 +111,14 @@ interface CellVisual {
   prevBurn: number; // last frame's recentBurn — for whoosh rising-edge detection
   outlinePath: Pt[]; // stable wobble path for the outline (revealed as it builds)
   outlineCum: number[]; // cumulative arc length of outlinePath
+  intakeZero: Text | null; // successor's river-intake 0 (animated rising), else null
 }
 
 interface BlockVisual {
   root: Container; // interactive (drag); never transformed
   body: Container; // visual; punched/scaled by the juice layer
+  badge: Text; // `×N` stack-count, shown when count > 1
+  lastCount: number; // last rendered count — to detect a stack growing/shrinking
 }
 
 interface PipeVisual {
@@ -119,6 +134,10 @@ interface PipeVisual {
 
 export interface GameViewHandle {
   destroy(): void;
+  /** Dev menu: clear the canvas back to an empty world. */
+  reset(): void;
+  /** Dev menu: clear, then build a named factory snapshot (see presets.ts). */
+  loadPreset(key: string): void;
 }
 
 /** World-space position of a pipe endpoint (source output / dest operand|fuel). */
@@ -290,8 +309,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   // modest workspace, so the first cells you place land in clear view.
   restoreCamera({ x: app.screen.width / 2, y: app.screen.height * 0.42, scale: 1 });
 
-  // The model.
-  const world: World = createWorld();
+  // The model. Stacking on: identical un-piped outputs pile into one movable
+  // stack (a `×N` badge), instead of an invisible heap on the output port.
+  const world: World = createWorld(GAME_TUNING, { stacking: true });
   note('A river of zeros below — endless, and free. Everything is built from it.', 'intro');
 
   // Visual caches keyed by engine id.
@@ -442,28 +462,32 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     drag = null;
 
     if (target) {
-      const block = takeLooseById(world, id);
-      if (block) {
+      // Dragging picks up the WHOLE stack; dropping on a port consumes ONE block
+      // and the remainder stays as a stack at the drop point (drop again to feed
+      // more, or carry it off). Feels right for a pile of fuel/operands.
+      const stack = takeLooseById(world, id);
+      if (stack) {
+        // Dropping a pile onto a warehouse stockpiles the WHOLE stack (de-clutter).
+        const destCell = world.cells.get(target.cellId);
+        if (destCell && destCell.kind === 'warehouse') {
+          depositToWarehouse(world, target.cellId, stack.value, stack.count);
+          return;
+        }
+        let consumed = true;
         if (target.fuel) {
           // The whoosh fires off the burn rising-edge in updateCellVisual (so
           // hand-drop and pipe-fed fuel feel identical, and a fuel block bounced
           // off an idle cell doesn't falsely ignite).
-          injectFuel(world, target.cellId, block.value);
-        } else if (!feedOperand(world, target.cellId, target.port, block.value)) {
-          // Port was occupied / cell busy — drop it back where it landed.
-          // (takeLooseById already removed it; re-add at the drop point.)
-          moveLooseBack(block.value, p.x, p.y);
+          injectFuel(world, target.cellId, stack.value);
+        } else if (!feedOperand(world, target.cellId, target.port, stack.value)) {
+          consumed = false; // port occupied / cell busy — nothing taken
         }
+        const remaining = consumed ? stack.count - 1 : stack.count;
+        if (remaining > 0) addLoose(world, stack.value, p.x, p.y, remaining);
       }
     } else {
       moveLoose(world, id, p.x, p.y);
     }
-  }
-
-  function moveLooseBack(value: Value, x: number, y: number): void {
-    // Re-materialise a block the engine handed us but we couldn't place
-    // (e.g. the target port was occupied) at the drop point.
-    addLoose(world, value, x, y);
   }
 
   /** Find an operand/fuel port near a canvas point (for drop resolution). */
@@ -546,12 +570,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   function syncBlocks(): void {
     for (const b of world.pool) {
       if (!blockVisuals.has(b.id)) {
-        const vis = makeBlockVisual(b.id, b.value);
+        const vis = makeBlockVisual(b.id, b.value, b.count);
         blockVisuals.set(b.id, vis);
         vis.root.position.set(b.x, b.y);
         juice.punch(vis.body); // a block just written/spilled into existence — pop it
       }
       const vis = blockVisuals.get(b.id)!;
+      // A stack that grew (more output landed in the pile) re-badges and pops, so
+      // you SEE the count tick up; a shrink just re-badges.
+      if (b.count !== vis.lastCount) {
+        if (b.count > vis.lastCount) juice.punch(vis.body, 0.12);
+        updateBlockBadge(vis, b.count);
+      }
       // Don't fight the drag: the dragged block follows the cursor.
       if (!drag || drag.id !== b.id) vis.root.position.set(b.x, b.y);
     }
@@ -726,27 +756,54 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // hit-fill + body.
     const body = new Container();
 
-    // Accelerator: a faint dashed coverage halo (drawn once, under the cell).
+    // A readout line below the cell — accelerator boost or warehouse contents.
     let halo: Graphics | null = null;
     let info: Text | null = null;
-    if (cell.kind === 'accelerator') {
-      halo = new Graphics();
-      halo.circle(0, 0, ACCELERATOR_RADIUS).stroke({ color: GRAPHITE, width: 1, alpha: 0.18 });
-      info = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 16, fill: GRAPHITE } });
+    if (cell.kind === 'accelerator' || cell.kind === 'warehouse') {
+      info = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 14, fill: GRAPHITE } });
       info.anchor.set(0.5);
       info.position.set(0, CELL_H / 2 + 16);
-      body.addChildAt(halo, 0);
+      if (cell.kind === 'accelerator') {
+        halo = new Graphics();
+        halo.circle(0, 0, ACCELERATOR_RADIUS).stroke({ color: GRAPHITE, width: 1, alpha: 0.18 });
+        body.addChildAt(halo, 0);
+      }
+    }
+
+    // Successor: a downward "intake" that draws zeros up from the river below, so
+    // it reads thematically as the source of the zeros. A pencil spout + a faint
+    // dashed channel toward the (screen-fixed) river, plus a 0 that rises into it.
+    let intakeZero: Text | null = null;
+    if (cell.kind === 'successor') {
+      const intake = new Graphics();
+      const top = CELL_H / 2;
+      intake.moveTo(-11, top).lineTo(-5, top + 15);
+      intake.moveTo(11, top).lineTo(5, top + 15);
+      intake.stroke({ color: GRAPHITE, width: 1.4, alpha: 0.5 });
+      for (let y = top + 22; y < top + 78; y += 11) intake.moveTo(0, y).lineTo(0, y + 5);
+      intake.stroke({ color: GRAPHITE, width: 1, alpha: 0.22 });
+      intakeZero = new Text({ text: '0', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 13, fill: GRAPHITE } });
+      intakeZero.anchor.set(0.5);
+      body.addChild(intake, intakeZero);
     }
 
     body.addChild(ports, idleHint, outline, glyph, meter);
     if (info) body.addChild(info);
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
     const frac = buildFraction(cell);
+
+    // Successor river-intake: a 0 rises from the river (below) up into the spout,
+    // fading in and out. Staggered by cell id so a farm of successors shimmers.
+    if (vis.intakeZero) {
+      const t = (performance.now() / 1500 + cell.id * 0.13) % 1;
+      vis.intakeZero.position.set(0, CELL_H / 2 + 46 - t * 36);
+      vis.intakeZero.alpha = 0.45 * Math.sin(Math.PI * t);
+    }
 
     if (!cell.built) {
       // Sketch-in: trace the stable outline path up to build progress — a real
@@ -812,6 +869,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.info.text = boost > 1.05 ? `×${boost.toFixed(1)}` : 'idle';
       vis.halo.alpha = 0.12 + 0.012 * Math.min(20, boost);
       return; // accelerators have no op ghost/meter
+    }
+
+    // Warehouse: show the stockpile (count · biggest grade). No op ghost/meter.
+    if (cell.kind === 'warehouse' && vis.info) {
+      let n = 0;
+      let biggest: Value | null = null;
+      for (const e of cell.store) {
+        n += e.count;
+        if (!biggest || valueMagnitude(e.value).gt(valueMagnitude(biggest))) biggest = e.value;
+      }
+      vis.info.text = n === 0 ? 'empty' : `${n} · ≤${formatScore(valueMagnitude(biggest!))}`;
+      return;
     }
 
     // Output result: the numeral is WRITTEN left-to-right over the op (a reveal
@@ -904,7 +973,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
   }
 
-  function makeBlockVisual(id: number, value: Value): BlockVisual {
+  function makeBlockVisual(id: number, value: Value, count: number): BlockVisual {
     const root = new Container();
     root.zIndex = 5;
     root.eventMode = 'static';
@@ -935,6 +1004,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       color: GRAPHITE,
     });
     body.addChild(label);
+
+    // `×N` stack count, lower-right corner just outside the block (clear of the
+    // centred numeral). Penciled, like a margin tally; hidden when count ≤ 1.
+    const badge = new Text({
+      text: '',
+      style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 16, fontWeight: '600', fill: GRAPHITE },
+    });
+    badge.anchor.set(1, 1);
+    badge.position.set(BLOCK_R + 6, BLOCK_R + 11);
+    body.addChild(badge);
     root.addChild(body);
 
     root.on('pointerdown', (e) => {
@@ -944,7 +1023,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     });
 
     canvasLayer.addChild(root);
-    return { root, body };
+    const vis: BlockVisual = { root, body, badge, lastCount: -1 };
+    updateBlockBadge(vis, count);
+    return vis;
+  }
+
+  /** Show/hide the `×N` stack badge for a block's current count. */
+  function updateBlockBadge(vis: BlockVisual, count: number): void {
+    vis.lastCount = count;
+    vis.badge.text = count > 1 ? `×${count}` : '';
+    vis.badge.visible = count > 1;
   }
 
   // --- Ticker --------------------------------------------------------------
@@ -974,7 +1062,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         return [...list, tool];
       });
     };
-    if (kind === 'addition') unlock('multiplication', 'Multiplication');
+    if (kind === 'addition') {
+      unlock('multiplication', 'Multiplication');
+      unlock('warehouse', 'a Warehouse (stockpile spare numbers)');
+    }
     if (kind === 'multiplication') {
       unlock('exponentiation', 'Exponentiation');
       unlock('mill', 'the Mill');
@@ -1056,6 +1147,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         const c = world.cells.get(id);
         return c ? { built: c.built, build: buildFraction(c), op: opFraction(c), kind: c.kind } : null;
       },
+      reset: () => reset(),
+      loadPreset: (key: string) => loadPreset(key),
+      presets: () => PRESETS.map((p) => p.key),
     };
   }
 
@@ -1068,7 +1162,56 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   };
   window.addEventListener('resize', onResize);
 
+  // --- Dev menu: reset + factory presets -----------------------------------
+
+  /** Frame the camera so every cell in the world fits on screen (presets are
+   *  wide). Zooms out as needed, clamped to the camera's min scale. */
+  function frameWorld(): void {
+    const cells = [...world.cells.values()];
+    if (cells.length === 0) return;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const c of cells) {
+      minX = Math.min(minX, c.x); maxX = Math.max(maxX, c.x);
+      minY = Math.min(minY, c.y); maxY = Math.max(maxY, c.y);
+    }
+    const pad = 220;
+    const w = maxX - minX + pad * 2;
+    const h = maxY - minY + pad * 2;
+    const scale = Math.min(1, app.screen.width / w, app.screen.height / h);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    restoreCamera({ x: app.screen.width / 2 - cx * scale, y: app.screen.height / 2 - cy * scale, scale });
+  }
+
+  /** Clear the canvas to an empty world; visuals tear down on the next sync. */
+  function reset(): void {
+    resetWorld(world);
+    drag = null;
+    cellDrag = null;
+    pipeSource = null;
+    pipeGhost.clear();
+    reachedMilestones.clear();
+    elapsedTicks = 0;
+    acc = 0;
+    toolStore.set(null);
+    unlockedTools.set(['successor', 'addition', 'pipe']);
+    restoreCamera({ x: app.screen.width / 2, y: app.screen.height * 0.42, scale: 1 });
+  }
+
+  /** Clear, then build a named factory snapshot and frame it. */
+  function loadPreset(key: string): void {
+    reset();
+    const preset = PRESETS.find((p) => p.key === key);
+    if (!preset) return;
+    preset.build(world);
+    // A loaded factory: unlock the whole toolbar so you can extend it freely.
+    unlockedTools.set(['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'pipe']);
+    note(`Loaded snapshot: ${preset.label}.`);
+    frameWorld();
+  }
+
   return {
+    reset,
+    loadPreset,
     destroy() {
       window.removeEventListener('resize', onResize);
       window.removeEventListener('keydown', onKey);
@@ -1166,7 +1309,10 @@ function drawPortMarkers(g: Graphics, kind: CellKind): void {
     g.circle(op.x, op.y, PORT_R).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
   }
   // Fuel socket — a small open square at the bottom (distinct from round operands).
-  g.rect(L.fuel.x - 9, L.fuel.y - 9, 18, 18).stroke({ color: GRAPHITE, width: 1.1, alpha: 0.5 });
+  // Warehouses have no fuel port (their one input is the deposit operand).
+  if (kind !== 'warehouse') {
+    g.rect(L.fuel.x - 9, L.fuel.y - 9, 18, 18).stroke({ color: GRAPHITE, width: 1.1, alpha: 0.5 });
+  }
   // Output nub (not for the Mill's many-piece output — still useful as a hint).
   g.circle(L.output.x, L.output.y, 5).fill({ color: GRAPHITE, alpha: 0.5 });
 }

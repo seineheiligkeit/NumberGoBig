@@ -40,7 +40,11 @@ import Decimal from 'break_eternity.js';
 
 const mag = (v: Value) => valueMagnitude(v);
 
-/** Pull a loose block matching `ok`; biggest (default) or smallest. Removes it. */
+/** Pull ONE loose block matching `ok`; biggest (default) or smallest. With
+ *  stacking on (the live game), the matching pool entry may be a *stack* — we
+ *  PEEL ONE block off it (decrement count) rather than splice the whole pile,
+ *  which would throw away the rest. With stacking off, count is 1 and this is the
+ *  original splice. So one action still moves one block, exactly as for a human. */
 function take(w: World, ok: (m: Decimal) => boolean, biggest = true): Value | null {
   let bi = -1;
   for (let i = 0; i < w.pool.length; i++) {
@@ -48,9 +52,12 @@ function take(w: World, ok: (m: Decimal) => boolean, biggest = true): Value | nu
     if (!ok(m)) continue;
     if (bi < 0 || (biggest ? m.gt(mag(w.pool[bi].value)) : m.lt(mag(w.pool[bi].value)))) bi = i;
   }
-  return bi < 0 ? null : w.pool.splice(bi, 1)[0].value;
+  if (bi < 0) return null;
+  const b = w.pool[bi];
+  if ((b.count ?? 1) > 1) { b.count -= 1; return b.value; }
+  return w.pool.splice(bi, 1)[0].value;
 }
-const pushBack = (w: World, v: Value | null) => { if (v) w.pool.push({ id: w.nextId++, value: v, x: 0, y: 0 }); };
+const pushBack = (w: World, v: Value | null) => { if (v) w.pool.push({ id: w.nextId++, value: v, x: 0, y: 0, count: 1 }); };
 
 // Bounds that keep the agent honest (a human can't place unlimited cells: build
 // cost grows per kind, so beyond a handful of trees it isn't worth it).
@@ -59,12 +66,15 @@ const POOL_HARD_CAP = 4000; // safety only; with bounded trees it rarely binds
 
 interface Counts { place: number; pipe: number; feed: number; fuel: number }
 
-function runSession(rate: number, hours: number, trace: boolean): {
+function runSession(rate: number, hours: number, trace: boolean, stacking: boolean): {
   frontier: number; score: number; cells: number; built: number; pipes: number;
-  trees: number; actions: number; counts: Counts;
+  trees: number; actions: number; counts: Counts; poolEntities: number;
 } {
   const ticks = Math.round(hours * 3600);
-  const world = createWorld(DEFAULT_TUNING);
+  // Mirror the live game: stacking on means un-piped output piles into one
+  // movable stack (so the agent peels fuel off a pile, and nothing is discarded
+  // by the pool cap). Off reproduces the original per-block baseline.
+  const world = createWorld(DEFAULT_TUNING, { stacking });
   const counts: Counts = { place: 0, pipe: 0, feed: 0, fuel: 0 };
 
   let budget = 0;
@@ -200,36 +210,40 @@ function runSession(rate: number, hours: number, trace: boolean): {
     score: totalScore(world).toNumber(),
     cells: world.cells.size, built, pipes: world.pipes.size, trees: fuelTrees,
     actions: counts.place + counts.pipe + counts.feed + counts.fuel, counts,
+    poolEntities: world.pool.length,
   };
 }
 
 function main(): void {
-  let rate = 0, hours = 4, trace = false;
+  let rate = 0, hours = 4, trace = false, stacking = true;
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--rate') rate = Number(a[++i]);
     else if (a[i] === '--hours') hours = Number(a[++i]);
     else if (a[i] === '--trace') trace = true;
+    else if (a[i] === '--no-stacking') stacking = false;
   }
   const fmt = (x: number) => (!Number.isFinite(x) ? '∞' : Math.abs(x) >= 1e6 ? x.toExponential(2) : Math.round(x).toLocaleString('en-US'));
 
   console.log(`Real-play baseline — a competent player from an EMPTY canvas.`);
-  console.log(`No instant-build, no pre-wired farm, no free block-merge. ${hours}h sessions.\n`);
+  console.log(`No instant-build, no pre-wired farm, no free block-merge. ${hours}h sessions.`);
+  console.log(`stacking: ${stacking ? 'ON (mirrors the live game)' : 'OFF (legacy per-block pool)'}\n`);
 
   // A realistic spread of human action rates: from "idle, a few taps a minute"
   // up to "engaged, ~1 action a second". A little speed reward should show.
   const rates = rate > 0 ? [rate] : [1 / 60, 1 / 30, 1 / 10, 1 / 3, 1];
   const label = (r: number) => (r >= 1 ? `${r}/s` : `1 / ${Math.round(1 / r)}s`);
 
-  console.log('   action rate  |   FRONTIER    |    score      | cells(built) | trees | actions');
-  console.log('  -------------+---------------+---------------+--------------+-------+--------');
+  console.log('   action rate  |   FRONTIER    |    score      | cells(built) | trees | actions | pool');
+  console.log('  -------------+---------------+---------------+--------------+-------+---------+------');
   for (const r of rates) {
-    const res = runSession(r, hours, trace && rates.length === 1);
-    console.log(`  ${label(r).padStart(12)} | ${fmt(res.frontier).padStart(13)} | ${fmt(res.score).padStart(13)} | ${String(res.cells).padStart(4)}(${String(res.built).padStart(3)}) | ${String(res.trees).padStart(5)} | ${res.actions}`);
+    const res = runSession(r, hours, trace && rates.length === 1, stacking);
+    console.log(`  ${label(r).padStart(12)} | ${fmt(res.frontier).padStart(13)} | ${fmt(res.score).padStart(13)} | ${String(res.cells).padStart(4)}(${String(res.built).padStart(3)}) | ${String(res.trees).padStart(5)} | ${String(res.actions).padStart(7)} | ${res.poolEntities}`);
   }
   console.log(`\n  FRONTIER = biggest single number built. A faster player reaches higher`);
   console.log(`  (more fuel-actions per second → the digits³ frontier op rushes faster),`);
   console.log(`  but idling never stalls: the river + fuel trees keep score climbing.`);
+  console.log(`  pool = loose-block ENTITIES at session end (stacks when stacking is on).`);
 }
 
 main();

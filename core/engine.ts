@@ -26,12 +26,14 @@ import Decimal from 'break_eternity.js';
 import { operate } from './cell-types.ts';
 import {
   VALUE_ZERO,
+  valueKey,
   valueMagnitude,
   type Value,
 } from './value.ts';
 import {
   DEFAULT_TUNING,
   buildWork,
+  fuelTax,
   fuelValue,
   magnitudeDigits,
   minFuelDenomination,
@@ -40,7 +42,7 @@ import {
   type TimeTuning,
 } from './time.ts';
 
-/** The constructive operators + the two reprocessing objects. */
+/** The constructive operators + the reprocessing/storage objects. */
 export type CellKind =
   | 'successor'
   | 'addition'
@@ -49,20 +51,23 @@ export type CellKind =
   | 'tetration'
   | 'pentation'
   | 'mill' // additive splitter — liquefies a block into a graded fuel stream
-  | 'accelerator'; // beacon — burns fuel to boost surrounding pipe throughput
+  | 'accelerator' // beacon — burns fuel to boost surrounding pipe throughput
+  | 'warehouse'; // any-block store — pipe blocks in to stockpile, pipe out later for fuel
 
+/** Non-operator kinds (don't go through core `operate()`). */
+type NonOperator = 'mill' | 'accelerator' | 'warehouse';
 /** Operator kinds that go through core `operate()` (== the `CellType` union). */
-type OperatorKind = Exclude<CellKind, 'mill' | 'accelerator'>;
+type OperatorKind = Exclude<CellKind, NonOperator>;
 
 /** True for the constructive operator cells (those that go through operate()). */
 function isOperator(kind: CellKind): kind is OperatorKind {
-  return kind !== 'mill' && kind !== 'accelerator';
+  return kind !== 'mill' && kind !== 'accelerator' && kind !== 'warehouse';
 }
 
 /** Operand ports a kind exposes (Successor taps the free river — 0 operands). */
 export function operandArity(kind: CellKind): number {
   if (kind === 'successor' || kind === 'accelerator') return 0;
-  if (kind === 'mill') return 1;
+  if (kind === 'mill' || kind === 'warehouse') return 1; // one deposit/input port
   return 2;
 }
 
@@ -77,6 +82,15 @@ const ACCEL_GAIN = 2.5; // boost = 1 + GAIN·log10(charge+1), capped
 const ACCEL_MAX_BOOST = 24;
 const ACCEL_DECAY = 0.996; // charge drained per tick (slow fade)
 
+/** Identical loose blocks within this radius of a spawn/drop point merge into a
+ *  single stack (when the world has stacking on — the live game). Keeps an
+ *  un-piped producer's output one movable pile, and bounds the pool. */
+const STACK_MERGE_RADIUS = 40;
+/** How far right of a cell its un-piped output spills. Must clear the view's
+ *  output nub (the pipe source, at CELL_W/2 = 50px) plus a block-radius, so the
+ *  port stays clickable/wireable and the result isn't hidden behind the block. */
+const OUTPUT_SPILL_OFFSET = 100;
+
 /** An operation in progress inside a cell. */
 interface ActiveOp {
   /** Inputs consumed when the op started — held (counted toward score) until
@@ -88,6 +102,27 @@ interface ActiveOp {
   progress: Decimal;
   /** Minimum fuel denomination this op accepts (fuel grade). */
   grade: Decimal;
+  /** Fuel-magnitude that MUST be burned for this op to complete (the fuel tax).
+   *  baseRate advances `progress` (time) but never this; only burned fuel does.
+   *  0 when the tax is off or the op isn't an amplifier. */
+  fuelRequired: Decimal;
+  /** Fuel-magnitude burned into this op so far (toward `fuelRequired`). */
+  fuelPaid: Decimal;
+  /** True for amplifier ops (multiplication and up). When tuning.amplifierFuelOnly
+   *  is set, these accrue NO baseRate — fuel is mandatory. */
+  amplifier: boolean;
+}
+
+/** An op is done only when its TIME work is met AND its fuel tax is paid. With
+ *  the tax off (fuelRequired = 0) this is just `progress ≥ work`, as before. */
+function opSatisfied(op: ActiveOp): boolean {
+  return op.progress.gte(op.work) && op.fuelPaid.gte(op.fuelRequired);
+}
+
+/** Read helper for the agent/view: is this cell's op fully satisfied (time +
+ *  tax)? False when idle. */
+export function opComplete(cell: SimCell): boolean {
+  return cell.op !== null && opSatisfied(cell.op);
 }
 
 export interface SimCell {
@@ -105,6 +140,9 @@ export interface SimCell {
   op: ActiveOp | null;
   /** Accelerator only: stored fuel value, providing the boost; decays per tick. */
   charge: Decimal;
+  /** Warehouse only: the stockpile (stacked by value). Blocks piped in are added;
+   *  blocks piped out (largest-first) are withdrawn. Counts toward Total Score. */
+  store: { value: Value; count: number }[];
   /** Round-robin cursor over this cell's attached output pipes (fair fan-out). */
   emitCursor: number;
   /** Back-pressure: true when the last emit had output pipes but all were full
@@ -141,6 +179,12 @@ export interface LooseBlock {
   value: Value;
   x: number;
   y: number;
+  /** A stack of `count` identical blocks sharing one position. Spawns and drops
+   *  merge into a nearby same-value stack (when the world has stacking on), so an
+   *  un-piped producer makes one movable pile instead of an invisible heap — and
+   *  the pool can't explode into thousands of entities. Economically a no-op: a
+   *  stack of N is exactly N blocks for Total Score and pool counts. */
+  count: number;
 }
 
 export interface World {
@@ -150,15 +194,52 @@ export interface World {
   /** Loose blocks on the canvas (outputs with nowhere to go). */
   pool: LooseBlock[];
   nextId: number;
+  /** When true, spawns/drops of identical co-located blocks merge into one
+   *  stack (the live game — see LooseBlock.count). Off by default so the balance
+   *  sims keep managing the pool as individual blocks exactly as before. */
+  stacking: boolean;
 }
 
-export function createWorld(tuning: TimeTuning = DEFAULT_TUNING): World {
-  return { tuning, cells: new Map(), pipes: new Map(), pool: [], nextId: 1 };
+export function createWorld(
+  tuning: TimeTuning = DEFAULT_TUNING,
+  opts: { stacking?: boolean } = {},
+): World {
+  return { tuning, cells: new Map(), pipes: new Map(), pool: [], nextId: 1, stacking: !!opts.stacking };
 }
 
-/** Materialise a loose block at a position. Internal + setup helper. */
-function pushLoose(world: World, value: Value, x: number, y: number): LooseBlock {
-  const block: LooseBlock = { id: world.nextId++, value, x, y };
+/** Empty a world in place (keeping its tuning + stacking flag). The view holds
+ *  the `World` by reference, so a dev "reset"/preset-load clears it here and lets
+ *  the next render sync tear down the now-orphaned visuals. */
+export function resetWorld(world: World): void {
+  world.cells.clear();
+  world.pipes.clear();
+  world.pool.length = 0;
+  world.nextId = 1;
+}
+
+/** Materialise `count` loose blocks at a position. When the world has stacking
+ *  on, merge into the nearest same-value stack within STACK_MERGE_RADIUS instead
+ *  of adding a new entity (so producers pile into one movable stack). Internal +
+ *  setup helper. */
+function pushLoose(world: World, value: Value, x: number, y: number, count = 1): LooseBlock {
+  if (world.stacking) {
+    const key = valueKey(value);
+    let best: LooseBlock | null = null;
+    let bestD = STACK_MERGE_RADIUS;
+    for (const b of world.pool) {
+      if (valueKey(b.value) !== key) continue;
+      const d = Math.hypot(b.x - x, b.y - y);
+      if (d <= bestD) {
+        bestD = d;
+        best = b;
+      }
+    }
+    if (best) {
+      best.count += count;
+      return best;
+    }
+  }
+  const block: LooseBlock = { id: world.nextId++, value, x, y, count };
   world.pool.push(block);
   return block;
 }
@@ -168,27 +249,67 @@ function pushLoose(world: World, value: Value, x: number, y: number): LooseBlock
 // ---------------------------------------------------------------------------
 
 /** Place a cell; it begins construction (inert until built). Build work scales
- *  with how many of that kind already exist (the RTS repurchase, in time). */
-export function placeCell(world: World, kind: CellKind, x = 0, y = 0): number {
+ *  with how many of that kind already exist (the RTS repurchase, in time).
+ *  `opts.built` places it already finished (no construction) — used by dev/test
+ *  factory presets that snapshot a stage rather than build it in real time. */
+export function placeCell(
+  world: World,
+  kind: CellKind,
+  x = 0,
+  y = 0,
+  opts: { built?: boolean } = {},
+): number {
   let owned = 0;
   for (const c of world.cells.values()) if (c.kind === kind) owned++;
   const id = world.nextId++;
+  const work = buildWork(owned, world.tuning);
   world.cells.set(id, {
     id,
     kind,
     x,
     y,
-    built: false,
-    buildProgress: Decimal.dZero,
-    buildWork: buildWork(owned, world.tuning),
+    built: !!opts.built,
+    buildProgress: opts.built ? work : Decimal.dZero,
+    buildWork: work,
     operands: new Array(operandArity(kind)).fill(null),
     op: null,
     charge: Decimal.dZero,
+    store: [],
     emitCursor: 0,
     outputStalled: false,
     recentBurn: 0,
   });
   return id;
+}
+
+/** Add `count` of a block to a warehouse's stockpile (merged by value). */
+function depositToStore(cell: SimCell, value: Value, count = 1): void {
+  const key = valueKey(value);
+  const e = cell.store.find((s) => valueKey(s.value) === key);
+  if (e) e.count += count;
+  else cell.store.push({ value, count });
+}
+
+/** Manually deposit block(s) into a warehouse (the view's drag-drop path). */
+export function depositToWarehouse(world: World, id: number, value: Value, count = 1): boolean {
+  const c = world.cells.get(id);
+  if (!c || c.kind !== 'warehouse' || !c.built) return false;
+  depositToStore(c, value, count);
+  return true;
+}
+
+/** Withdraw the largest-magnitude block from a warehouse's stockpile (or null). */
+function withdrawLargest(cell: SimCell): Value | null {
+  if (cell.store.length === 0) return null;
+  let bi = 0;
+  for (let i = 1; i < cell.store.length; i++) {
+    if (valueMagnitude(cell.store[i].value).gt(valueMagnitude(cell.store[bi].value))) bi = i;
+  }
+  const e = cell.store[bi];
+  const v = e.value;
+  if (e.count > 1) e.count -= 1;
+  else cell.store.splice(bi, 1);
+  return v;
 }
 
 /** Connect a source cell's output to a destination operand port (or fuel
@@ -235,6 +356,7 @@ export function removeCell(world: World, id: number): void {
   if (!cell) return;
   for (const o of cell.operands) if (o) pushLoose(world, o, cell.x, cell.y);
   if (cell.op) for (const h of cell.op.heldInputs) pushLoose(world, h, cell.x, cell.y);
+  for (const s of cell.store) pushLoose(world, s.value, cell.x, cell.y, s.count); // warehouse → pool
   for (const [pid, p] of world.pipes) {
     if (p.fromCell === id || p.toCell === id) removePipe(world, pid);
   }
@@ -263,9 +385,10 @@ export function injectFuel(world: World, cellId: number, value: Value): void {
   applyFuel(world, cell, value);
 }
 
-/** Drop a loose block onto the canvas (setup / manual play). Returns its id. */
-export function addLoose(world: World, value: Value, x = 0, y = 0): number {
-  return pushLoose(world, value, x, y).id;
+/** Drop loose block(s) onto the canvas (setup / manual play). With stacking on,
+ *  merges into a nearby same-value stack. Returns the resulting stack's id. */
+export function addLoose(world: World, value: Value, x = 0, y = 0, count = 1): number {
+  return pushLoose(world, value, x, y, count).id;
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +458,21 @@ function tickOperations(world: World, base: number): void {
     if (!cell.built) continue;
     if (cell.kind === 'accelerator') continue; // handled in tickAccelerators
 
+    // Warehouse: no operation — withdraw largest-first into each empty output
+    // pipe (back-pressure holds the rest in the store until the dest accepts).
+    if (cell.kind === 'warehouse') {
+      if (cell.store.length > 0) {
+        for (const pipe of world.pipes.values()) {
+          if (pipe.fromCell !== cell.id || pipe.inFlight !== null) continue;
+          const blk = withdrawLargest(cell);
+          if (!blk) break;
+          const dist = pipeDistance(world, pipe);
+          pipe.inFlight = { value: blk, work: transitWork(blk, dist, world.tuning), progress: Decimal.dZero };
+        }
+      }
+      continue;
+    }
+
     // Start an op if idle and ready.
     if (cell.op === null) {
       if (cell.kind === 'successor') {
@@ -347,10 +485,13 @@ function tickOperations(world: World, base: number): void {
       }
     }
 
-    // Advance an active op.
+    // Advance an active op. baseRate pays down TIME (work); amplifier ops get it
+    // scaled by amplifierBaseRateScale (so fuel matters more), non-amplifiers get
+    // it in full (the free base). baseRate never pays the fuel tax.
     if (cell.op !== null) {
-      cell.op.progress = cell.op.progress.add(base);
-      if (cell.op.progress.gte(cell.op.work)) {
+      const opBase = cell.op.amplifier ? base * world.tuning.amplifierBaseRateScale : base;
+      if (opBase > 0) cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(opBase));
+      if (opSatisfied(cell.op)) {
         for (const e of cell.op.emits) emit(world, cell, e.portIndex, e.value);
         cell.op = null;
       }
@@ -391,12 +532,29 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
       : emits.length
         ? emits.reduce((mx, e) => Decimal.max(mx, operationWork(e.value, cell.kind, world.tuning)), Decimal.dZero)
         : new Decimal(world.tuning.opWorkFloor);
+  // AMPLIFIERS (multiplication and up) are the cells that cost fuel — successor/
+  // addition are plumbing, the mill is reprocessing. They pay the optional tax and
+  // (when amplifierFuelOnly) forgo baseRate.
+  const amplifier =
+    cell.kind === 'multiplication' ||
+    cell.kind === 'exponentiation' ||
+    cell.kind === 'tetration' ||
+    cell.kind === 'pentation';
+  let fuelRequired = Decimal.dZero;
+  if (amplifier && emits.length) {
+    let maxMag = Decimal.dZero;
+    for (const e of emits) maxMag = Decimal.max(maxMag, valueMagnitude(e.value));
+    fuelRequired = fuelTax(maxMag, world.tuning);
+  }
   cell.op = {
     heldInputs: inputs,
     emits,
     work,
     progress: Decimal.dZero,
     grade: minFuelDenomination(work, world.tuning),
+    fuelRequired,
+    fuelPaid: Decimal.dZero,
+    amplifier,
   };
 }
 
@@ -427,7 +585,9 @@ function emit(world: World, cell: SimCell, port: number, value: Value): void {
   } else {
     cell.outputStalled = false; // terminal cell: loose output is by design
   }
-  pushLoose(world, value, cell.x + 60, cell.y);
+  // Spill well clear of the output nub so the port stays wireable and the result
+  // isn't hidden behind the block; with stacking on, repeated spills pile here.
+  pushLoose(world, value, cell.x + OUTPUT_SPILL_OFFSET, cell.y);
 }
 
 function tickPipes(world: World, base: number): void {
@@ -447,6 +607,12 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
   const dest = world.cells.get(pipe.toCell);
   if (!dest) {
     pushLoose(world, value, 0, 0);
+    return;
+  }
+  // Any pipe INTO a warehouse is a deposit — stockpile it (no operand staging).
+  if (dest.kind === 'warehouse') {
+    depositToStore(dest, value);
+    pipe.stalled = false;
     return;
   }
   if (pipe.fuel) {
@@ -474,7 +640,7 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
  *  - An idle cell returns the block loose (nothing to accelerate).
  */
 function applyFuel(world: World, cell: SimCell, value: Value): void {
-  const fv = fuelValue(value);
+  const fv = fuelValue(value, world.tuning);
   // An accelerator stores fuel as charge — including a whole big number dropped
   // in as a "power cell" (its huge value = a huge, long-fading boost).
   if (cell.kind === 'accelerator') {
@@ -492,7 +658,15 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
   }
   if (cell.op !== null) {
     if (fv.gte(cell.op.grade)) {
-      cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(fv));
+      // Diminishing returns on overpay: a block contributes `grade^(1-p)·V^p`
+      // progress (p = fuelOverpayExp). p=1 → V (no penalty); p<1 → big blocks buy
+      // proportionally less, so paying near the grade is most efficient. The block
+      // is still consumed at its FULL magnitude, so overpay is real waste.
+      const p = world.tuning.fuelOverpayExp;
+      const effective = p >= 1 ? fv : cell.op.grade.pow(1 - p).mul(fv.pow(p));
+      cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(effective));
+      // The same burn pays the fuel tax (a magnitude quantity), capped at need.
+      cell.op.fuelPaid = Decimal.min(cell.op.fuelRequired, cell.op.fuelPaid.add(fv));
       cell.recentBurn = 1;
     } else {
       // Too small a denomination for this op — refused, lands loose.
@@ -517,10 +691,11 @@ function pipeDistance(world: World, pipe: SimPipe): number {
 /** Total Score: the magnitude of every block you currently possess. */
 export function totalScore(world: World): Decimal {
   let sum = Decimal.dZero;
-  for (const b of world.pool) sum = sum.add(valueMagnitude(b.value));
+  for (const b of world.pool) sum = sum.add(valueMagnitude(b.value).mul(b.count ?? 1));
   for (const cell of world.cells.values()) {
     for (const o of cell.operands) if (o) sum = sum.add(valueMagnitude(o));
     if (cell.op) for (const h of cell.op.heldInputs) sum = sum.add(valueMagnitude(h));
+    for (const s of cell.store) sum = sum.add(valueMagnitude(s.value).mul(s.count)); // warehoused
   }
   for (const pipe of world.pipes.values()) {
     if (pipe.inFlight) sum = sum.add(valueMagnitude(pipe.inFlight.value));
@@ -528,11 +703,12 @@ export function totalScore(world: World): Decimal {
   return sum;
 }
 
-/** Count loose-pool blocks whose magnitude equals `target` (test convenience). */
+/** Count loose-pool blocks whose magnitude equals `target` (test convenience).
+ *  Sums stack counts, so a merged stack reports the blocks it represents. */
 export function poolCountOf(world: World, target: number): number {
   const t = new Decimal(target);
   let count = 0;
-  for (const b of world.pool) if (valueMagnitude(b.value).eq(t)) count++;
+  for (const b of world.pool) if (valueMagnitude(b.value).eq(t)) count += b.count ?? 1;
   return count;
 }
 
@@ -552,12 +728,24 @@ export function takeLooseById(world: World, id: number): LooseBlock | null {
   return world.pool.splice(idx, 1)[0];
 }
 
-/** Reposition a loose block (the view dragging it around the canvas). */
+/** Reposition a loose stack (the view dragging it around the canvas). With
+ *  stacking on, if it lands near another same-value stack the two merge
+ *  (drop-to-stack comfort) and this stack is removed. */
 export function moveLoose(world: World, id: number, x: number, y: number): void {
   const b = world.pool.find((b) => b.id === id);
-  if (b) {
-    b.x = x;
-    b.y = y;
+  if (!b) return;
+  b.x = x;
+  b.y = y;
+  if (!world.stacking) return;
+  const key = valueKey(b.value);
+  for (const other of world.pool) {
+    if (other === b || valueKey(other.value) !== key) continue;
+    if (Math.hypot(other.x - x, other.y - y) <= STACK_MERGE_RADIUS) {
+      other.count += b.count;
+      const idx = world.pool.indexOf(b);
+      if (idx >= 0) world.pool.splice(idx, 1);
+      return;
+    }
   }
 }
 
