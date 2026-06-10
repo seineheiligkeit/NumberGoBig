@@ -29,7 +29,7 @@ export const noteStore = writable<string | null>(null);
 export const frontierStore = writable('0');
 
 /** Live factory stats for the dev monitor. */
-export const statsStore = writable({ cells: 0, pipes: 0, loose: 0, elapsed: 0, working: 0 });
+export const statsStore = writable({ cells: 0, pipes: 0, loose: 0, elapsed: 0, working: 0, building: 0, slots: 1 });
 
 /** Playback speed in engine ticks per real second (0 = paused). The dev speed
  *  control writes this; the ticker reads it. */

@@ -35,3 +35,6 @@ lerna-debug.log*
 
 # Agent worktrees (scratch git checkouts — never commit)
 .claude/worktrees/
+
+# UX-audit screenshot harness (stale captures; scripts referenced by UX_PLAN.md)
+tmp-uxaudit/

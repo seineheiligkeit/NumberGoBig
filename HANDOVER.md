@@ -9,6 +9,159 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ## 0. Latest
 
+**BUILD SLOTS ("one pencil") + the FROM-ZERO gameplay agent + new presets
+(2026-06-10, same session).** Construction is now a strategic QUEUE, and the
+challenger plays the whole game from an empty canvas under the live rules.
+**The manager is RETIRED as the gameplay benchmark** — use
+`sim/challenger.ts --live --from-zero`. Suite: 61 unit + 8 e2e, check 0/0.
+
+- **The slots law** (`TimeTuning.buildSlots`, 0 = off, GAME_TUNING = 1; engine
+  `currentBuildSlots`/`buildQueuePosition`): only the first K unbuilt cells
+  (placement order) draw the free baseRate; the rest queue. **Fuel rushes any
+  queued build** (1:1, grade-agnostic) — concurrency is priced, not forbidden,
+  so the feel-bad "wait 40 min" wall can always be paid through. Slots grow at
+  the shared `BUILD_SLOT_MILESTONES` (1e6/1e12/1e30/1e100, judged against the
+  new `world.peakMagnitude`) — one rule for game AND sims. View: №k-in-queue
+  badges, "a second pencil" narrator beats, a pencils row in the monitor.
+- **From-zero agent** (`--from-zero`): staged, gated build program (starter
+  tree → mults → depth-3 → exps only after the 1e9 unlock → depth-4),
+  fuel-rushed builds, **sticky launch campaigns** (lock the note band when
+  stocking starts — a target re-derived from a moving apex never fires), and
+  **the Mill as the note-minter** (one pass splits an oversized block into 16
+  in-band notes; merges almost never land in the 1.8-digit band — the Mill is
+  now structurally essential, worth ×10³⁷ digits in the 1/s run).
+- **THE PACING RESULT (4 h from zero, live rules):** frontier is FLAT across
+  a 30× action-rate spread — 1/30 s: e305 · 1/10 s: e210 · 1/3 s: e231 ·
+  1/s: e283 (differences = launch-sawtooth noise). **Strategy dominates APM
+  by construction**; returns on extra actions saturate at ~1 action/10 s.
+  There is always something worth doing (agents found useful actions at every
+  rate), but never a reason to spam. Early game is where rates differ
+  (build-out takes ~40 min at 1/3 s vs ~20 min at 1/s); late game equalizes.
+- **Presets rebuilt** for the current rules (`presets.ts`): Opening (with a
+  visible build queue) · Mult factory (pre-1e9) · Launch prep (a staged first
+  launch: base+exponent fed, four in-band notes beside it) · Powered age
+  (warehouse-fed accelerator pipe + a mill with oversized blocks to shred).
+  All four verified loading + ticking headlessly, zero console errors.
+- **Design finding for later:** scaffolding is RECURSIVE at scale — minting
+  notes by exponentiation needs smaller notes, a ladder of preparations all
+  the way down. A planning player can launch far more often than the greedy
+  agent (e283 at 1/s is a FLOOR). The ladder is the late-game engineering
+  puzzle, unprompted.
+
+**SLICES 2 + 3 — the new economy is LIVE in the game (2026-06-10, same
+session; awaiting the human playtest).** `GAME_TUNING` now opts into
+`scaffoldCoeff: 1` (the Slice-1 candidate: α=0.5, band=64, floor=1e6) and
+`accelChargeCarry: 1`. Suite: **57 unit tests + 8 e2e green**, check 0/0,
+build clean, preview-verified (zero console errors).
+
+- **Slice 2 (view):** Exponentiation is no longer drafted by building a mult —
+  it UNLOCKS at the one-billion frontier milestone ("…be warned, it will
+  demand to see your work"). A scaffolded op draws a second, DASHED outer
+  ring (notes paid / required) around the clock-sweep; narrator beats for the
+  first scaffold demand (with the actual band numbers), the first paid launch
+  (flash + milestone sting), and both band refusals ("your finished result is
+  not scratch paper — Mill it down, perhaps"). Accelerators read
+  `carries ≤X` (their charge = what covered pipes can ferry).
+- **Slice 3 (engine, `accelChargeCarry`):** powered logistics — a block
+  entering a pipe covered by a charged accelerator gets effective transit
+  magnitude `m/(1+charge·carry)`, computed at entry (warehouse withdrawals
+  too). Charge can be FED BY PIPE (applyFuel on an accelerator adds charge),
+  decays per tick (the standing burn), so late-game note delivery is
+  automatable. The Mill already right-sizes: a block in (S, 16·S] mills into
+  16 in-band notes in ONE pass. Off in DEFAULT_TUNING; 3 new engine tests.
+- **World counters** for session telemetry: `world.produced` (blocks emitted)
+  and `world.burned` (fuel magnitude spent — ops, builds, charge). The
+  challenger reports a 12-row session timeline (`--rate` single runs).
+- **Cadence watch-item for the playtest:** at engaged pace the 8 paid
+  launches FRONT-LOAD (all within ~20 min, then a 3–4 h rebuild before the
+  9th — inter-launch periods grow with digits). Casual pace is lovely (one
+  launch mid-session). If the playtest wants evener spacing, higher α
+  (smaller, cheaper jumps) is the lever — needs the hardened sweep agent
+  first.
+
+**SLICE 1 — SCAFFOLDING ("show your work"), the exponentiation pacing law
+(2026-06-10, built sim-first, awaiting review before promotion).** The
+challenger's exp snowball (learning #14) is closed by a new law in
+`core/time.ts` + `core/engine.ts`, behind `TimeTuning.scaffold*` knobs (**off
+in DEFAULT_TUNING** — the live game is untouched until the values are locked):
+
+- **The law.** An exp-tier op (exponentiation+) producing output magnitude M
+  demands `S = scaffoldCoeff·(M^α − floor^α)` of burned magnitude (its
+  *working notes* — the intermediate powers), payable ONLY in blocks within
+  the denomination band **[S/scaffoldBand, S]**. Blocks above the band are
+  refused outright (your finished result is not scratch paper) — this is what
+  breaks the burn-the-output-to-fund-the-next-jump chain. baseRate never pays
+  it; outputs ≤ scaffoldFloor (1e6) are a free toy. Multiplication is NEVER
+  scaffolded (the locked accelerant economy is its whole cost model). Reuses
+  the V2-era `fuelRequired/fuelPaid` machinery + a new `op.scaffold` band.
+  **7 new tests (61 total).**
+- **Validated shape (challenger, scaffolding-aware, C=1 α=0.5 band=64, 4 h):**
+  the 10^10^236,740-digit tower collapses to a paced sawtooth — engaged (1/s):
+  **e4978 via 8 PAID milestone launches** (~one prepared launch / 30 min,
+  ×1.5–2 digits each, forced pyramid rebuild between); casual (1/30 s):
+  **exactly 1 paid launch**, e151 vs e118 no-exp. Sub-floor toy exps stay
+  free and harmless. Mult-only baseline: e149 — exp is a real, earned edge.
+- **Candidate lock: α=0.5, C=1, band=64, floor=1e6.** α sets milestone size
+  (launch ≈ ×1/α digits when stocked); C taxes SMALL jumps hardest (C=1000 →
+  exp break-even — too harsh); band sets how many chunks a launch is paid in.
+- **Honest caveat for the next pass:** the α/C cross-sweep
+  (`sim/scaffold-sweep.ts`) is confounded by AGENT brittleness — the
+  challenger's mint-targeting hardcodes a 1.5× launch target and a single
+  note band, so off-candidate settings measure the agent, not the law
+  (non-monotonic α rows, C=30 ≡ C=100 byte-identical). Before locking
+  anything other than the candidate, harden the sweep agent: multi-target
+  stocking, per-α adaptive launch sizing, and judge cadence by **paid**
+  launches (the `paidExps` metric) — never raw launch counts.
+- Strategy lessons that cost real debugging, for the agent-hardening pass:
+  toy exps must COMPETE with merges, never short-circuit them (a 1/30 s run
+  spent its whole session on 16^4 hops); the mint band must derive from the
+  prospective launch's notes (α·D*), not from the apex; micro-launches drain
+  the notes the big jump needs — gate paid launches at ≥1.5× apex digits.
+
+**THE FUEL-ECONOMY LOCK — 0.5/0.5 promoted to `DEFAULT_TUNING` (2026-06-10,
+the tuning session).** The two knobs from the entry below were sim-tuned across
+the full human rate range and **locked at `amplifierBaseRateScale: 0.5,
+fuelOverpayExp: 0.5`**. `GAME_TUNING` is now just `{ ...DEFAULT_TUNING }` —
+game and sims share one economy. The pre-lock "vanilla" economy is available
+only by passing `{ amplifierBaseRateScale: 1, fuelOverpayExp: 1 }` explicitly
+(`fuel-overpay.ts`'s baseline row does; `manager.ts` / `play.ts` CLI flag
+defaults now read `DEFAULT_TUNING`). Tests are **47** (two new lock-guards pin
+the halved amplifier base + the √ overpay law in the engine).
+
+- **Decision evidence (4 h windows, both probes).** The **manager**
+  (optimal-play probe, 14 400 ticks) is **strictly monotonic across the whole
+  human range only at 0.5/0.5**: 1/60 → 1/s gives e19 → e24 → e34 → e41 → e43,
+  no saturation — every step of engagement is rewarded. The competitors fail
+  on shape: (1, 0.5) and (0.25, 0.5) saturate by ~1/3 s; (0.5, 1) leaves
+  overpay free (half of "fuel matters" undone); (0.5, 0.3) just compresses.
+  Fuel-dependence at 1 action/s: **−91 oom vs vanilla**. Idle never stalls
+  (e17–e19 from zero in 4 h).
+- **`sim/play.ts` grew tuning flags** (`--amp-base S`, `--overpay P`) **and an
+  honest-competent upgrade** (learning #8 — the agent must change with the
+  game): smallest-one-shot fuel pick using the engine's exact
+  `grade^(1-p)·V^p`; the fuel band capped at **the grades the agent actually
+  produces** (tree roots) — burning *results* as fuel torches the operand
+  supply and cost 14 oom before it was caught; **two separate expansion
+  pressures** (operand-starve → another depth-3 tree; grade-starve → a deeper
+  tree) plus **proactive deepening** when the frontier outgrows the built
+  root. See learning #13 for the signal bug not to relearn.
+- **Watch-item for the human playtest:** from-zero play at *mid* rates
+  (1/30–1/3 action/s) plateaus ~e22 over 4 h until the player deepens fuel —
+  the breakthrough move (deep trees) must be discoverable in-game; the dev
+  presets + narrator carry that teaching load. Engaged play that deepens
+  reaches e36+ from zero.
+
+**THE CHALLENGER — the manager is beaten into power-tower territory (same
+session).** `sim/challenger.ts` plays the same honest harness (action budget,
+peel, real wiring, 110 pre-built cells vs the manager's 111) with a smarter
+policy and **crushes the manager at every rate** (10 k ticks, locked economy):
+1/30 s: 4.7e21 → **10^10^1.0e10** (with only 89 hand-ops!); 1/s: 8.7e40 →
+**10^10^236,740**; 5/s: 2.3e49 → **10^10^10^69,049** (a layer-3 tower). The
+`--no-exp` ablation isolates the levers: pairing + result-fuel alone give
+~e118 at 1/s (+77 oom); exponentiation does the rest. See learning #14 — this
+is as much a **balance finding** as an agent: a player can do everything the
+challenger does.
+
 **Fuel economy — "fuel must actually matter" (2026-06-10).** Tackled the
 complaint that *multiplicative ops are too cheap to run once you have a basic
 fuel line*. A long sim-first exploration: **three approaches ruled out, one
@@ -45,9 +198,9 @@ untouched; the live game opts in via `GAME_TUNING`.)
   factory collapses it). **Live in the game** at `amplifierBaseRateScale: 0.5,
   fuelOverpayExp: 0.5` (`src/lib/view/game-view.ts` → `GAME_TUNING`);
   headless-verified (a mult reached 8.7% in 60 ticks unfuelled, then streamed
-  grade-100 fuel finished it → 1e6; zero console errors). **Sim tuning of the two
-  values is the next session** — once the feel is locked, promote `GAME_TUNING` →
-  `DEFAULT_TUNING` and re-baseline the sims (`play.ts` is still 6.19e26 vanilla).
+  grade-100 fuel finished it → 1e6; zero console errors). **Sim tuning of the
+  two values: DONE — see the lock entry above** (promoted to `DEFAULT_TUNING`,
+  sims re-baselined).
 
 **Stacking, dev presets, honest agents (prior session).** Three things landed:
 
@@ -190,7 +343,7 @@ always pay to hurry.
     objects: the **Mill** (additive splitter → graded fuel) and the
     **Accelerator** (beacon that burns charge to boost nearby pipe throughput).
   - `cell-types.ts` — the 6 constructive operators + `operate()`.
-  - Tests: `engine.test.ts` + `time.test.ts`, **45 unit tests** incl.
+  - Tests: `engine.test.ts` + `time.test.ts`, **47 unit tests** incl.
     pacing-guards and the round-robin / score-conservation invariants.
 - **`src/lib/view/` — the thin Pixi view** (767-line `game-view.ts` + 36-line
   `stores.ts`). Holds a `World`, ticks it from a Pixi ticker reading
@@ -216,25 +369,32 @@ agent did: place, move, wire, shuttle, fuel, delete/rebalance.
 ## 2. The known scales (what a session looks like)
 
 From `sim/play.ts` — a competent player **from an empty canvas**, no shortcuts,
-over a **4-hour** session. **This is the scale the polish pass must serve.**
+over a **4-hour** session, under the **locked economy** (0.5/0.5; re-baselined
+2026-06-10). **This is the scale the polish pass must serve.**
 
 | action rate | FRONTIER | score | cells (built) | fuel trees |
 |---|---|---|---|---|
-| 1 / 60 s (idle)   | 3.1e26 | 1.2e24 | 25 | 1 |
-| 1 / 30 s          | 2.0e31 | 7.9e28 | 25 | 1 |
-| 1 / 10 s          | 8.3e34 | 3.3e32 | 25 | 1 |
-| 1 / 3 s           | 1.3e36 | 8.3e34 | 25 | 1 |
-| 1 / s (engaged)   | 1.4e45 | 8.9e43 | 48 | 2 |
+| 1 / 60 s (idle)   | 1.8e19 | 7.2e16 | 25 | 1 |
+| 1 / 30 s          | 7.6e22 | 3.0e20 | 25 | 1 |
+| 1 / 10 s          | 7.6e22 | 3.0e20 | 25 | 1 |
+| 1 / 3 s           | 1.9e22 | 4.7e21 | 25 | 1 |
+| 1 / s (engaged)   | 5.3e36 | 2.1e34 | 72 | 2 |
+
+(The manager — optimal play with a pre-built factory, same 4 h — spans e19 →
+e43 monotonically over the same rates; the mid-rate plateau above is the
+naive-strategy wall, broken by deepening fuel. Pre-lock vanilla numbers, for
+history: 3.1e26 idle → 1.4e45 engaged.)
 
 **Takeaways that shape the design:**
-- A realistic factory is **~25–50 cells, ~30–90 pipes**. Not thousands. The
+- A realistic factory is **~25–75 cells, ~30–110 pipes**. Not thousands. The
   canvas is a readable *board*, not a sprawl. Design for legibility at this size.
-- Numbers reach **~1e26 (very casual) to ~1e45 (engaged)** in 4 h → the
+- Numbers reach **~1e19 (very casual) to ~1e36–e43 (engaged)** in 4 h → the
   **value-label ladder** (digits → sci → tower) is exercised constantly; it must
   be beautiful and instantly readable.
-- **Idle never stalls; speed is monotonically rewarded.** The pressure→relief
-  "whoosh" rhythm (TIME_AS_LABOR §6) is the dopamine engine — animations must
-  *sell* it.
+- **Idle never stalls; engagement is monotonically rewarded** (optimal play).
+  Naive mid-rate play hits a **fuel-grade wall (~e22)** — by design; the game
+  must *teach* the deep-fuel move. The pressure→relief "whoosh" rhythm
+  (TIME_AS_LABOR §6) is the dopamine engine — animations must *sell* it.
 
 ---
 
@@ -244,11 +404,13 @@ All standalone Node CLIs (native TS, no install). Run with `node sim/<x>.ts`.
 
 | File | What it answers |
 |---|---|
-| `play.ts` | **Real play from zero** at a human rate. The baseline numbers above. `--rate R --hours H --trace`. |
+| `play.ts` | **Real play from zero** at a human rate. The baseline numbers above. `--rate R --hours H --trace --amp-base S --overpay P`. Agent is overpay-aware (2026-06-10): smallest-one-shot fuel from produced grades only, two-pressure expansion (operand → depth-3 tree, grade → deeper), proactive deepening. |
 | `strategy-test.ts` | Spread vs concentrate at high APM (wiring + free-merge **fixed**, stacking-aware). **Corrected finding: concentrate does NOT beat spread** — it self-starves on one fuel grade; the original "wins by ~13 orders" was a bug+early-stop artifact. |
-| `manager.ts` | The honest **active-management benchmark**: real wired backbone, stacking-aware, no free-merge, **smart fuel-depth scaling** (one block ≈ one op) + **16 frontier mults** (free parallel `baseRate` throughput) + auto-fuel scaling. 10k-tick frontier: ~7.9e28 (slow) / **~2.7e126** (steady) / **~3.6e162** (fast). Flags: `--rate --ticks --trace --strategy spread\|concentrate --mults N --fuel-trees N --fuel-depth N --auto-width --no-auto-fuel --no-stacking`. **Fuel-economy experiment flags (2026-06-10):** `--tax-coeff/-exp/-floor` (fuel-tax), `--milling`, `--ladder`, `--fuel-factory`, `--amp-base S` (amplifier baseRate scale), `--overpay P` (diminishing-overpay exp). |
+| `manager.ts` | The honest **active-management benchmark**: real wired backbone, stacking-aware, no free-merge, **smart fuel-depth scaling** (one block ≈ one op) + **16 frontier mults** (free parallel `baseRate` throughput) + auto-fuel scaling. 10k-tick frontier under the **locked economy**: ~4.7e21 (slow 1/30) / **~8.7e40** (steady 1/s) / **~2.3e49** (fast 5/s); pre-lock vanilla was ~7.9e28 / ~2.7e126 / ~3.6e162 (`--amp-base 1 --overpay 1` to reproduce). Flags: `--rate --ticks --trace --strategy spread\|concentrate --mults N --fuel-trees N --fuel-depth N --auto-width --no-auto-fuel --no-stacking`. **Fuel-economy experiment flags (2026-06-10):** `--tax-coeff/-exp/-floor` (fuel-tax), `--milling`, `--ladder`, `--fuel-factory`, `--amp-base S` (amplifier baseRate scale), `--overpay P` (diminishing-overpay exp). |
+| `challenger.ts` | **The manager-beater** (2026-06-10): same honest harness, three policy fixes — merge the two BIGGEST blocks (no ×1000 op1 cap), fuel ops with recycled RESULTS (smallest one-shot via the engine-exact `grade^(1-p)·V^p`; fuel = value is exponential in digits, work is polynomial — production is its own best fuel), and **use exponentiation** (digits(a^b) = b·digits(a) — the manager never places one). One greedy rule: start the largest-output op whose work is payable (one-shot / ≤8 chips / creep), never burning a block bigger than the op's own output; plan globally, then route the plan to an idle cell of its kind. 10 k ticks: **10^10^1.0e10 (1/30 s) / 10^10^236740 (1/s) / 10^10^10^69049 (5/s)** vs manager's 4.7e21 / 8.7e40 / 2.3e49. `--rate --ticks --trace --no-exp --no-vs`. |
+| `scaffold-sweep.ts` | **The scaffolding tuner** (Slice 1): sweeps α × C × band against the no-exp baseline and the unscaffolded tower; reports digits, ×no-exp, launches, last-¼ growth. NB: off-candidate rows currently measure agent brittleness (see §0) — harden the challenger's stocking before trusting a full lock. `--rate --ticks --bands`. |
 | `study.ts` | **Holistic agent study** at 3 rates: action breakdown, build accounting, value-flow (stranded/discarded), per-tick bottleneck attribution, pool composition, baseline-vs-improved. The lens for "where are the inefficiencies." `--ticks N`. |
-| `fuel-overpay.ts` | **The landed lever** (2026-06-10). Sweeps `amplifierBaseRateScale × fuelOverpayExp`; reports frontier, last-¼ growth (stall detector), fuel%. The harness to **tune the live game's two fuel knobs** next session. `--rate --ticks --factory`. |
+| `fuel-overpay.ts` | **The landed-and-locked lever** (2026-06-10). Sweeps `amplifierBaseRateScale × fuelOverpayExp`; reports frontier, last-¼ growth (stall detector), fuel%. Its baseline row now requests pre-lock vanilla explicitly (DEFAULT_TUNING ships 0.5/0.5). `--rate --ticks --factory`. |
 | `fuel-experiment.ts` / `fuel-tax.ts` / `fuel-forced.ts` | The **ruled-out** explorations (per-block digit-fuel; fuel-tax sweep; force-fuel/floor sweep). Kept as the record of *why* those dead-ends fail — see §0 + learning #12. |
 | `factory-agent.ts` | A fully-piped balanced multiplication tree; surfaced the round-robin-emit fix + the depth-vs-throughput wall. |
 | `logistics.ts` | Transport as a real constraint: distance starves a pipe; parallel pipes + accelerators recover it. |
@@ -354,6 +516,40 @@ ground-truth correctness/visuals/feel.
     *requirement*. So: reduce amplifier baseRate so fuel *matters*, + diminishing
     overpay so right-sized fuel is *optimal*. Never zero the amplifier baseRate
     (the self-fueling cascade then collapses — the free base can't feed it).
+13. **Under diminishing overpay, fuel and operands are separate economies —
+    and three agent traps proved it (the lock session).** (a) An agent that
+    burns *results* as one-shot fuel torches its own operand supply: a result
+    is worth ×op1 *multiplied* but only `√(grade·V)` *burned* — banding fuel to
+    "the grades my trees produce" was worth +14 oom. (b) Starvation has TWO
+    distinct signatures needing different fixes: mults idle-for-operands →
+    widen basic (depth-3) production; ops crawling on homeopathic fuel → build
+    a DEEPER tree. One counter can't drive both. (c) Judge a fuel block's
+    grade-fit against the op's **full work, never the remaining slice** — tiny
+    late-op top-ups read as "good fuel" and mask the starve signal entirely
+    (this single comparison hid the wall for 4 sim-hours). Corollary of (a)+(b):
+    rate-independent plateaus (two rates landing on the *same* frontier) mean a
+    production-throughput cap, not an action cap — look at the supply, not
+    the APM.
+14. **The economy has an exponentiation snowball — `sim/challenger.ts` proves
+    it, and a player can do it (open balance question).** Three compounding
+    moves the manager never makes: (a) merge the two BIGGEST blocks (mult
+    output digits = digits(a)+digits(b); the ×1000 op1 cap wastes the op);
+    (b) burn old RESULTS as fuel — `fuel = value` is *exponential* in digits
+    while `work = digits^k` is *polynomial*, so past ~e20 your own production
+    one-shots any op even under √-overpay (need V ≥ W²/grade; the bank grows
+    like 10^d, the need like d^4.5–d^6); (c) **exponentiation multiplies
+    digits** (digits(a^b) = b·digits(a)) — pick the largest exponent whose
+    work is still fuel-affordable and digits go hyper-exponential
+    (10^10^236,740 in 10 k ticks at 1 action/s, vs the manager's e40; even 89
+    total hand-ops at idle-ish 1/30 s reach 10^10^1e10). The √-overpay
+    law softens but cannot close this: eff = √(grade·V) is still exponential
+    in the digits of V. **Design fork to decide before/after the playtest:**
+    either this snowball IS the intended discovered endgame (a very
+    incremental-genre "break the curve" moment — and the pacing question is
+    only how long discovery takes), or exp needs a binding cost that scales
+    with its OUTPUT's digits in a way value-fuel can't trivially pay (today's
+    opExponent k=4 is polynomial, so it can't bind). Bot agents should
+    benchmark against the challenger, not the manager, from now on.
 
 ---
 
@@ -378,14 +574,15 @@ not a slice list yet. Candidate threads to develop with the user:
 - **Narrator voice** — dry-academic marginalia on *duration* (deferred slice 5.4).
 
 Build status to maintain every slice: `npm run build` clean, `npm run check`
-0/0, `npm test` 45/45, `npm run test:e2e` green.
+0/0, `npm test` 47/47, `npm run test:e2e` green.
 
 ---
 
 ## 6. House rules / constraints
 
-- Develop on **`time-as-labor`** (user-authorized; tracks `origin/time-as-labor`).
-  All session work lives here. Don't push elsewhere without explicit permission.
+- Develop on **`main`** (the *Time as Labor* prototype was promoted to main on
+  2026-06-10, user-authorized; the pre-prototype game lives on `legacy-main`).
+  Don't push elsewhere without explicit permission.
 - **Pencil aesthetic is non-negotiable.** Penciled, slightly imperfect. Pull
   text from `pixi/typography.ts`; color only for meaning.
 - **Small slices, validate by playing.** The user playtests after each.

@@ -19,8 +19,10 @@ import {
   transitWork,
   fuelValue,
   minFuelDenomination,
+  scaffoldRequirement,
   ticksToComplete,
   DEFAULT_TUNING,
+  type TimeTuning,
 } from './time.ts';
 
 const n = (d: Decimal) => d.toNumber();
@@ -122,6 +124,36 @@ test('fuel grade: tiny ops accept 1s; big ops demand big fuel', () => {
   assert.ok(smallGrade.lte(1.0001), 'the smallest ops still accept value-1 fuel');
   assert.ok(bigGrade.gt(10), 'a big op refuses small fuel — fuel grades');
   assert.ok(bigGrade.gt(smallGrade));
+});
+
+// --- Scaffolding: the exponentiation pacing law ("show your work") ---------
+
+const SCAFFOLD_ON: TimeTuning = { ...DEFAULT_TUNING, scaffoldCoeff: 1 };
+
+test('scaffolding: off by default — zero requirement at any magnitude', () => {
+  assert.equal(n(scaffoldRequirement(new Decimal('1e100'))), 0);
+});
+
+test('scaffolding: outputs at or below the floor are free (a playful toy)', () => {
+  assert.equal(n(scaffoldRequirement(new Decimal(1e6), SCAFFOLD_ON)), 0);
+  assert.equal(n(scaffoldRequirement(new Decimal(1000), SCAFFOLD_ON)), 0);
+});
+
+test('scaffolding: grows as M^α above the floor, continuous at the floor', () => {
+  // just above the floor: tiny requirement (continuity)
+  const justAbove = scaffoldRequirement(new Decimal(1.1e6), SCAFFOLD_ON);
+  assert.ok(justAbove.gt(0) && justAbove.lt(100), `continuous at floor, got ${justAbove}`);
+  // far above: ~M^0.5 — a 10^40 jump demands ~10^20 of working notes
+  const big = scaffoldRequirement(new Decimal('1e40'), SCAFFOLD_ON);
+  assert.ok(big.gte(new Decimal('9e19')) && big.lte(new Decimal('1.1e20')));
+});
+
+test('scaffolding: requirement is a shrinking FRACTION of output (climbing stays net-positive)', () => {
+  const m1 = new Decimal('1e20');
+  const m2 = new Decimal('1e80');
+  const frac1 = scaffoldRequirement(m1, SCAFFOLD_ON).div(m1);
+  const frac2 = scaffoldRequirement(m2, SCAFFOLD_ON).div(m2);
+  assert.ok(frac2.lt(frac1), 'bigger jumps burn a smaller share of what they create');
 });
 
 // --- Pacing guards: pin the intended feel ----------------------------------

@@ -346,6 +346,65 @@ extending.
   session.** New harnesses: `fuel-overpay.ts` (the lever) + `fuel-experiment.ts` /
   `fuel-tax.ts` / `fuel-forced.ts` (the dead-ends). See HANDOVER §0 + learning #12.
 
+- ✅ **The fuel-economy LOCK — 0.5/0.5 promoted to `DEFAULT_TUNING` (2026-06-10,
+  tuning session).** Swept `amplifierBaseRateScale × fuelOverpayExp` across the
+  full human rate range (1/60 … 1 action/s, 4 h windows) with BOTH probes.
+  Manager (optimal play): **only 0.5/0.5 is strictly monotonic with no
+  saturation** (e19 → e43); (1, 0.5) / (0.25, 0.5) saturate by ~1/3 s,
+  (0.5, 1) leaves overpay free, (0.5, 0.3) compresses. Fuel-dependence −91 oom
+  vs vanilla at 1/s; idle never stalls (e17–e19 from zero). Promoted:
+  `core/time.ts` DEFAULT_TUNING ships 0.5/0.5, `GAME_TUNING = {...DEFAULT_TUNING}`,
+  `fuel-overpay.ts` baseline + `manager.ts` flag defaults updated, **2 new
+  engine lock-guard tests (47 total)**. `play.ts` gained `--amp-base/--overpay`
+  + an overpay-aware competent agent (grade-banded one-shot fuel, two-pressure
+  expansion, proactive deepening — HANDOVER learning #13 for the traps).
+  Re-baselined: play.ts 1.8e19 idle → 5.3e36 engaged; manager 10k-tick
+  4.7e21 / 8.7e40 / 2.3e49 (slow/steady/fast). **Playtest watch-item:** naive
+  mid-rate play walls at ~e22 until the player discovers deep fuel — presets +
+  narrator must teach the move.
+
+- ✅ **Slice 1 — SCAFFOLDING, the exponentiation pacing law (2026-06-10,
+  sim-first; awaiting review before promotion).** Closes the challenger's exp
+  snowball: exp-tier ops demand `C·M^α` of burned *working notes*, payable only
+  in the denomination band [S/band, S] — oversized blocks refused (breaks the
+  self-funding chain), floor exempts toy exps, baseRate never pays it, mult
+  never scaffolded. `core/time.ts` knobs (off in DEFAULT_TUNING) +
+  `core/engine.ts` band enforcement + 7 tests (61 total) + scaffolding-aware
+  challenger + `sim/scaffold-sweep.ts`. Candidate values **α=0.5 C=1 band=64
+  floor=1e6**: engaged 4 h = e4978 via **8 paid milestone launches** (~30 min
+  cadence, forced pyramid rebuild between); casual = 1 paid launch, e151 vs
+  e118 no-exp; the 10^10^236740 tower is dead at every setting tested. Next:
+  harden the sweep agent (multi-target stocking, per-α launch sizing, paid-
+  launch metrics), lock values, then milestone unlock + narrator (Slice 2).
+
+- ✅ **Slices 2 + 3 — milestone unlock, scaffold UI, powered logistics; the new
+  economy LIVE (2026-06-10).** GAME_TUNING opts into scaffolding (candidate
+  values) + `accelChargeCarry: 1`. Slice 2: exp unlocks at the 1e9 frontier
+  milestone; dashed notes-ring on scaffolded ops; narrator beats (demand with
+  band numbers, paid-launch milestone, both refusal hints); accelerator shows
+  `carries ≤X`. Slice 3: charge-carry transit law (`m/(1+charge·carry)` at
+  pipe entry, warehouse withdrawals included; pipe-fed charge; decay = the
+  standing burn) — the Mill already right-sizes (S,16S] blocks into in-band
+  notes in one pass. World `produced`/`burned` counters + challenger session
+  telemetry. **57 unit + 8 e2e green** (new live-game scaffold-launch e2e),
+  preview-verified. Watch-item: engaged-pace launches front-load (8 in the
+  first ~20 min, then a 3–4 h rebuild); casual pace is well-spaced. Deferred:
+  hand-drag weight (3c — feel decision), sweep-agent hardening + final value
+  lock, tetration/pentation scaffolding (engine-ready, by design).
+
+- ✅ **Build slots ("one pencil") + from-zero agent + new presets
+  (2026-06-10).** Construction queues in placement order (buildSlots knob, off
+  by default, 1 in GAME_TUNING); fuel rushes any queued build; slots grow at
+  shared BUILD_SLOT_MILESTONES vs the new world.peakMagnitude. View: queue
+  badges, pencil narrator beats, monitor row. Challenger gained --from-zero
+  (gated build program honoring the 1e9 exp unlock, fuel-rushed builds,
+  sticky launch campaigns, Mill-minted notes) — THE gameplay benchmark now;
+  the manager is retired. Pacing result: 4 h from-zero frontier is FLAT
+  across 1/30→1/s action rates (e210–e305, sawtooth noise) — strategy
+  dominates APM; returns saturate ~1 action/10 s. Presets rebuilt for the
+  current rules (opening / mult factory / launch prep / powered age), all
+  verified headlessly. 61 unit + 8 e2e green.
+
 ---
 
 ## Phase 0 — Carve the minimal baseline

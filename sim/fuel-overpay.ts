@@ -48,7 +48,10 @@ function main(): void {
   console.log(`rate ${rate} · ${ticks} ticks (${(ticks / 3600).toFixed(1)}h) · factory-fuel ${factory ? 'ON' : 'off'}.`);
   console.log('Want: big drop vs baseline (fuel/time matters) BUT last-¼ growth > 0 (still climbing, not collapsed).\n');
 
-  const base = runManager(rate, ticks, {});
+  // The pre-lock "vanilla" economy — DEFAULT_TUNING now SHIPS 0.5/0.5 (the
+  // 2026-06-10 lock), so the no-lever baseline must be requested explicitly.
+  const vanilla: TimeTuning = { ...DEFAULT_TUNING, amplifierBaseRateScale: 1, fuelOverpayExp: 1 };
+  const base = runManager(rate, ticks, { tuning: vanilla });
   console.log(`  baseline (ampBase 1, overpay 1): frontier ${fmt(base.frontier)}\n`);
   console.log('  ampBase  overpay | frontier      | vs base | last-¼ | fuel% | verdict');
   console.log('  -----------------+---------------+---------+--------+-------+---------------------');

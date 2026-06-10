@@ -48,6 +48,8 @@ import {
   buildFraction,
   opFraction,
   cellBoost,
+  currentBuildSlots,
+  buildQueuePosition,
   ACCELERATOR_RADIUS,
   type World,
   type SimCell,
@@ -63,12 +65,18 @@ import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestone
 
 // --- View constants --------------------------------------------------------
 
-// The live economy lever (sim-validated in sim/fuel-overpay.ts): amplifiers creep
-// at a REDUCED baseRate (so fuel matters, but never 0 — that collapses the fuel
-// cascade), and overpaying fuel has diminishing returns (effective ≈
-// grade^(1-p)·V^p), so you're most efficient paying near an op's grade rather
-// than dumping one giant block. Tune these two from playtest feel.
-const GAME_TUNING = { ...DEFAULT_TUNING, amplifierBaseRateScale: 0.5, fuelOverpayExp: 0.5 };
+// The fuel-economy lever (amplifierBaseRateScale 0.5 / fuelOverpayExp 0.5) was
+// sim-tuned and PROMOTED into DEFAULT_TUNING (2026-06-10). The live game
+// additionally opts into the two Slice 2/3 levers while they are play-
+// validated (the sims' DEFAULT_TUNING baselines keep them off):
+//  - SCAFFOLDING (candidate lock α=0.5 C=1 band=64 floor=1e6): exp-tier ops
+//    demand working notes in [S/64, S] — sim-validated to ~8 paid milestone
+//    launches per engaged 4 h, exactly 1 per casual session.
+//  - POWERED LOGISTICS (carry 1): an accelerator's charge carries transit —
+//    pipe big blocks by keeping a power plant fed (charge decays).
+//  - BUILD SLOTS (1): one pencil — construction queues in placement order;
+//    fuel rushes any queued build; frontier milestones grant more pencils.
+const GAME_TUNING = { ...DEFAULT_TUNING, scaffoldCoeff: 1, accelChargeCarry: 1, buildSlots: 1 };
 
 const CELL_W = 100;
 const CELL_H = 76;
@@ -112,6 +120,8 @@ interface CellVisual {
   outlinePath: Pt[]; // stable wobble path for the outline (revealed as it builds)
   outlineCum: number[]; // cumulative arc length of outlinePath
   intakeZero: Text | null; // successor's river-intake 0 (animated rising), else null
+  hadScaffold: boolean; // the active op demanded working notes — for the launch beat
+  queueBadge: Text | null; // "№k" while waiting for a build slot (lazy)
 }
 
 interface BlockVisual {
@@ -478,6 +488,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           // The whoosh fires off the burn rising-edge in updateCellVisual (so
           // hand-drop and pipe-fed fuel feel identical, and a fuel block bounced
           // off an idle cell doesn't falsely ignite).
+          // Scaffolded ops refuse out-of-band blocks — explain the bounce once.
+          const sc = world.cells.get(target.cellId)?.op?.scaffold;
+          if (sc) {
+            const m = valueMagnitude(stack.value);
+            if (m.gt(sc.cap)) {
+              note('Refused — your finished result is not scratch paper. Mill it down to note size, perhaps.', 'scaffold-too-big');
+            } else if (m.lt(sc.min)) {
+              note('Refused — too slight for working notes. It wants something near the task at hand.', 'scaffold-too-small');
+            }
+          }
           injectFuel(world, target.cellId, stack.value);
         } else if (!feedOperand(world, target.cellId, target.port, stack.value)) {
           consumed = false; // port occupied / cell busy — nothing taken
@@ -791,7 +811,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (info) body.addChild(info);
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero, hadScaffold: false, queueBadge: null };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -814,9 +834,33 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const head = sub[sub.length - 1];
       if (head) vis.outline.circle(head.x, head.y, 2).fill({ color: GRAPHITE, alpha: 0.9 });
       vis.glyph.alpha = 0.12 + 0.5 * frac; // the symbol fades in as the box forms
+      // BUILD SLOTS: a cell waiting for a pencil shows its place in the queue.
+      const pos = buildQueuePosition(world, cell.id);
+      const slots = currentBuildSlots(world);
+      if (pos >= slots) {
+        if (!vis.queueBadge) {
+          vis.queueBadge = new Text({
+            text: '',
+            style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 13, fill: GRAPHITE },
+          });
+          vis.queueBadge.anchor.set(0.5);
+          vis.queueBadge.position.set(0, CELL_H / 2 + 16);
+          vis.queueBadge.alpha = 0.55;
+          vis.body.addChild(vis.queueBadge);
+          note('It must wait its turn — one pencil, one sketch. Fuel may persuade it sooner.', 'first-queue');
+        }
+        vis.queueBadge.text = `№${pos - slots + 1} in queue`;
+      } else if (vis.queueBadge) {
+        vis.queueBadge.destroy();
+        vis.queueBadge = null;
+      }
     } else if (!vis.builtFlourished) {
       // Snap to the finished cell: filled, rounded outline + a small flourish.
       vis.builtFlourished = true;
+      if (vis.queueBadge) {
+        vis.queueBadge.destroy();
+        vis.queueBadge = null;
+      }
       vis.outline.clear();
       drawCellOutline(vis.outline);
       vis.glyph.alpha = 1;
@@ -863,10 +907,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.clog.clear();
     }
 
-    // Accelerator: show its live boost (and pulse the halo when charged).
+    // Accelerator: show what its charge can CARRY (powered logistics — covered
+    // pipes ferry blocks up to ~the charge), and pulse the halo when charged.
     if (cell.kind === 'accelerator' && vis.info && vis.halo) {
       const boost = cellBoost(cell);
-      vis.info.text = boost > 1.05 ? `×${boost.toFixed(1)}` : 'idle';
+      vis.info.text = cell.charge.gt(1) ? `carries ≤${formatScore(cell.charge)}` : 'idle';
       vis.halo.alpha = 0.12 + 0.012 * Math.min(20, boost);
       return; // accelerators have no op ghost/meter
     }
@@ -940,6 +985,30 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           .arc(0, 0, R, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2)
           .stroke({ color: GRAPHITE, width: 2 + 1.6 * burn, alpha: 0.5 + 0.35 * burn });
       }
+      // SCAFFOLDING ("show your work"): an exp-tier op demanding working notes
+      // draws a second, DASHED outer ring for notes-paid progress. Unpaid notes
+      // hold the op open even at full clock — the ring is the tell.
+      if (cell.op.scaffold && cell.op.fuelRequired.gt(0)) {
+        if (!vis.hadScaffold) {
+          vis.hadScaffold = true;
+          note(
+            `It demands to see the work: provide notes between ${formatScore(cell.op.scaffold.min)} and ${formatScore(cell.op.scaffold.cap)}. Your finished results will be refused.`,
+            'first-scaffold',
+          );
+        }
+        const paid = Math.min(1, cell.op.fuelPaid.div(cell.op.fuelRequired).toNumber());
+        const R2 = 25;
+        // dashed base ring
+        for (let k = 0; k < 12; k++) {
+          const a0 = (k / 12) * Math.PI * 2 - Math.PI / 2;
+          vis.meter.arc(0, 0, R2, a0, a0 + 0.3).stroke({ color: GRAPHITE, width: 1, alpha: 0.18 });
+        }
+        if (paid > 0.001) {
+          vis.meter
+            .arc(0, 0, R2, -Math.PI / 2, -Math.PI / 2 + paid * Math.PI * 2)
+            .stroke({ color: GRAPHITE, width: 2.2, alpha: 0.65 });
+        }
+      }
     } else if (vis.ghost) {
       // Op just completed (ghost present, op now null): pop the cell and spray a
       // few shavings at the output where the result was written.
@@ -952,6 +1021,13 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const L = portLayout(cell.kind);
       juice.burst(cell.x + L.output.x, cell.y + L.output.y, 5, 50);
       note('The first computation resolves. The numbers begin.', 'first-op');
+      if (vis.hadScaffold) {
+        // a PAID launch resolving is the milestone beat of the whole economy
+        vis.hadScaffold = false;
+        juice.flash(cell.x, cell.y);
+        sndMilestone();
+        note('The work is shown; the result follows. Adequate.', 'first-launch');
+      }
     }
 
     // Idle states: a built cell with no op shows drop-zone hints on its empty
@@ -1054,22 +1130,23 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   ];
 
   // Progressive tool reveal: building a prerequisite drafts the next apparatus.
+  const unlockTool = (tool: Tool, label: string, noteText?: string): void => {
+    unlockedTools.update((list) => {
+      if (list.includes(tool)) return list;
+      note(noteText ?? `New apparatus drafted: ${label}.`, `unlock-${tool}`);
+      return [...list, tool];
+    });
+  };
   function unlockToolsFor(kind: CellKind): void {
-    const unlock = (tool: Tool, label: string): void => {
-      unlockedTools.update((list) => {
-        if (list.includes(tool)) return list;
-        note(`New apparatus drafted: ${label}.`, `unlock-${tool}`);
-        return [...list, tool];
-      });
-    };
     if (kind === 'addition') {
-      unlock('multiplication', 'Multiplication');
-      unlock('warehouse', 'a Warehouse (stockpile spare numbers)');
+      unlockTool('multiplication', 'Multiplication');
+      unlockTool('warehouse', 'a Warehouse (stockpile spare numbers)');
     }
     if (kind === 'multiplication') {
-      unlock('exponentiation', 'Exponentiation');
-      unlock('mill', 'the Mill');
-      unlock('accelerator', 'the Accelerator');
+      // Exponentiation is NOT drafted here — it is earned at the one-billion
+      // frontier milestone (a produced achievement, not a purchase).
+      unlockTool('mill', 'the Mill');
+      unlockTool('accelerator', 'the Accelerator');
     }
   }
 
@@ -1077,6 +1154,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   let enginePaused = false;
   let speed = 3;
   let elapsedTicks = 0;
+  let prevSlots = GAME_TUNING.buildSlots > 0 ? GAME_TUNING.buildSlots : Infinity;
   const unsubSpeed = speedStore.subscribe((s) => (speed = s));
   let monitorAccum = 0;
   app.ticker.add((t) => {
@@ -1106,6 +1184,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (!reachedMilestones.has(ms.key) && ms.hit(fi.mag)) {
           reachedMilestones.add(ms.key);
           hit = ms.label;
+          if (ms.key === '1e9') {
+            // The earned operator: a billion proves the multiplication factory.
+            unlockTool(
+              'exponentiation',
+              'Exponentiation',
+              'One billion. Exponentiation is drafted — be warned, it will demand to see your work.',
+            );
+          }
         }
       }
       if (hit) {
@@ -1115,8 +1201,30 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         note(`The frontier reaches ${hit}.`);
       }
       let working = 0;
-      for (const c of world.cells.values()) if (c.op) working++;
-      statsStore.set({ cells: world.cells.size, pipes: world.pipes.size, loose: world.pool.length, elapsed: elapsedTicks, working });
+      let unbuilt = 0;
+      for (const c of world.cells.values()) {
+        if (c.op) working++;
+        if (!c.built) unbuilt++;
+      }
+      const slots = currentBuildSlots(world);
+      if (Number.isFinite(slots) && slots > prevSlots) {
+        const PENCIL_NOTES: Record<number, string> = {
+          2: 'A second pencil. Do try not to smudge.',
+          3: 'A third hand joins the margins — irregular, but productive.',
+          4: 'Four draftsmen now. The notebook grows crowded.',
+        };
+        note(PENCIL_NOTES[slots] ?? 'Another draftsman joins the margins.', `slot-${slots}`);
+        prevSlots = slots;
+      }
+      statsStore.set({
+        cells: world.cells.size,
+        pipes: world.pipes.size,
+        loose: world.pool.length,
+        elapsed: elapsedTicks,
+        working,
+        building: Math.min(unbuilt, Number.isFinite(slots) ? slots : unbuilt),
+        slots,
+      });
     }
   });
 

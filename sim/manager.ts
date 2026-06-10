@@ -577,8 +577,10 @@ function main(): void {
   let taxFloor = 1e20;
   let milling = false;
   let ladder = false;
-  let ampBase = 1;
-  let overpay = 1;
+  // Default to the SHIPPED economy (DEFAULT_TUNING locked 0.5/0.5 on
+  // 2026-06-10); pass --amp-base 1 --overpay 1 for the pre-lock vanilla.
+  let ampBase = DEFAULT_TUNING.amplifierBaseRateScale;
+  let overpay = DEFAULT_TUNING.fuelOverpayExp;
   let fuelFactory = false;
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {

@@ -121,6 +121,50 @@ export interface TimeTuning {
    *  producers' output. 0 = tax everything above magnitude 1 (only sensible if
    *  every amplifier has a fuel feed). */
   fuelTaxFloor: number;
+  /** SCAFFOLDING — the exponentiation pacing law ("show your work").
+   *  An exp-tier op (exponentiation and up) producing output magnitude M demands
+   *  `scaffoldCoeff · M^scaffoldExp` of burned magnitude before it can complete
+   *  (the working notes — intermediate powers — the cell consumes), payable
+   *  ONLY in blocks within the denomination band [S/scaffoldBand, S]. Blocks
+   *  ABOVE the band are refused outright — your finished result is not scratch
+   *  paper — which is what breaks the self-funding chain (burn the output →
+   *  jump again) the challenger exploited: every jump needs a freshly
+   *  mult-produced SET at the new scale, so the pyramid rebuild is forced and
+   *  exp events become prepared milestones. baseRate never pays scaffolding
+   *  (it's material, not time). 0 = off (the engine behaves exactly as before).
+   *  Multiplication and below are NEVER scaffolded — the accelerant economy
+   *  (amplifierBaseRateScale/fuelOverpayExp) is their whole cost model. */
+  scaffoldCoeff: number;
+  /** Exponent α in M^α for scaffolding. The per-launch digit multiplier is
+   *  ~1/α (a launch paid with d-digit notes reaches ~d/α digits), so α sets
+   *  the milestone size: 0.5 → each prepared launch ~doubles the frontier's
+   *  digits. α → 1 makes launches marginal; α small makes them wild. */
+  scaffoldExp: number;
+  /** Outputs ≤ this magnitude need no scaffolding (continuous at the floor,
+   *  same shape as fuelTaxFloor). Keeps a freshly-unlocked exp cell a playful
+   *  toy — only BIG jumps demand preparation. */
+  scaffoldFloor: number;
+  /** Width of the acceptable denomination band: blocks in [S/band, S] count.
+   *  Sets how many chunks a launch is paid in (~1–band) — i.e. how much of a
+   *  SET the mult factory must mint, not just how much total value. */
+  scaffoldBand: number;
+  /** CONSTRUCTION CONCURRENCY (build slots — "one pencil"). When > 0, only
+   *  the first `buildSlots + (BUILD_SLOT_MILESTONES crossed)` unbuilt cells,
+   *  in placement order, accrue baseRate; the rest QUEUE. Fuel still rushes
+   *  ANY queued build (hand-paid parallelism — concurrency is priced, never
+   *  forbidden), so build ORDER becomes the early strategic puzzle instead of
+   *  blueprint-dumping everything at t=0. 0 = unlimited (off — the legacy
+   *  parallel-build behaviour every sim baseline assumes). */
+  buildSlots: number;
+  /** POWERED LOGISTICS (Slice 3): a covering accelerator's CHARGE carries
+   *  transit. A block entering a powered pipe gets effective magnitude
+   *  `m / (1 + charge·accelChargeCarry)` for its transit work — "a powered
+   *  region can move numbers up to its charge." The charge's per-tick decay is
+   *  the standing fuel burn that keeps big logistics running (and it can be
+   *  FED BY PIPE — applyFuel on an accelerator adds charge), so late-game
+   *  delivery of scaffolding notes is automatable instead of hand-shuttled.
+   *  0 = off (the legacy log-boost only; big blocks stay frozen on pipes). */
+  accelChargeCarry: number;
 }
 
 export const DEFAULT_TUNING: TimeTuning = {
@@ -163,10 +207,35 @@ export const DEFAULT_TUNING: TimeTuning = {
   fuelTaxCoeff: 0,
   fuelTaxExp: 0.5,
   fuelTaxFloor: 0,
-  // Off by default: amplifiers get full baseRate and fuel pays 1:1 (original).
-  amplifierBaseRateScale: 1,
-  fuelOverpayExp: 1,
+  // The fuel-economy lever, LOCKED 2026-06-10 (sim-tuned; see HANDOVER §0):
+  // amplifiers creep at HALF baseRate (fuel matters, but never 0 — that
+  // collapses the self-fueling cascade), and overpaying fuel has √ diminishing
+  // returns (effective = grade^(1-p)·V^p), so a stream of right-sized fuel is
+  // optimal. Validated: manager monotonic across the human rate range
+  // (e19→e43 / 4h), idle never stalls, −91 oom fuel-dependence at 1 action/s.
+  // The pre-lock "vanilla" economy is {amplifierBaseRateScale: 1,
+  // fuelOverpayExp: 1} — sims that need it pass it explicitly.
+  amplifierBaseRateScale: 0.5,
+  fuelOverpayExp: 0.5,
+  // Scaffolding OFF by default (coeff 0) while the law is sim-tuned (Slice 1).
+  // The exploratory values below are the sweep's starting point, not a lock.
+  scaffoldCoeff: 0,
+  scaffoldExp: 0.5,
+  scaffoldFloor: 1e6,
+  scaffoldBand: 64,
+  // Build slots OFF by default (unlimited parallel construction — the legacy
+  // behaviour the sim baselines assume); the live game opts in via GAME_TUNING.
+  buildSlots: 0,
+  // Powered logistics OFF by default (legacy log-boost only) — the live game
+  // opts in via GAME_TUNING while the lever is play-validated.
+  accelChargeCarry: 0,
 };
+
+/** Frontier magnitudes that each grant +1 build slot (the second pencil, the
+ *  third hand…). Shared by the game (narrator + monitor) and the sims so the
+ *  rule can never drift between them. Crossing is judged against the world's
+ *  PEAK magnitude ever produced (milestones don't un-happen). */
+export const BUILD_SLOT_MILESTONES: number[] = [1e6, 1e12, 1e30, 1e100];
 
 const dZero = Decimal.dZero;
 const dOne = Decimal.dOne;
@@ -275,6 +344,21 @@ export function fuelTax(outputMagnitude: Decimal, t: TimeTuning = DEFAULT_TUNING
  */
 export function minFuelDenomination(opWork: Decimal, t: TimeTuning = DEFAULT_TUNING): Decimal {
   return Decimal.max(dOne, opWork.pow(t.gradeExp).mul(t.gradeCoeff));
+}
+
+/**
+ * SCAFFOLDING requirement for an exp-tier op producing the given output
+ * magnitude: `scaffoldCoeff · (M^α − floor^α)` above the floor (continuous
+ * there, like the fuel tax), zero at or below it. This is the burned-magnitude
+ * the op demands as working notes — payable only in the denomination band
+ * [S/scaffoldBand, S] (the engine enforces the band). Zero when off (coeff ≤ 0).
+ */
+export function scaffoldRequirement(outputMagnitude: Decimal, t: TimeTuning = DEFAULT_TUNING): Decimal {
+  if (t.scaffoldCoeff <= 0) return dZero;
+  const floor = new Decimal(Math.max(1, t.scaffoldFloor));
+  if (outputMagnitude.lte(floor)) return dZero; // small jumps are a free toy
+  const above = outputMagnitude.pow(t.scaffoldExp).sub(floor.pow(t.scaffoldExp));
+  return Decimal.max(dZero, above).mul(t.scaffoldCoeff);
 }
 
 /**

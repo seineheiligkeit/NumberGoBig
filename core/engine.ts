@@ -32,12 +32,14 @@ import {
 } from './value.ts';
 import {
   DEFAULT_TUNING,
+  BUILD_SLOT_MILESTONES,
   buildWork,
   fuelTax,
   fuelValue,
   magnitudeDigits,
   minFuelDenomination,
   operationWork,
+  scaffoldRequirement,
   transitWork,
   type TimeTuning,
 } from './time.ts';
@@ -102,12 +104,19 @@ interface ActiveOp {
   progress: Decimal;
   /** Minimum fuel denomination this op accepts (fuel grade). */
   grade: Decimal;
-  /** Fuel-magnitude that MUST be burned for this op to complete (the fuel tax).
-   *  baseRate advances `progress` (time) but never this; only burned fuel does.
-   *  0 when the tax is off or the op isn't an amplifier. */
+  /** Fuel-magnitude that MUST be burned for this op to complete (the fuel tax,
+   *  or an exp-tier op's SCAFFOLDING requirement). baseRate advances `progress`
+   *  (time) but never this; only burned fuel does. 0 when off. */
   fuelRequired: Decimal;
   /** Fuel-magnitude burned into this op so far (toward `fuelRequired`). */
   fuelPaid: Decimal;
+  /** Scaffolding denomination band (exp-tier ops, when scaffolding is on):
+   *  fuel is accepted ONLY in [min, cap]. Blocks above the cap are refused
+   *  outright — your finished result is not scratch paper — which is what
+   *  forces every launch to be paid with a freshly mult-produced SET (and
+   *  protects the player from fat-fingering their frontier into the cell).
+   *  Null = no band (the normal grade-only fuel rules). */
+  scaffold: { min: Decimal; cap: Decimal } | null;
   /** True for amplifier ops (multiplication and up). When tuning.amplifierFuelOnly
    *  is set, these accrue NO baseRate — fuel is mandatory. */
   amplifier: boolean;
@@ -198,13 +207,31 @@ export interface World {
    *  stack (the live game — see LooseBlock.count). Off by default so the balance
    *  sims keep managing the pool as individual blocks exactly as before. */
   stacking: boolean;
+  /** Lifetime counters (stats for the monitor / session reports — never read
+   *  by the simulation itself): blocks emitted by cells, and total fuel
+   *  MAGNITUDE burned (ops + builds + accelerator charge absorbed). */
+  produced: number;
+  burned: Decimal;
+  /** The largest magnitude ever produced/held — drives milestone-gated rules
+   *  (build slots). Milestones don't un-happen, so this never decreases. */
+  peakMagnitude: Decimal;
 }
 
 export function createWorld(
   tuning: TimeTuning = DEFAULT_TUNING,
   opts: { stacking?: boolean } = {},
 ): World {
-  return { tuning, cells: new Map(), pipes: new Map(), pool: [], nextId: 1, stacking: !!opts.stacking };
+  return {
+    tuning,
+    cells: new Map(),
+    pipes: new Map(),
+    pool: [],
+    nextId: 1,
+    stacking: !!opts.stacking,
+    produced: 0,
+    burned: Decimal.dZero,
+    peakMagnitude: Decimal.dZero,
+  };
 }
 
 /** Empty a world in place (keeping its tuning + stacking flag). The view holds
@@ -215,6 +242,9 @@ export function resetWorld(world: World): void {
   world.pipes.clear();
   world.pool.length = 0;
   world.nextId = 1;
+  world.produced = 0;
+  world.burned = Decimal.dZero;
+  world.peakMagnitude = Decimal.dZero;
 }
 
 /** Materialise `count` loose blocks at a position. When the world has stacking
@@ -222,6 +252,7 @@ export function resetWorld(world: World): void {
  *  of adding a new entity (so producers pile into one movable stack). Internal +
  *  setup helper. */
 function pushLoose(world: World, value: Value, x: number, y: number, count = 1): LooseBlock {
+  world.peakMagnitude = Decimal.max(world.peakMagnitude, valueMagnitude(value));
   if (world.stacking) {
     const key = valueKey(value);
     let best: LooseBlock | null = null;
@@ -442,9 +473,40 @@ function pipeBoost(world: World, pipe: SimPipe): number {
   return boost;
 }
 
-function tickConstruction(world: World, base: number): void {
+/** How many builds may draw the free baseRate concurrently ("pencils"):
+ *  the tuning's base count plus one per BUILD_SLOT_MILESTONE the world's peak
+ *  magnitude has crossed. Infinity when the slots rule is off (buildSlots ≤ 0). */
+export function currentBuildSlots(world: World): number {
+  const base = world.tuning.buildSlots;
+  if (base <= 0) return Infinity;
+  let slots = base;
+  for (const m of BUILD_SLOT_MILESTONES) if (world.peakMagnitude.gte(m)) slots++;
+  return slots;
+}
+
+/** A cell's position in the build queue: 0-based among unbuilt cells in
+ *  placement order. Positions < currentBuildSlots are actively drawing the
+ *  free baseRate; the rest wait (fuel still rushes them). -1 if built/absent. */
+export function buildQueuePosition(world: World, cellId: number): number {
+  let pos = 0;
   for (const cell of world.cells.values()) {
     if (cell.built) continue;
+    if (cell.id === cellId) return pos;
+    pos++;
+  }
+  return -1;
+}
+
+function tickConstruction(world: World, base: number): void {
+  // Build slots: only the first `slots` unbuilt cells (placement order) accrue
+  // the free baseRate — ONE pencil sketches at a time, early on. Fuel-rushed
+  // builds (applyFuel) are unaffected: paid parallelism is always available.
+  const slots = currentBuildSlots(world);
+  let active = 0;
+  for (const cell of world.cells.values()) {
+    if (cell.built) continue;
+    if (active >= slots) break; // the rest of the queue waits its turn
+    active++;
     cell.buildProgress = cell.buildProgress.add(base);
     if (cell.buildProgress.gte(cell.buildWork)) {
       cell.buildProgress = cell.buildWork;
@@ -466,8 +528,7 @@ function tickOperations(world: World, base: number): void {
           if (pipe.fromCell !== cell.id || pipe.inFlight !== null) continue;
           const blk = withdrawLargest(cell);
           if (!blk) break;
-          const dist = pipeDistance(world, pipe);
-          pipe.inFlight = { value: blk, work: transitWork(blk, dist, world.tuning), progress: Decimal.dZero };
+          pipe.inFlight = { value: blk, work: pipedTransitWork(world, pipe, blk), progress: Decimal.dZero };
         }
       }
       continue;
@@ -540,21 +601,36 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
     cell.kind === 'exponentiation' ||
     cell.kind === 'tetration' ||
     cell.kind === 'pentation';
+  const grade = minFuelDenomination(work, world.tuning);
   let fuelRequired = Decimal.dZero;
+  let scaffold: { min: Decimal; cap: Decimal } | null = null;
   if (amplifier && emits.length) {
     let maxMag = Decimal.dZero;
     for (const e of emits) maxMag = Decimal.max(maxMag, valueMagnitude(e.value));
     fuelRequired = fuelTax(maxMag, world.tuning);
+    // SCAFFOLDING ("show your work"): exp-tier ops additionally demand burned
+    // working notes scaling with the OUTPUT's value, payable only in the
+    // denomination band [S/band, S]. Multiplication is never scaffolded — the
+    // accelerant economy is its whole cost model.
+    const expTier = cell.kind === 'exponentiation' || cell.kind === 'tetration' || cell.kind === 'pentation';
+    if (expTier) {
+      const s = scaffoldRequirement(maxMag, world.tuning);
+      if (s.gt(Decimal.dZero)) {
+        fuelRequired = Decimal.max(fuelRequired, s);
+        scaffold = { min: Decimal.max(grade, s.div(world.tuning.scaffoldBand)), cap: s };
+      }
+    }
   }
   cell.op = {
     heldInputs: inputs,
     emits,
     work,
     progress: Decimal.dZero,
-    grade: minFuelDenomination(work, world.tuning),
+    grade,
     fuelRequired,
     fuelPaid: Decimal.dZero,
     amplifier,
+    scaffold,
   };
 }
 
@@ -568,13 +644,14 @@ function emit(world: World, cell: SimCell, port: number, value: Value): void {
   for (const pipe of world.pipes.values()) {
     if (pipe.fromCell === cell.id && pipe.fromPort === port) attached.push(pipe);
   }
+  world.produced += 1;
+  world.peakMagnitude = Decimal.max(world.peakMagnitude, valueMagnitude(value));
   if (attached.length > 0) {
     const n = attached.length;
     for (let k = 0; k < n; k++) {
       const pipe = attached[(cell.emitCursor + k) % n];
       if (pipe.inFlight === null) {
-        const dist = pipeDistance(world, pipe);
-        pipe.inFlight = { value, work: transitWork(value, dist, world.tuning), progress: Decimal.dZero };
+        pipe.inFlight = { value, work: pipedTransitWork(world, pipe, value), progress: Decimal.dZero };
         cell.emitCursor = (cell.emitCursor + k + 1) % n;
         cell.outputStalled = false;
         return;
@@ -645,10 +722,12 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
   // in as a "power cell" (its huge value = a huge, long-fading boost).
   if (cell.kind === 'accelerator') {
     cell.charge = cell.charge.add(fv);
+    world.burned = world.burned.add(fv); // charge decays — absorbed value is spent
     return;
   }
   if (!cell.built) {
     cell.buildProgress = cell.buildProgress.add(fv);
+    world.burned = world.burned.add(fv);
     cell.recentBurn = 1; // fuelling a build lights the glow too
     if (cell.buildProgress.gte(cell.buildWork)) {
       cell.buildProgress = cell.buildWork;
@@ -657,6 +736,15 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
     return;
   }
   if (cell.op !== null) {
+    // A scaffolded op (exp-tier, scaffolding on) accepts fuel ONLY in its
+    // denomination band [min, cap]: oversized blocks are refused outright
+    // (your finished result is not scratch paper — this breaks the
+    // burn-the-output-to-fund-the-next-jump chain), undersized ones too.
+    const sc = cell.op.scaffold;
+    if (sc && (fv.lt(sc.min) || fv.gt(sc.cap))) {
+      pushLoose(world, value, cell.x, cell.y + 40);
+      return;
+    }
     if (fv.gte(cell.op.grade)) {
       // Diminishing returns on overpay: a block contributes `grade^(1-p)·V^p`
       // progress (p = fuelOverpayExp). p=1 → V (no penalty); p<1 → big blocks buy
@@ -665,8 +753,10 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
       const p = world.tuning.fuelOverpayExp;
       const effective = p >= 1 ? fv : cell.op.grade.pow(1 - p).mul(fv.pow(p));
       cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(effective));
-      // The same burn pays the fuel tax (a magnitude quantity), capped at need.
+      // The same burn pays the fuel tax / scaffolding (a magnitude quantity),
+      // capped at need.
       cell.op.fuelPaid = Decimal.min(cell.op.fuelRequired, cell.op.fuelPaid.add(fv));
+      world.burned = world.burned.add(fv);
       cell.recentBurn = 1;
     } else {
       // Too small a denomination for this op — refused, lands loose.
@@ -682,6 +772,37 @@ function pipeDistance(world: World, pipe: SimPipe): number {
   const b = world.cells.get(pipe.toCell);
   if (!a || !b) return 0;
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+/** Max CHARGE of any built accelerator covering a pipe's midpoint (the powered-
+ *  logistics carry; pipeBoost is the legacy step multiplier from the same cells). */
+function pipeCoverCharge(world: World, pipe: SimPipe): Decimal {
+  const a = world.cells.get(pipe.fromCell);
+  const b = world.cells.get(pipe.toCell);
+  if (!a || !b) return Decimal.dZero;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  let charge = Decimal.dZero;
+  for (const cell of world.cells.values()) {
+    if (cell.kind !== 'accelerator' || !cell.built) continue;
+    if (Math.hypot(cell.x - mx, cell.y - my) <= ACCEL_RADIUS) charge = Decimal.max(charge, cell.charge);
+  }
+  return charge;
+}
+
+/** Transit work for a block entering a pipe, with POWERED LOGISTICS: when
+ *  `accelChargeCarry` is on, a covering accelerator's charge "carries" the
+ *  block — effective magnitude = m / (1 + charge·carry) — so a powered region
+ *  ferries numbers up to its charge, paid for by the charge's standing decay.
+ *  Computed at ENTRY (the charge at departure decides the trip). */
+function pipedTransitWork(world: World, pipe: SimPipe, value: Value): Decimal {
+  const dist = pipeDistance(world, pipe);
+  const carry = world.tuning.accelChargeCarry;
+  if (carry <= 0) return transitWork(value, dist, world.tuning);
+  const charge = pipeCoverCharge(world, pipe);
+  if (charge.lte(Decimal.dZero)) return transitWork(value, dist, world.tuning);
+  const eff = valueMagnitude(value).div(charge.mul(carry).add(1));
+  return transitWork({ kind: 'real', n: eff }, dist, world.tuning);
 }
 
 // ---------------------------------------------------------------------------

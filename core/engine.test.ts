@@ -20,6 +20,7 @@ import {
   removeCell,
   feedOperand,
   injectFuel,
+  depositToWarehouse,
   addLoose,
   moveLoose,
   takeLooseById,
@@ -30,6 +31,7 @@ import {
   getCell,
   buildFraction,
   opFraction,
+  currentBuildSlots,
 } from './engine.ts';
 
 const score = (w: ReturnType<typeof createWorld>) => totalScore(w).toNumber();
@@ -223,6 +225,215 @@ test('a tiny op DOES accept value-1 fuel (the base fuel still works low down)', 
   injectFuel(w, a, VALUE_ONE);
   // accepted → consumed (not returned to pool as a loose 1)
   assert.equal(poolCountOf(w, 1), 0, 'a 1 is valid fuel for the smallest ops');
+});
+
+// --- The 2026-06-10 fuel-economy lock (sim-tuned; HANDOVER §0) --------------
+
+test('lock: amplifiers creep at HALF baseRate; plumbing (addition) runs at full', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'multiplication');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(1000));
+  feedOperand(w, m, 1, valueOf(1000)); // 10⁶ output → a long op
+  tick(w, 1); // op starts (and accrues its first slice)
+  const p1 = getCell(w, m)!.op!.progress;
+  tick(w, 1);
+  const p2 = getCell(w, m)!.op!.progress;
+  const ampPerTick = DEFAULT_TUNING.baseRate * DEFAULT_TUNING.amplifierBaseRateScale;
+  assert.equal(p2.sub(p1).toNumber(), ampPerTick, 'multiplication accrues scaled baseRate');
+  assert.equal(DEFAULT_TUNING.amplifierBaseRateScale, 0.5, 'the locked value');
+
+  const a = placeCell(w, 'addition');
+  while (!getCell(w, a)!.built) tick(w, 1);
+  feedOperand(w, a, 0, valueOf(5e5));
+  feedOperand(w, a, 1, valueOf(5e5)); // 10⁶ → 7 digits → 49 work, multi-tick
+  tick(w, 1);
+  const q1 = getCell(w, a)!.op!.progress;
+  tick(w, 1);
+  const q2 = getCell(w, a)!.op!.progress;
+  assert.equal(q2.sub(q1).toNumber(), DEFAULT_TUNING.baseRate, 'addition keeps the full free base');
+});
+
+test('lock: overpaying fuel has √ diminishing returns (right-sized streams are optimal)', () => {
+  const w = createWorld();
+  const f = placeCell(w, 'exponentiation');
+  while (!getCell(w, f)!.built) tick(w, 1);
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(9)); // 10⁹ → work 10⁴, grade ≈ 30
+  tick(w, 1); // op starts
+  const cell = getCell(w, f)!;
+  const grade = cell.op!.grade;
+  const before = cell.op!.progress;
+  const v = grade.mul(100).toNumber(); // a 100×-grade block
+  injectFuel(w, f, valueOf(v));
+  const gained = cell.op!.progress.sub(before);
+  // effective = grade^(1-p) · V^p with the locked p = 0.5 → √(grade·V) = 10·grade.
+  assert.equal(DEFAULT_TUNING.fuelOverpayExp, 0.5, 'the locked value');
+  const expected = grade.mul(new Decimal(v)).sqrt();
+  assert.ok(gained.sub(expected).abs().div(expected).toNumber() < 1e-9, 'engine applies the overpay law');
+  assert.ok(gained.toNumber() < v * 0.2, 'a 100×-grade block buys ~10% of its value, not 100%');
+});
+
+// --- Build slots: one pencil — construction is a QUEUE, not a dump ----------
+
+const SLOTS_TUNING: TimeTuning = { ...DEFAULT_TUNING, buildSlots: 1 };
+
+test('build slots: with one pencil, the second cell waits its turn', () => {
+  const w = createWorld(SLOTS_TUNING);
+  const a = placeCell(w, 'successor');
+  const b = placeCell(w, 'successor');
+  run(w, Math.ceil(buildWork(0).toNumber()) + 1); // exactly enough for the FIRST
+  assert.equal(getCell(w, a)!.built, true, 'first build completes');
+  assert.equal(getCell(w, b)!.built, false, 'second has been queued');
+  assert.ok(getCell(w, b)!.buildProgress.lte(buildWork(1).mul(0.2)), 'queued cell barely progressed');
+  run(w, Math.ceil(buildWork(1).toNumber()) + 1); // now ITS turn runs
+  assert.equal(getCell(w, b)!.built, true, 'the queue advances');
+});
+
+test('build slots: fuel rushes a QUEUED build — paid parallelism', () => {
+  const w = createWorld(SLOTS_TUNING);
+  placeCell(w, 'successor'); // occupies the only pencil
+  const b = placeCell(w, 'addition');
+  tick(w, 1);
+  injectFuel(w, b, valueOf(1000)); // build fuel is 1:1 and grade-agnostic
+  assert.equal(getCell(w, b)!.built, true, 'a paid build skips the queue');
+});
+
+test('build slots: frontier milestones grant more pencils', () => {
+  const w = createWorld(SLOTS_TUNING);
+  assert.equal(currentBuildSlots(w), 1);
+  addLoose(w, valueOf(1e6)); // peak crosses the first slot milestone
+  assert.equal(currentBuildSlots(w), 2);
+  const a = placeCell(w, 'successor');
+  const b = placeCell(w, 'successor');
+  run(w, 3);
+  assert.ok(getCell(w, a)!.buildProgress.gt(0) && getCell(w, b)!.buildProgress.gt(0), 'two sketch at once');
+});
+
+test('build slots: off by default — everything still builds in parallel', () => {
+  const w = createWorld(); // DEFAULT_TUNING: buildSlots 0 = unlimited
+  const ids = Array.from({ length: 5 }, () => placeCell(w, 'successor'));
+  run(w, 3);
+  for (const id of ids) assert.ok(getCell(w, id)!.buildProgress.gt(0), 'no queue when the rule is off');
+});
+
+// --- Powered logistics: accelerator charge carries transit ------------------
+
+const CARRY_TUNING: TimeTuning = { ...DEFAULT_TUNING, accelChargeCarry: 1 };
+
+test('powered logistics: a charged accelerator un-freezes big blocks on pipes', () => {
+  // A 10⁸ block over a 300px pipe is frozen by the transit law (the pacing
+  // guard above pins that). With carry on and a charged accelerator covering
+  // the pipe, the SAME delivery arrives in ordinary time.
+  function arrivesWithin(charge: number | null, ticks: number): boolean {
+    const w = createWorld(CARRY_TUNING);
+    const src = placeCell(w, 'warehouse', 0, 0, { built: true });
+    const dst = placeCell(w, 'addition', 300, 0, { built: true });
+    if (charge !== null) {
+      const accel = placeCell(w, 'accelerator', 150, 0, { built: true });
+      injectFuel(w, accel, valueOf(charge));
+    }
+    depositToWarehouse(w, src, valueOf(1e8));
+    placePipe(w, src, 0, dst, 0);
+    for (let t = 0; t < ticks; t++) {
+      tick(w, 1);
+      if (getCell(w, dst)!.operands[0] !== null) return true;
+    }
+    return false;
+  }
+  assert.equal(arrivesWithin(null, 2000), false, 'unpowered: a 10⁸ block is frozen');
+  assert.equal(arrivesWithin(1e9, 2000), true, 'charged ≥ cargo: it flows');
+});
+
+test('powered logistics: off by default — the carry law changes nothing', () => {
+  const w = createWorld(); // DEFAULT_TUNING: accelChargeCarry 0
+  const src = placeCell(w, 'warehouse', 0, 0, { built: true });
+  const dst = placeCell(w, 'addition', 300, 0, { built: true });
+  const accel = placeCell(w, 'accelerator', 150, 0, { built: true });
+  injectFuel(w, accel, valueOf(1e9));
+  depositToWarehouse(w, src, valueOf(1e8));
+  placePipe(w, src, 0, dst, 0);
+  for (let t = 0; t < 2000; t++) tick(w, 1);
+  assert.equal(getCell(w, dst)!.operands[0], null, 'still frozen with the knob off');
+});
+
+test('world counters: produced and burned track emissions and fuel spends', () => {
+  const w = createWorld();
+  const s = placeCell(w, 'successor');
+  while (!getCell(w, s)!.built) tick(w, 1);
+  run(w, 10); // a few river taps → 1s emitted
+  assert.ok(w.produced > 0, 'emissions counted');
+  const m = placeCell(w, 'multiplication');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(99));
+  feedOperand(w, m, 1, valueOf(99));
+  tick(w, 1);
+  injectFuel(w, m, valueOf(100)); // ≥ grade → burned
+  assert.ok(w.burned.gte(100), 'accepted fuel magnitude counted as burned');
+});
+
+// --- Scaffolding: exp-tier ops demand working notes, in-band only ----------
+
+const SCAFFOLD_TUNING: TimeTuning = { ...DEFAULT_TUNING, scaffoldCoeff: 1 };
+
+test('scaffolding: an exp op completes ONLY after its working notes are paid in-band', () => {
+  const w = createWorld(SCAFFOLD_TUNING);
+  const f = placeCell(w, 'exponentiation');
+  while (!getCell(w, f)!.built) tick(w, 1);
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(7)); // 10⁷ — above the 10⁶ floor
+  tick(w, 1); // op starts
+  const op = getCell(w, f)!.op!;
+  // S = √(10⁷) − √(10⁶) ≈ 2162; band ≈ [S/64 ≈ 33.8, S]
+  assert.ok(op.fuelRequired.gt(2000) && op.fuelRequired.lt(2300), `S ≈ 2162, got ${op.fuelRequired}`);
+  assert.ok(op.scaffold !== null, 'the op carries its denomination band');
+
+  // Let TIME complete fully — the op must still be held open by the unpaid notes.
+  run(w, 9000); // work = 8⁴ = 4096 at amplifier base 0.5 → done well within this
+  assert.ok(getCell(w, f)!.op !== null, 'progress alone cannot finish a scaffolded op');
+  assert.equal(poolCountOf(w, 1e7), 0, 'no result emitted yet');
+
+  // Oversized block (your finished result is not scratch paper) → refused.
+  injectFuel(w, f, valueOf(5e6));
+  assert.equal(poolCountOf(w, 5e6), 1, 'above-band block lands back loose');
+  // Undersized for the band (but above the op GRADE ≈ 19) → also refused.
+  injectFuel(w, f, valueOf(25));
+  assert.equal(poolCountOf(w, 25), 1, 'below-band block lands back loose');
+  assert.ok(getCell(w, f)!.op!.fuelPaid.eq(0), 'refused blocks paid nothing');
+
+  // Two in-band notes (≈ S/2 each) pay the requirement → the op completes.
+  injectFuel(w, f, valueOf(1100));
+  injectFuel(w, f, valueOf(1100));
+  tick(w, 1);
+  assert.equal(getCell(w, f)!.op, null, 'paid in-band → op completes');
+  assert.equal(poolCountOf(w, 1e7), 1, 'the result lands');
+});
+
+test('scaffolding: multiplication is NEVER scaffolded (accelerant economy only)', () => {
+  const w = createWorld(SCAFFOLD_TUNING);
+  const m = placeCell(w, 'multiplication');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 0, valueOf(1e5));
+  feedOperand(w, m, 1, valueOf(1e5)); // 10¹⁰ output — far above the floor
+  tick(w, 1);
+  const op = getCell(w, m)!.op!;
+  assert.ok(op.fuelRequired.eq(0), 'no requirement on mult');
+  assert.equal(op.scaffold, null, 'no band on mult');
+});
+
+test('scaffolding: exp outputs at/below the floor are a free toy', () => {
+  const w = createWorld(SCAFFOLD_TUNING);
+  const f = placeCell(w, 'exponentiation');
+  while (!getCell(w, f)!.built) tick(w, 1);
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(5)); // 10⁵ ≤ the 10⁶ floor
+  tick(w, 1);
+  const op = getCell(w, f)!.op!;
+  assert.ok(op.fuelRequired.eq(0), 'no scaffolding below the floor');
+  assert.equal(op.scaffold, null);
+  injectFuel(w, f, valueOf(1e6)); // ordinary graded fuel one-shots the time-work
+  tick(w, 1);
+  assert.equal(poolCountOf(w, 1e5), 1, 'small exp completes like any op');
 });
 
 test('fuel injected at an idle cell is returned to the pool, not wasted', () => {

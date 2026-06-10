@@ -67,6 +67,7 @@
     <div class="row"><span>time</span><b>{elapsed($statsStore.elapsed)}</b></div>
     <div class="row"><span>cells / working</span><b>{$statsStore.cells} / {$statsStore.working}</b></div>
     <div class="row"><span>pipes / loose</span><b>{$statsStore.pipes} / {$statsStore.loose}</b></div>
+    <div class="row"><span>pencils (builds)</span><b>{$statsStore.building} / {$statsStore.slots === Infinity ? '∞' : $statsStore.slots}</b></div>
     <div class="speed">
       <span>speed</span>
       {#each speeds as s}

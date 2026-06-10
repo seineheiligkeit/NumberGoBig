@@ -24,7 +24,10 @@ interface NBG {
   poolSize(): number;
   pipeCount(): number;
   cellState(id: number): { built: boolean; build: number; op: number; kind: string } | null;
-  world: { cells: Map<number, { x: number; y: number; built: boolean }> };
+  world: {
+    cells: Map<number, { x: number; y: number; built: boolean }>;
+    pool: { count?: number }[];
+  };
 }
 
 declare global {
@@ -96,8 +99,10 @@ test('Multiplication amplifies score (3 × 4 → 12)', async ({ page }) => {
   }, id);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(7);
 
-  // Let the operation complete (work to write "12" ≈ 8 ticks).
-  await steps(page, 14);
+  // Let the operation complete: work to write "12" = 2³ = 8, and the locked
+  // economy runs amplifiers at HALF baseRate (amplifierBaseRateScale 0.5) →
+  // ~16 ticks. Give it headroom.
+  await steps(page, 30);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(12);
 });
 
@@ -139,8 +144,37 @@ test('a Mill liquefies a block into graded fuel, conserving score', async ({ pag
   await steps(page, 40);
   const after = await page.evaluate(() => Number(window.__nbg.score()));
   expect(after).toBe(before); // additive split conserves value
-  // the loose pool now holds the milled pieces
-  expect(await page.evaluate(() => window.__nbg.poolSize())).toBeGreaterThanOrEqual(8);
+  // The loose pool holds the milled pieces. With stacking ON (the live game),
+  // 8 identical 1000-blocks merge into ONE ×8 stack — count BLOCKS, not
+  // pool entities.
+  const blocks = await page.evaluate(() =>
+    window.__nbg.world.pool.reduce((sum, b) => sum + (b.count ?? 1), 0),
+  );
+  expect(blocks).toBeGreaterThanOrEqual(8);
+});
+
+test('a scaffolded Exponentiation holds for working notes, then launches', async ({ page }) => {
+  await bootPaused(page);
+  const f = await page.evaluate(() => window.__nbg.place('exponentiation', 0, 0));
+  await steps(page, 30); // build (first exp cell: buildWork(0) = 16)
+  await page.evaluate((i) => {
+    window.__nbg.feed(i, 0, 10);
+    window.__nbg.feed(i, 1, 7); // 10⁷ — above the 10⁶ scaffolding floor
+  }, f);
+  // Let the CLOCK complete fully (work = 8⁴ = 4096 at amplifier half-base
+  // → ~8200 ticks). The unpaid working notes must still hold the op open.
+  await steps(page, 9500);
+  expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(17); // inputs held, no result
+  // An oversized block is refused (returned loose), not burned.
+  await page.evaluate((i) => window.__nbg.fuel(i, 5e6), f);
+  // Two in-band notes (S ≈ 2162, band ≈ [34, 2162]) pay the requirement.
+  await page.evaluate((i) => {
+    window.__nbg.fuel(i, 1100);
+    window.__nbg.fuel(i, 1100);
+  }, f);
+  await steps(page, 2);
+  // Result lands (10⁷) + the bounced oversized block (5e6) + held inputs gone.
+  expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(1e7 + 5e6);
 });
 
 test('cells can be dragged to reposition the factory', async ({ page }) => {
