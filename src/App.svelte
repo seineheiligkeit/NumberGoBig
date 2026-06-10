@@ -40,9 +40,9 @@
 
   const hint = (t: Tool | null): string =>
     t === 'pipe'
-      ? 'Click an output, then an input port…'
+      ? 'Click an output, then an input port… (Esc cancels)'
       : t
-        ? 'Click the page to place…'
+        ? 'Click the page to place — the tool stays in hand. Esc puts it down.'
         : '';
 
   const speeds = [0, 1, 3, 10, 30];
@@ -89,18 +89,19 @@
   <aside class="shelf">
     <h2>Literature</h2>
     <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
-    {#each tools.filter((t) => $unlockedTools.includes(t.tool)) as t (t.tool)}
+    {#each tools.filter((t) => $unlockedTools.includes(t.tool)) as t, i (t.tool)}
       <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
-        {t.label}
+        {t.label}<span class="key">{i + 1}</span>
       </button>
     {/each}
+    <p class="keys">Space pause · −/+ speed · F fit view · Esc cancel · drag empty page to select</p>
     {#if $toolStore}
       <p class="placing">{hint($toolStore)}</p>
     {/if}
   </aside>
 
   {#if $statsStore.cells === 0}
-    <div class="onboard">Pick <b>Successor</b>, then click the river — it taps the zeros for ones.</div>
+    <div class="onboard">Pick <b>Successor</b>, place it anywhere — it taps the river of zeros into 1s.</div>
   {/if}
 
   <Marginalia />
@@ -172,6 +173,17 @@
   }
   .shelf button:hover {
     background: rgba(58, 58, 58, 0.06);
+  }
+  .shelf button .key {
+    float: right;
+    opacity: 0.4;
+    font-size: 11px;
+  }
+  .shelf .keys {
+    margin: 8px 2px 0;
+    font-size: 10.5px;
+    opacity: 0.55;
+    line-height: 1.5;
   }
   .shelf button.active {
     background: rgba(244, 230, 138, 0.6);

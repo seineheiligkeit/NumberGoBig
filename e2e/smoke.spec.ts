@@ -201,6 +201,53 @@ test('cells can be dragged to reposition the factory', async ({ page }) => {
   expect(pos.y).toBeGreaterThan(0);
 });
 
+test('sticky tools: one pick places many cells; Escape puts the tool down', async ({ page }) => {
+  await bootPaused(page);
+  await page.getByRole('button', { name: /Successor/ }).click();
+  const box = (await page.locator('canvas').boundingBox())!;
+  const cx = box.width / 2;
+  const cy = box.height * 0.42;
+  await page.mouse.click(cx - 220, cy - 120);
+  await page.mouse.click(cx + 40, cy - 120);
+  expect(await page.evaluate(() => window.__nbg.world.cells.size)).toBe(2); // tool stayed in hand
+  await page.keyboard.press('Escape');
+  await page.mouse.click(cx + 220, cy + 40);
+  expect(await page.evaluate(() => window.__nbg.world.cells.size)).toBe(2); // Esc dropped it
+});
+
+test('box-select: a marquee selects cells and dragging one moves the whole set', async ({ page }) => {
+  await bootPaused(page);
+  const ids = await page.evaluate(() => {
+    const n = window.__nbg;
+    const a = n.place('successor', -100, 0);
+    const b = n.place('successor', 100, 0);
+    for (let i = 0; i < 80; i++) n.tick(1); // builds queue serially under the slot rule
+    return [a, b] as const;
+  });
+  const box = (await page.locator('canvas').boundingBox())!;
+  const cx = box.width / 2;
+  const cy = box.height * 0.42;
+  // Marquee from an empty corner around both cells.
+  await page.mouse.move(cx - 230, cy - 130);
+  await page.mouse.down();
+  await page.mouse.move(cx + 230, cy + 130, { steps: 4 });
+  await page.mouse.up();
+  // Drag cell A by (+80, +60) — cell B must come along (group move).
+  await page.mouse.move(cx - 100, cy);
+  await page.mouse.down();
+  await page.mouse.move(cx - 20, cy + 60, { steps: 5 });
+  await page.mouse.up();
+  const pos = await page.evaluate(([a, b]) => {
+    const ca = window.__nbg.world.cells.get(a)!;
+    const cb = window.__nbg.world.cells.get(b)!;
+    return { ax: ca.x, ay: ca.y, bx: cb.x, by: cb.y };
+  }, ids);
+  expect(pos.ax).toBeGreaterThan(-60);
+  expect(pos.ay).toBeGreaterThan(20);
+  expect(pos.bx).toBeGreaterThan(140); // the OTHER cell moved by the same delta
+  expect(pos.by).toBeGreaterThan(20);
+});
+
 test('shift-click deletes a cell (the rebalancing verb)', async ({ page }) => {
   await bootPaused(page);
   const id = await page.evaluate(() => {

@@ -9,6 +9,20 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ## 0. Latest
 
+**UX PASS, Orders 1–2 of UX_PLAN.md (2026-06-10).** The audit's two highest-
+stakes workstreams are live (see UX_PLAN's progress note for the slice list):
+the game now SAYS what it wants — fuel-grade readout at every working socket,
+JAM-flash + narrator on every refusal (idle / under-grade / scaffold band /
+occupied port), overpay waste-puff, staged-operand labels, italic `a`/`b` on
+exponentiation — and the two named labor pains are gone: STICKY tools with an
+Esc/right-click cancel cascade + hotkeys (1–8, Space, −/+, F fit; bindings on
+the shelf), and marquee BOX-SELECT with halos + group move (pipes follow).
+Also fixed: the reset()/loadPreset id-recycling visual bug (E1) and the
+misleading onboarding line (E2). 61 unit + **10 e2e** green (new: sticky-tool
+and box-select tests drive real mouse gestures). Known tooling nit: the
+preview MCP screenshot capture hangs against this WebGL page — use a direct
+Playwright script (see `tmp-uxaudit/uxshot*.cjs`) for visual checks.
+
 **BUILD SLOTS ("one pencil") + the FROM-ZERO gameplay agent + new presets
 (2026-06-10, same session).** Construction is now a strategic QUEUE, and the
 challenger plays the whole game from an empty canvas under the live rules.

@@ -122,6 +122,8 @@ interface CellVisual {
   intakeZero: Text | null; // successor's river-intake 0 (animated rising), else null
   hadScaffold: boolean; // the active op demanded working notes — for the launch beat
   queueBadge: Text | null; // "№k" while waiting for a build slot (lazy)
+  gradeLabel: Text | null; // "≥ N" fuel-grade readout beside the fuel socket (lazy)
+  opLabels: Text[]; // staged/held operand value labels, one per operand port
 }
 
 interface BlockVisual {
@@ -360,8 +362,52 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   // Track Shift via the keyboard (more robust than Pixi's event modifier) —
   // shift-click deletes cells/pipes.
   let shiftHeld = false;
+  // The canonical toolbar order — hotkeys 1–8 map to the UNLOCKED tools in this
+  // order (matching what the shelf displays). Mirrored from the store.
+  const TOOL_ORDER: Tool[] = ['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'pipe'];
+  let unlockedList: Tool[] = [];
+  const unsubUnlocked = unlockedTools.subscribe((l) => (unlockedList = TOOL_ORDER.filter((t) => l.includes(t))));
+  const SPEED_STEPS = [0, 1, 3, 10, 30];
   const onKey = (e: KeyboardEvent): void => {
     shiftHeld = e.shiftKey;
+    if (e.type !== 'keydown') return;
+    // Escape / cancel: a half-laid pipe first, then the tool, then the selection.
+    if (e.key === 'Escape') {
+      if (pipeSource !== null) {
+        pipeSource = null;
+        drawPipeGhost();
+      } else if (tool) {
+        toolStore.set(null);
+      } else {
+        clearSelection();
+      }
+      if (marquee) {
+        marquee = null;
+        marqueeG.clear();
+      }
+      return;
+    }
+    // 1–8: pick the nth unlocked tool (shown on the shelf buttons).
+    const n = Number(e.key);
+    if (Number.isInteger(n) && n >= 1 && n <= unlockedList.length) {
+      const t = unlockedList[n - 1];
+      toolStore.set(tool === t ? null : t); // same key again = put the tool down
+      return;
+    }
+    if (e.key === ' ') {
+      e.preventDefault();
+      speedStore.update((s) => (s === 0 ? 3 : 0)); // Space = pause/resume
+      return;
+    }
+    if (e.key === '+' || e.key === '=' || e.key === '-') {
+      speedStore.update((s) => {
+        const i = Math.max(0, SPEED_STEPS.indexOf(s));
+        const j = e.key === '-' ? Math.max(0, i - 1) : Math.min(SPEED_STEPS.length - 1, i + 1);
+        return SPEED_STEPS[j];
+      });
+      return;
+    }
+    if (e.key === 'f' || e.key === 'F') frameWorld();
   };
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', onKey);
@@ -375,6 +421,67 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   const pipeGhost = new Graphics();
   pipeGhost.zIndex = 50;
   canvasLayer.addChild(pipeGhost);
+
+  // --- Box-select + group move (U3.1) ---------------------------------------
+  // Drag on empty canvas (no tool) sketches a dashed pencil marquee; the cells
+  // and stacks inside get a faint halo; dragging any selected member moves the
+  // whole set (pipes follow). Esc or an empty click clears.
+  const selCells = new Set<number>();
+  const selBlocks = new Set<number>();
+  let marquee: { x0: number; y0: number } | null = null;
+  let groupDrag: { x0: number; y0: number; cells: Map<number, Pt>; blocks: Map<number, Pt> } | null = null;
+  const marqueeG = new Graphics();
+  marqueeG.zIndex = 90;
+  canvasLayer.addChild(marqueeG);
+  const selectionG = new Graphics();
+  selectionG.zIndex = 89;
+  canvasLayer.addChild(selectionG);
+
+  function clearSelection(): void {
+    selCells.clear();
+    selBlocks.clear();
+    selectionG.clear();
+  }
+  function selectionSize(): number {
+    return selCells.size + selBlocks.size;
+  }
+  /** Snapshot the selection's current logical positions for a group drag. */
+  function beginGroupDrag(p: Pt): void {
+    const cells = new Map<number, Pt>();
+    for (const id of selCells) {
+      const c = world.cells.get(id);
+      if (c) cells.set(id, { x: c.x, y: c.y });
+    }
+    const blocks = new Map<number, Pt>();
+    for (const id of selBlocks) {
+      const b = world.pool.find((bl) => bl.id === id);
+      if (b) blocks.set(id, { x: b.x, y: b.y });
+    }
+    groupDrag = { x0: p.x, y0: p.y, cells, blocks };
+  }
+  /** Faint dashed halos on the selected set, redrawn each frame (cheap; the
+   *  selection is dozens at most). */
+  function drawSelection(): void {
+    selectionG.clear();
+    if (selectionSize() === 0) return;
+    for (const id of selCells) {
+      const c = world.cells.get(id);
+      if (!c) {
+        selCells.delete(id);
+        continue;
+      }
+      dashedRect(selectionG, c.x - CELL_W / 2 - 7, c.y - CELL_H / 2 - 7, CELL_W + 14, CELL_H + 14);
+    }
+    for (const id of selBlocks) {
+      const b = world.pool.find((bl) => bl.id === id);
+      if (!b) {
+        selBlocks.delete(id);
+        continue;
+      }
+      dashedRect(selectionG, b.x - BLOCK_R - 6, b.y - BLOCK_R - 6, BLOCK_R * 2 + 12, BLOCK_R * 2 + 12);
+    }
+    selectionG.stroke({ color: GRAPHITE, width: 1.1, alpha: 0.4 });
+  }
 
   // Subscribe AFTER the pipe state above exists — Svelte fires the subscriber
   // synchronously on subscribe, and it touches pipeSource / drawPipeGhost.
@@ -406,8 +513,26 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       return;
     }
     if (tool) {
+      // STICKY tools (U3.2): the opening play is "place 5–16 successors" — the
+      // tool stays in hand; Esc / right-click / re-pressing its hotkey drops it.
       placeCell(world, tool, p.x, p.y);
+      return;
+    }
+    // No tool, empty canvas: begin a box-select marquee (left-drag; the camera
+    // pans on middle/right, so this verb is free).
+    marquee = { x0: p.x, y0: p.y };
+  });
+
+  // Right-click = the same cancel cascade as Escape (and no browser menu).
+  app.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  app.stage.on('rightdown', () => {
+    if (pipeSource !== null) {
+      pipeSource = null;
+      drawPipeGhost();
+    } else if (tool) {
       toolStore.set(null);
+    } else {
+      clearSelection();
     }
   });
 
@@ -451,10 +576,27 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.on('pointermove', (e) => {
     const p = canvasPoint(e.global.x, e.global.y);
     lastPointer = p;
-    if (drag) {
+    if (groupDrag) {
+      // Group move: every selected cell/stack follows by the same delta;
+      // pipes re-project off the moved cells automatically.
+      const dx = p.x - groupDrag.x0;
+      const dy = p.y - groupDrag.y0;
+      for (const [id, base] of groupDrag.cells) moveCell(world, id, base.x + dx, base.y + dy);
+      for (const [id, base] of groupDrag.blocks) moveLoose(world, id, base.x + dx, base.y + dy);
+    } else if (drag) {
       drag.root.position.set(p.x, p.y);
     } else if (cellDrag) {
       moveCell(world, cellDrag.id, p.x - cellDrag.dx, p.y - cellDrag.dy);
+    } else if (marquee) {
+      marqueeG.clear();
+      dashedRect(
+        marqueeG,
+        Math.min(marquee.x0, p.x),
+        Math.min(marquee.y0, p.y),
+        Math.abs(p.x - marquee.x0),
+        Math.abs(p.y - marquee.y0),
+      );
+      marqueeG.stroke({ color: GRAPHITE, width: 1.2, alpha: 0.5 });
     } else if (tool === 'pipe' && pipeSource !== null) {
       drawPipeGhost();
     }
@@ -465,6 +607,33 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   function endDrag(globalX: number, globalY: number): void {
     cellDrag = null;
+    if (groupDrag) {
+      groupDrag = null; // positions were applied live; the set stays selected
+      return;
+    }
+    if (marquee) {
+      // Finalize the box-select: collect cells (by centre) and stacks inside.
+      const p0 = canvasPoint(globalX, globalY);
+      const x0 = Math.min(marquee.x0, p0.x);
+      const y0 = Math.min(marquee.y0, p0.y);
+      const x1 = Math.max(marquee.x0, p0.x);
+      const y1 = Math.max(marquee.y0, p0.y);
+      marquee = null;
+      marqueeG.clear();
+      clearSelection();
+      if (x1 - x0 > 6 || y1 - y0 > 6) {
+        for (const c of world.cells.values()) {
+          if (c.x >= x0 && c.x <= x1 && c.y >= y0 && c.y <= y1) selCells.add(c.id);
+        }
+        for (const b of world.pool) {
+          if (b.x >= x0 && b.x <= x1 && b.y >= y0 && b.y <= y1) selBlocks.add(b.id);
+        }
+        if (selectionSize() > 0) {
+          note('A selection. Drag any member to move the set; Esc to release it.', 'first-select');
+        }
+      }
+      return; // a tiny rect = an empty click = selection cleared, nothing else
+    }
     if (!drag) return;
     const id = drag.id;
     const p = canvasPoint(globalX, globalY);
@@ -487,20 +656,43 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (target.fuel) {
           // The whoosh fires off the burn rising-edge in updateCellVisual (so
           // hand-drop and pipe-fed fuel feel identical, and a fuel block bounced
-          // off an idle cell doesn't falsely ignite).
-          // Scaffolded ops refuse out-of-band blocks — explain the bounce once.
-          const sc = world.cells.get(target.cellId)?.op?.scaffold;
-          if (sc) {
-            const m = valueMagnitude(stack.value);
-            if (m.gt(sc.cap)) {
+          // off an idle cell doesn't falsely ignite). REFUSALS, though, must
+          // never be silent (UX_PLAN U1.1) — diagnose before the engine bounces
+          // the block, flash the socket, and let the narrator teach the rule.
+          const c = world.cells.get(target.cellId)!;
+          const fv = valueMagnitude(stack.value);
+          const sc = c.op?.scaffold ?? null;
+          const fL = c.kind === 'accelerator' ? { x: 0, y: 0 } : portLayout(c.kind).fuel;
+          let refused = false;
+          if (c.kind !== 'accelerator' && c.built) {
+            if (!c.op) {
+              refused = true;
+              note('Nothing is burning here — fuel quickens a WORKING cell. It returns to the pool.', 'refuse-idle');
+            } else if (sc && fv.gt(sc.cap)) {
+              refused = true;
               note('Refused — your finished result is not scratch paper. Mill it down to note size, perhaps.', 'scaffold-too-big');
-            } else if (m.lt(sc.min)) {
+            } else if (sc && fv.lt(sc.min)) {
+              refused = true;
               note('Refused — too slight for working notes. It wants something near the task at hand.', 'scaffold-too-small');
+            } else if (!sc && fv.lt(c.op.grade)) {
+              refused = true;
+              note(`Refused. This operation does not take small change — it asks ≥ ${formatScore(c.op.grade)}.`, 'refuse-grade');
             }
+          }
+          if (refused) {
+            jamFlash(c.x + fL.x, c.y + fL.y);
+            juice.burst(c.x + fL.x, c.y + fL.y, 4, 26);
+          } else if (c.op && !sc && GAME_TUNING.fuelOverpayExp < 1 && fv.gt(c.op.grade.mul(20))) {
+            // OVERPAY (U1.2): the block burns, but most of it as smoke — an
+            // oversized waste-puff + a one-time note teach the √ law by
+            // consequence, never by dialog.
+            juice.burst(c.x + fL.x, c.y + fL.y, 14, 70);
+            note('Most of that burned as smoke. Fuel near the asking grade goes furthest.', 'overpay');
           }
           injectFuel(world, target.cellId, stack.value);
         } else if (!feedOperand(world, target.cellId, target.port, stack.value)) {
           consumed = false; // port occupied / cell busy — nothing taken
+          jamFlash(p.x, p.y); // an occupied/unready port is a refusal too (U1.2/A2)
         }
         const remaining = consumed ? stack.count - 1 : stack.count;
         if (remaining > 0) addLoose(world, stack.value, p.x, p.y, remaining);
@@ -508,6 +700,33 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     } else {
       moveLoose(world, id, p.x, p.y);
     }
+  }
+
+  /** One-shot refusal cue: a dashed JAM ring that expands and fades (~0.6s).
+   *  The transient cousin of drawClogMark — same vocabulary, single beat. */
+  function jamFlash(x: number, y: number): void {
+    const g = new Graphics();
+    fxLayer.addChild(g);
+    let life = 0;
+    const step = (t: { deltaMS: number }): void => {
+      life += t.deltaMS;
+      const a = 1 - life / 600;
+      g.clear();
+      if (a <= 0) {
+        app.ticker.remove(step);
+        g.destroy();
+        return;
+      }
+      const r = 11 + (1 - a) * 7;
+      const segs = 6;
+      for (let i = 0; i < segs; i++) {
+        const a0 = (i / segs) * Math.PI * 2;
+        g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
+        g.arc(x, y, r, a0, a0 + 0.52);
+      }
+      g.stroke({ color: JAM_TINT, width: 1.6, alpha: 0.85 * a });
+    };
+    app.ticker.add(step);
   }
 
   /** Find an operand/fuel port near a canvas point (for drop resolution). */
@@ -736,6 +955,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         return;
       }
       const p = canvasPoint(e.global.x, e.global.y);
+      // A selected member grabs the whole SET (U3.1 group move).
+      if (selCells.has(id) && selectionSize() > 1) {
+        beginGroupDrag(p);
+        return;
+      }
       cellDrag = { id, dx: p.x - c.x, dy: p.y - c.y };
     });
 
@@ -809,9 +1033,39 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
     body.addChild(ports, idleHint, outline, glyph, meter);
     if (info) body.addChild(info);
+    // Staged-operand readouts: what each port holds (kept while the op runs as
+    // the HELD inputs) — you can predict the output and catch a mis-feed.
+    const opLabels: Text[] = [];
+    {
+      const L = portLayout(cell.kind);
+      for (const port of L.operands) {
+        const t = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 10, fill: GRAPHITE } });
+        // Below the port, centred — clear of the clock ring and the glyph.
+        t.anchor.set(0.5, 0);
+        t.position.set(port.x + 2, port.y + PORT_R + 1);
+        t.alpha = 0.75;
+        body.addChild(t);
+        opLabels.push(t);
+      }
+      // Non-commutative operators label their ports (10^40 vs 40^10 is a
+      // catastrophic difference): italic a (base) over b (exponent).
+      if (cell.kind === 'exponentiation') {
+        const letters = ['a', 'b'];
+        L.operands.forEach((port, i) => {
+          const t = new Text({
+            text: letters[i] ?? '',
+            style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 13, fontStyle: 'italic', fill: GRAPHITE },
+          });
+          t.anchor.set(1, 0.5);
+          t.position.set(port.x - PORT_R - 3, port.y);
+          t.alpha = 0.6;
+          body.addChild(t);
+        });
+      }
+    }
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero, hadScaffold: false, queueBadge: null };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero, hadScaffold: false, queueBadge: null, gradeLabel: null, opLabels };
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -894,6 +1148,17 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       vis.prevBurn = burn;
     }
 
+    // Staged-operand readouts (every operator cell): what each port holds.
+    // While an op runs, the HELD inputs stay visible — the cell never goes
+    // amnesiac about what it's computing on.
+    if (cell.built && vis.opLabels.length > 0) {
+      for (let i = 0; i < vis.opLabels.length; i++) {
+        const v = cell.operands[i] ?? cell.op?.heldInputs[i] ?? null;
+        const label = v ? formatScore(valueMagnitude(v)) : '';
+        if (vis.opLabels[i].text !== label) vis.opLabels[i].text = label;
+      }
+    }
+
     // Output back-pressure: all output pipes full → result spilling loose. Drawn
     // in the top FX layer (world space) so blocks/cells don't cover the cue.
     if (cell.outputStalled) {
@@ -931,7 +1196,30 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // Output result: the numeral is WRITTEN left-to-right over the op (a reveal
     // mask), with a clock-sweep ring around the operator glyph for progress.
     vis.meter.clear();
+    if (!cell.op && vis.gradeLabel) vis.gradeLabel.visible = false;
     if (cell.op) {
+      // Fuel-grade readout (UX_PLAN's #1 finding): a working op pencils its
+      // asking denomination beside the fuel socket — under-grade fuel is
+      // silently refused by the engine, so SAY the grade up front. Scaffolded
+      // ops show their band floor (the working-note minimum).
+      const gradeMin = cell.op.scaffold ? cell.op.scaffold.min : cell.op.grade;
+      if (gradeMin.gt(1)) {
+        if (!vis.gradeLabel) {
+          vis.gradeLabel = new Text({
+            text: '',
+            style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 12, fill: GRAPHITE },
+          });
+          vis.gradeLabel.anchor.set(0, 0.5);
+          vis.gradeLabel.position.set(13, CELL_H / 2 + 1);
+          vis.gradeLabel.alpha = 0.6;
+          vis.body.addChild(vis.gradeLabel);
+        }
+        const txt = `≥ ${formatScore(gradeMin)}`;
+        if (vis.gradeLabel.text !== txt) vis.gradeLabel.text = txt;
+        vis.gradeLabel.visible = true;
+      } else if (vis.gradeLabel) {
+        vis.gradeLabel.visible = false;
+      }
       const f = opFraction(cell);
       const out = cell.op.emits[0]?.value;
       const key = out ? `${out.kind}:${valueMagnitude(out).toString()}` : 'none';
@@ -1094,6 +1382,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
     root.on('pointerdown', (e) => {
       e.stopPropagation();
+      // A selected stack grabs the whole SET (U3.1 group move).
+      if (selBlocks.has(id) && selectionSize() > 1) {
+        beginGroupDrag(canvasPoint(e.global.x, e.global.y));
+        return;
+      }
       drag = { id, root };
       root.zIndex = 100;
     });
@@ -1170,6 +1463,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     syncPipes();
     syncCells();
     syncBlocks();
+    drawSelection(); // U3.1 halos track their (possibly moving) members
     juice.step(t.deltaMS); // visual-only, real-time (independent of sim pause/speed)
     scoreStore.set(formatScore(totalScore(world)));
     // Dev monitors — refresh a few times a second (frontier scan is O(pool)).
@@ -1290,9 +1584,24 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     restoreCamera({ x: app.screen.width / 2 - cx * scale, y: app.screen.height / 2 - cy * scale, scale });
   }
 
-  /** Clear the canvas to an empty world; visuals tear down on the next sync. */
+  /** Clear the canvas to an empty world. Visual caches are purged HERE, not
+   *  left to the next sync: `resetWorld` recycles ids from 1, so a same-frame
+   *  rebuild (loadPreset) would otherwise hand old visuals to new same-id
+   *  entities — an exponentiation wearing a `×` glyph (UX_PLAN E1). */
   function reset(): void {
     resetWorld(world);
+    for (const [, vis] of cellVisuals) {
+      vis.clog?.destroy();
+      vis.root.destroy({ children: true });
+    }
+    cellVisuals.clear();
+    for (const [, vis] of blockVisuals) vis.root.destroy({ children: true });
+    blockVisuals.clear();
+    for (const [, vis] of pipeVisuals) {
+      vis.clog?.destroy();
+      vis.root.destroy({ children: true });
+    }
+    pipeVisuals.clear();
     drag = null;
     cellDrag = null;
     pipeSource = null;
@@ -1326,6 +1635,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       window.removeEventListener('keyup', onKey);
       unsubTool();
       unsubSpeed();
+      unsubUnlocked();
       juice.destroy();
       app.destroy(true, { children: true });
     },
@@ -1333,6 +1643,26 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 }
 
 // --- Drawing helpers -------------------------------------------------------
+
+/** Dashed pencil rectangle PATH (caller strokes) — the marquee + selection halos. */
+function dashedRect(g: Graphics, x: number, y: number, w: number, h: number): void {
+  const dash = 8;
+  const gap = 5;
+  const edge = (ax: number, ay: number, bx: number, by: number): void => {
+    const len = Math.hypot(bx - ax, by - ay);
+    const ux = (bx - ax) / (len || 1);
+    const uy = (by - ay) / (len || 1);
+    for (let d = 0; d < len; d += dash + gap) {
+      const e2 = Math.min(d + dash, len);
+      g.moveTo(ax + ux * d, ay + uy * d);
+      g.lineTo(ax + ux * e2, ay + uy * e2);
+    }
+  };
+  edge(x, y, x + w, y);
+  edge(x + w, y, x + w, y + h);
+  edge(x + w, y + h, x, y + h);
+  edge(x, y + h, x, y);
+}
 
 /** A pulsing dashed JAM_TINT ring — the unmissable back-pressure cue. Redrawn
  *  each frame while a stall persists (the pulse draws the eye to the jam). */

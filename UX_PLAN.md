@@ -164,6 +164,19 @@ out).
 
 ---
 
+> **Progress (2026-06-10, first UX session):** Orders 1–2 SHIPPED — ✅ U5.1
+> (reset purges visual caches), ✅ U5.2 (onboarding copy), ✅ U1.1 (grade
+> readout `≥ N` at the fuel socket + jamFlash refusal ring + narrator notes
+> for idle/grade/band refusals), ✅ U1.2 (overpay waste-puff + note; occupied
+> operand ports also flash), ✅ U1.3 (staged/held operand value labels under
+> each port), ✅ U1.4 (italic `a`/`b` on exponentiation ports — pulled forward),
+> ✅ U3.1 (marquee box-select + halos + group move, pipes follow, Esc/empty
+> click clears), ✅ U3.2 (sticky tools, Esc/right-click cancel cascade, hotkeys
+> 1–8/Space/−+/F with bindings on the shelf), ✅ U5.3 partial (e2e: sticky
+> tool, box-select group move; refusal-bounce e2e deferred — engine refusal
+> semantics already unit-tested). 10 e2e + 61 unit green. NEXT: Order 3
+> (U2.1–.3 river/contrast/overlay), then U1.5–.7, U4.
+
 ## Part II — The plan
 
 Five workstreams, in stakes order. House rules apply: pencil aesthetic,
