@@ -405,6 +405,21 @@ extending.
   current rules (opening / mult factory / launch prep / powered age), all
   verified headlessly. 61 unit + 8 e2e green.
 
+- ✅ **The UX pass — UX_PLAN.md executed in full, Orders 1–6 (2026-06-10).**
+  Four commits on `main`. Feedback: fuel-grade readouts, never-silent refusals
+  (JAM flash + narrator), overpay smoke, staged-operand labels, a/b port
+  letters, drag-aware drop targets, ETAs + shelf build-cost previews, ghost
+  under-trace. Labor: sticky tools + hotkeys + Esc/right-click cancel,
+  box-select group move, drag-to-wire + reroute-in-place + pipe tooltips,
+  Ctrl+Z un-erase, warehouse withdraw/collect (new tested engine verbs).
+  Hygiene: river slimmed + zoom-fade + bank line, numeral contrast underlays,
+  panel-aware framing, collapsible cards, zoom LOD (state chips + `e22` block
+  tags). Instruments: the live inspector card (with the one-shot grade-fit
+  hint), Σ/s + blocks/s + the two-starvation bottleneck line, the timestamped
+  journal, vocabulary legend, ONE `1.23×10⁸` number language, "Apparatus".
+  Bugs E1/E2 fixed. 62 unit + 11 e2e green. Deferred by design: minimap,
+  area labels. **Next session: sim tuning (HANDOVER §0a).**
+
 ---
 
 ## Phase 0 — Carve the minimal baseline

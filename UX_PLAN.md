@@ -1,5 +1,9 @@
 # UX_PLAN — UI/UX audit + improvement plan (*time-as-labor*)
 
+> **STATUS: COMPLETE (2026-06-10).** All six orders shipped (see the progress
+> notes before Part II for the slice-by-slice record). Deferred by design:
+> minimap, area-label naming UI — revisit only if the human playtest asks.
+
 *Written 2026-06-10, from a code-walk of `src/lib/view/` + `core/engine.ts` and a
 headless screenshot audit of the live game at every preset stage (captures +
 the reusable harness live in `tmp-uxaudit/` — `shots.mjs` full-screen stages,

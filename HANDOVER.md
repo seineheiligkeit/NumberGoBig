@@ -1,345 +1,99 @@
-# Session handover — *Time as Labor* prototype
+﻿# Session handover — *Time as Labor* prototype
 
-*Last updated: 2026-06-10. Branch: `time-as-labor`. Read this first when picking
-up. The design north star is [`TIME_AS_LABOR.md`](./TIME_AS_LABOR.md); the
-sliced plan + full progress log is [`TIME_AS_LABOR_PLAN.md`](./TIME_AS_LABOR_PLAN.md).
+*Last updated: 2026-06-10. Branch: `main` (the prototype was promoted; the old
+game lives on `legacy-main`). Read this first when picking up. The design north
+star is [`TIME_AS_LABOR.md`](./TIME_AS_LABOR.md); the sliced plan + full
+progress log is [`TIME_AS_LABOR_PLAN.md`](./TIME_AS_LABOR_PLAN.md); the UX
+audit + its completed execution notes are [`UX_PLAN.md`](./UX_PLAN.md).
 This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ---
 
-## 0. Latest
+## 0. Latest — state of the game (2026-06-10, the new-economy + UX mega-session)
 
-**UX PASS, Order 6 (same session) — UX_PLAN.md is COMPLETE.** Zoom LOD (state
-chips + `e22` block tags below 0.5× — the altitude board), warehouse
-hand-verbs (inspector buttons → new engine `withdrawFromWarehouse` /
-`collectNearby`, tested), pipe ergonomics (drag-to-wire from any output nub,
-grab a pipe's arrival end to reroute in place, hover tooltip with cargo +
-trip remaining), one-step undo (Ctrl+Z un-erases the last cell/pipe — held
-blocks stay loose, no value dupes), the journal (timestamped back page for
-all narrator notes — nothing evaporates), "Apparatus" rename + tool tooltips
-+ a `?` vocabulary legend, and ONE number language (`1.23×10⁸` superscripts
-everywhere; captions explain Σ vs frontier). 62 unit + 11 e2e green. Only
-the two deliberate deferrals remain: minimap, area labels.
+One session built and shipped the complete economy and the complete UX pass.
+Everything below is LIVE on `main`, suite green (**62 unit + 11 e2e**, check
+0/0, build clean). The detail trail: the progress log in
+[TIME_AS_LABOR_PLAN.md](./TIME_AS_LABOR_PLAN.md), the per-slice progress notes
+in [UX_PLAN.md](./UX_PLAN.md), and the five session commits on `main`.
 
-**UX PASS, Order 5 (same session).** The stat-overview gap is closed: a live
-INSPECTOR card (click any cell/block without dragging — role, state, held
-operands, labor, fuel grade or notes-due/band, pipes; blocks show fuel worth
-+ the one-shot grade-fit hint; Esc/click-away closes; e2e via DOM asserts)
-and player-grade MONITOR instruments (windowed Σ/s + blocks/s, and the
-two-starvation bottleneck line "N idle for operands · M crawling unfuelled").
-11 e2e + 61 unit green. UX_PLAN remaining: Order 6 only.
+**The five systems (in dependency order):**
 
-**UX PASS, Orders 3–4 (same session).** The clutter floor + time visibility:
-river slimmed/fainter with a bank line and a ZOOM FADE (invisible past ~0.65×
-— altitude shows the factory, not soup), paper underlays guarantee numeral
-contrast over the heaviness hatch, `frameWorld`/F frames into the UNOCCUPIED
-viewport (shelf/monitor/river margins), marginalia raised clear of the river,
-both panels collapse (`<details>` cards). Drag-aware drop targets (compatible
-ports brighten; refusing fuel sockets show faint JAM dash), `~3m` remaining-
-time under working cells + active builds (honest current-rate), live
-build-cost previews on every shelf button, and a faint ghost under-trace so
-long ops never read dead. See UX_PLAN's progress note; remaining: Orders 5–6
-(inspector + rates, zoom LOD, pool shelf, warehouse verbs, pipe ergonomics,
-undo, journal, legend).
+1. **The fuel-economy LOCK** — `amplifierBaseRateScale 0.5 / fuelOverpayExp
+   0.5` promoted into `DEFAULT_TUNING`. Sim-validated: monotonic across the
+   human rate range, idle never stalls, −91 oom fuel-dependence at 1 action/s.
+   Two engine lock-guard tests pin it.
+2. **SCAFFOLDING ("show your work")** — exp-tier ops demand
+   `C·M^α` of working notes, payable only in the band [S/64, S]; oversized
+   blocks refused (kills the self-funding exp snowball the challenger found).
+   Floor 1e6 keeps toy exps free. **Candidate values α=0.5 C=1 band=64 —
+   NOT yet locked** (see §0a). Exp unlocks at the 1e9 frontier milestone.
+3. **POWERED LOGISTICS** — an accelerator's charge carries transit
+   (`m/(1+charge·carry)` at pipe entry, pipe-feedable, decaying = the standing
+   burn). The Mill right-sizes oversized blocks into in-band notes (one pass
+   for blocks ≤16×S).
+4. **BUILD SLOTS ("one pencil")** — construction queues in placement order;
+   fuel rushes any queued build; slots grow at `BUILD_SLOT_MILESTONES`
+   (1e6/1e12/1e30/1e100 vs `world.peakMagnitude`). Build order is the early
+   strategic puzzle.
+5. **The FROM-ZERO challenger** (`sim/challenger.ts --live --from-zero`) —
+   THE gameplay benchmark (the manager is retired): gated build program,
+   fuel-rushed construction, sticky launch campaigns, Mill-minted notes.
+   4 h from-zero results are FLAT across 1/30→1/s action rates (e210–e305,
+   sawtooth noise): **strategy dominates APM by construction**; returns
+   saturate ~1 action/10 s.
 
-**UX PASS, Orders 1–2 of UX_PLAN.md (2026-06-10).** The audit's two highest-
-stakes workstreams are live (see UX_PLAN's progress note for the slice list):
-the game now SAYS what it wants — fuel-grade readout at every working socket,
-JAM-flash + narrator on every refusal (idle / under-grade / scaffold band /
-occupied port), overpay waste-puff, staged-operand labels, italic `a`/`b` on
-exponentiation — and the two named labor pains are gone: STICKY tools with an
-Esc/right-click cancel cascade + hotkeys (1–8, Space, −/+, F fit; bindings on
-the shelf), and marquee BOX-SELECT with halos + group move (pipes follow).
-Also fixed: the reset()/loadPreset id-recycling visual bug (E1) and the
-misleading onboarding line (E2). 61 unit + **10 e2e** green (new: sticky-tool
-and box-select tests drive real mouse gestures). Known tooling nit: the
-preview MCP screenshot capture hangs against this WebGL page — use a direct
-Playwright script (see `tmp-uxaudit/uxshot*.cjs`) for visual checks.
+**The UX pass (UX_PLAN.md, all six orders SHIPPED):** the game says what it
+wants (fuel-grade readouts, never-silent refusals with JAM flashes + narrator,
+overpay smoke, staged-operand labels, a/b port letters, drag-aware drop
+targets, `~3m` ETAs everywhere + shelf build-cost previews); the named labor
+pains are gone (sticky tools, hotkeys 1–8/Space/−+/F, Esc/right-click cancel,
+box-select group move, drag-to-wire, pipe reroute-in-place + hover tooltips,
+Ctrl+Z un-erase, warehouse withdraw/collect); the screen is clean at every
+altitude (river slimmed + zoom-fade, numeral contrast guarantee, panel-aware
+framing, collapsible cards, zoom LOD state-chips + `e22` block tags); and the
+player has instruments (live inspector card with the one-shot grade-fit hint,
+Σ/s + blocks/s + the two-starvation bottleneck line, the timestamped journal,
+a vocabulary legend, ONE `1.23×10⁸` number language, "Apparatus"). Deferred
+by design: minimap, area labels.
 
-**BUILD SLOTS ("one pencil") + the FROM-ZERO gameplay agent + new presets
-(2026-06-10, same session).** Construction is now a strategic QUEUE, and the
-challenger plays the whole game from an empty canvas under the live rules.
-**The manager is RETIRED as the gameplay benchmark** — use
-`sim/challenger.ts --live --from-zero`. Suite: 61 unit + 8 e2e, check 0/0.
+**Live tuning seams:** `GAME_TUNING` (game-view.ts) = DEFAULT + `scaffoldCoeff
+1, accelChargeCarry 1, buildSlots 1` — these three are the candidates the next
+session locks (the lock→promote→re-baseline pattern is established).
 
-- **The slots law** (`TimeTuning.buildSlots`, 0 = off, GAME_TUNING = 1; engine
-  `currentBuildSlots`/`buildQueuePosition`): only the first K unbuilt cells
-  (placement order) draw the free baseRate; the rest queue. **Fuel rushes any
-  queued build** (1:1, grade-agnostic) — concurrency is priced, not forbidden,
-  so the feel-bad "wait 40 min" wall can always be paid through. Slots grow at
-  the shared `BUILD_SLOT_MILESTONES` (1e6/1e12/1e30/1e100, judged against the
-  new `world.peakMagnitude`) — one rule for game AND sims. View: №k-in-queue
-  badges, "a second pencil" narrator beats, a pencils row in the monitor.
-- **From-zero agent** (`--from-zero`): staged, gated build program (starter
-  tree → mults → depth-3 → exps only after the 1e9 unlock → depth-4),
-  fuel-rushed builds, **sticky launch campaigns** (lock the note band when
-  stocking starts — a target re-derived from a moving apex never fires), and
-  **the Mill as the note-minter** (one pass splits an oversized block into 16
-  in-band notes; merges almost never land in the 1.8-digit band — the Mill is
-  now structurally essential, worth ×10³⁷ digits in the 1/s run).
-- **THE PACING RESULT (4 h from zero, live rules):** frontier is FLAT across
-  a 30× action-rate spread — 1/30 s: e305 · 1/10 s: e210 · 1/3 s: e231 ·
-  1/s: e283 (differences = launch-sawtooth noise). **Strategy dominates APM
-  by construction**; returns on extra actions saturate at ~1 action/10 s.
-  There is always something worth doing (agents found useful actions at every
-  rate), but never a reason to spam. Early game is where rates differ
-  (build-out takes ~40 min at 1/3 s vs ~20 min at 1/s); late game equalizes.
-- **Presets rebuilt** for the current rules (`presets.ts`): Opening (with a
-  visible build queue) · Mult factory (pre-1e9) · Launch prep (a staged first
-  launch: base+exponent fed, four in-band notes beside it) · Powered age
-  (warehouse-fed accelerator pipe + a mill with oversized blocks to shred).
-  All four verified loading + ticking headlessly, zero console errors.
-- **Design finding for later:** scaffolding is RECURSIVE at scale — minting
-  notes by exponentiation needs smaller notes, a ladder of preparations all
-  the way down. A planning player can launch far more often than the greedy
-  agent (e283 at 1/s is a FLOOR). The ladder is the late-game engineering
-  puzzle, unprompted.
+**Tooling notes:** the preview-MCP screenshot capture hangs against this WebGL
+page — use the Playwright harness scripts in repo-ignored `tmp-uxaudit/`
+(`uxshot*.cjs`). World telemetry counters exist (`produced`, `burned`,
+`peakMagnitude`); the challenger prints a 12-row session timeline on single
+runs.
 
-**SLICES 2 + 3 — the new economy is LIVE in the game (2026-06-10, same
-session; awaiting the human playtest).** `GAME_TUNING` now opts into
-`scaffoldCoeff: 1` (the Slice-1 candidate: α=0.5, band=64, floor=1e6) and
-`accelChargeCarry: 1`. Suite: **57 unit tests + 8 e2e green**, check 0/0,
-build clean, preview-verified (zero console errors).
+## 0a. Next session — SIM TUNING agenda (the open balance items)
 
-- **Slice 2 (view):** Exponentiation is no longer drafted by building a mult —
-  it UNLOCKS at the one-billion frontier milestone ("…be warned, it will
-  demand to see your work"). A scaffolded op draws a second, DASHED outer
-  ring (notes paid / required) around the clock-sweep; narrator beats for the
-  first scaffold demand (with the actual band numbers), the first paid launch
-  (flash + milestone sting), and both band refusals ("your finished result is
-  not scratch paper — Mill it down, perhaps"). Accelerators read
-  `carries ≤X` (their charge = what covered pipes can ferry).
-- **Slice 3 (engine, `accelChargeCarry`):** powered logistics — a block
-  entering a pipe covered by a charged accelerator gets effective transit
-  magnitude `m/(1+charge·carry)`, computed at entry (warehouse withdrawals
-  too). Charge can be FED BY PIPE (applyFuel on an accelerator adds charge),
-  decays per tick (the standing burn), so late-game note delivery is
-  automatable. The Mill already right-sizes: a block in (S, 16·S] mills into
-  16 in-band notes in ONE pass. Off in DEFAULT_TUNING; 3 new engine tests.
-- **World counters** for session telemetry: `world.produced` (blocks emitted)
-  and `world.burned` (fuel magnitude spent — ops, builds, charge). The
-  challenger reports a 12-row session timeline (`--rate` single runs).
-- **Cadence watch-item for the playtest:** at engaged pace the 8 paid
-  launches FRONT-LOAD (all within ~20 min, then a 3–4 h rebuild before the
-  9th — inter-launch periods grow with digits). Casual pace is lovely (one
-  launch mid-session). If the playtest wants evener spacing, higher α
-  (smaller, cheaper jumps) is the lever — needs the hardened sweep agent
-  first.
-
-**SLICE 1 — SCAFFOLDING ("show your work"), the exponentiation pacing law
-(2026-06-10, built sim-first, awaiting review before promotion).** The
-challenger's exp snowball (learning #14) is closed by a new law in
-`core/time.ts` + `core/engine.ts`, behind `TimeTuning.scaffold*` knobs (**off
-in DEFAULT_TUNING** — the live game is untouched until the values are locked):
-
-- **The law.** An exp-tier op (exponentiation+) producing output magnitude M
-  demands `S = scaffoldCoeff·(M^α − floor^α)` of burned magnitude (its
-  *working notes* — the intermediate powers), payable ONLY in blocks within
-  the denomination band **[S/scaffoldBand, S]**. Blocks above the band are
-  refused outright (your finished result is not scratch paper) — this is what
-  breaks the burn-the-output-to-fund-the-next-jump chain. baseRate never pays
-  it; outputs ≤ scaffoldFloor (1e6) are a free toy. Multiplication is NEVER
-  scaffolded (the locked accelerant economy is its whole cost model). Reuses
-  the V2-era `fuelRequired/fuelPaid` machinery + a new `op.scaffold` band.
-  **7 new tests (61 total).**
-- **Validated shape (challenger, scaffolding-aware, C=1 α=0.5 band=64, 4 h):**
-  the 10^10^236,740-digit tower collapses to a paced sawtooth — engaged (1/s):
-  **e4978 via 8 PAID milestone launches** (~one prepared launch / 30 min,
-  ×1.5–2 digits each, forced pyramid rebuild between); casual (1/30 s):
-  **exactly 1 paid launch**, e151 vs e118 no-exp. Sub-floor toy exps stay
-  free and harmless. Mult-only baseline: e149 — exp is a real, earned edge.
-- **Candidate lock: α=0.5, C=1, band=64, floor=1e6.** α sets milestone size
-  (launch ≈ ×1/α digits when stocked); C taxes SMALL jumps hardest (C=1000 →
-  exp break-even — too harsh); band sets how many chunks a launch is paid in.
-- **Honest caveat for the next pass:** the α/C cross-sweep
-  (`sim/scaffold-sweep.ts`) is confounded by AGENT brittleness — the
-  challenger's mint-targeting hardcodes a 1.5× launch target and a single
-  note band, so off-candidate settings measure the agent, not the law
-  (non-monotonic α rows, C=30 ≡ C=100 byte-identical). Before locking
-  anything other than the candidate, harden the sweep agent: multi-target
-  stocking, per-α adaptive launch sizing, and judge cadence by **paid**
-  launches (the `paidExps` metric) — never raw launch counts.
-- Strategy lessons that cost real debugging, for the agent-hardening pass:
-  toy exps must COMPETE with merges, never short-circuit them (a 1/30 s run
-  spent its whole session on 16^4 hops); the mint band must derive from the
-  prospective launch's notes (α·D*), not from the apex; micro-launches drain
-  the notes the big jump needs — gate paid launches at ≥1.5× apex digits.
-
-**THE FUEL-ECONOMY LOCK — 0.5/0.5 promoted to `DEFAULT_TUNING` (2026-06-10,
-the tuning session).** The two knobs from the entry below were sim-tuned across
-the full human rate range and **locked at `amplifierBaseRateScale: 0.5,
-fuelOverpayExp: 0.5`**. `GAME_TUNING` is now just `{ ...DEFAULT_TUNING }` —
-game and sims share one economy. The pre-lock "vanilla" economy is available
-only by passing `{ amplifierBaseRateScale: 1, fuelOverpayExp: 1 }` explicitly
-(`fuel-overpay.ts`'s baseline row does; `manager.ts` / `play.ts` CLI flag
-defaults now read `DEFAULT_TUNING`). Tests are **47** (two new lock-guards pin
-the halved amplifier base + the √ overpay law in the engine).
-
-- **Decision evidence (4 h windows, both probes).** The **manager**
-  (optimal-play probe, 14 400 ticks) is **strictly monotonic across the whole
-  human range only at 0.5/0.5**: 1/60 → 1/s gives e19 → e24 → e34 → e41 → e43,
-  no saturation — every step of engagement is rewarded. The competitors fail
-  on shape: (1, 0.5) and (0.25, 0.5) saturate by ~1/3 s; (0.5, 1) leaves
-  overpay free (half of "fuel matters" undone); (0.5, 0.3) just compresses.
-  Fuel-dependence at 1 action/s: **−91 oom vs vanilla**. Idle never stalls
-  (e17–e19 from zero in 4 h).
-- **`sim/play.ts` grew tuning flags** (`--amp-base S`, `--overpay P`) **and an
-  honest-competent upgrade** (learning #8 — the agent must change with the
-  game): smallest-one-shot fuel pick using the engine's exact
-  `grade^(1-p)·V^p`; the fuel band capped at **the grades the agent actually
-  produces** (tree roots) — burning *results* as fuel torches the operand
-  supply and cost 14 oom before it was caught; **two separate expansion
-  pressures** (operand-starve → another depth-3 tree; grade-starve → a deeper
-  tree) plus **proactive deepening** when the frontier outgrows the built
-  root. See learning #13 for the signal bug not to relearn.
-- **Watch-item for the human playtest:** from-zero play at *mid* rates
-  (1/30–1/3 action/s) plateaus ~e22 over 4 h until the player deepens fuel —
-  the breakthrough move (deep trees) must be discoverable in-game; the dev
-  presets + narrator carry that teaching load. Engaged play that deepens
-  reaches e36+ from zero.
-
-**THE CHALLENGER — the manager is beaten into power-tower territory (same
-session).** `sim/challenger.ts` plays the same honest harness (action budget,
-peel, real wiring, 110 pre-built cells vs the manager's 111) with a smarter
-policy and **crushes the manager at every rate** (10 k ticks, locked economy):
-1/30 s: 4.7e21 → **10^10^1.0e10** (with only 89 hand-ops!); 1/s: 8.7e40 →
-**10^10^236,740**; 5/s: 2.3e49 → **10^10^10^69,049** (a layer-3 tower). The
-`--no-exp` ablation isolates the levers: pairing + result-fuel alone give
-~e118 at 1/s (+77 oom); exponentiation does the rest. See learning #14 — this
-is as much a **balance finding** as an agent: a player can do everything the
-challenger does.
-
-**Fuel economy — "fuel must actually matter" (2026-06-10).** Tackled the
-complaint that *multiplicative ops are too cheap to run once you have a basic
-fuel line*. A long sim-first exploration: **three approaches ruled out, one
-landed and shipped to the game.** (All experiment knobs live in `core/time.ts`
-`TimeTuning`, **off in `DEFAULT_TUNING`**, so sim baselines + the 45 tests are
-untouched; the live game opts in via `GAME_TUNING`.)
-
-- **RULED OUT — per-block digit-fuel** (`fuelLaw:'digits'`, fuel = digits(V)^q):
-  collapses the climb −120…−150 oom (fuel can only be hand-delivered and a
-  digit-valued op needs *thousands* of blocks), AND it reopens the **shatter
-  exploit** — digits^q is sub-additive, so milling a block into pieces multiplies
-  total fuel. No safe q. (`sim/fuel-experiment.ts`.)
-- **RULED OUT — fuel-tax** (`fuelTaxCoeff/Exp/Floor`: an amplifier op needs
-  `C·magnitude(output)^α` of *burned* fuel). Net-positive in theory, but paying a
-  frontier-scaling tax requires a **tiered fuel ladder = α.5c's ladder reborn**
-  (which this branch deleted), and the needed fuel is `frontier^α` (huge) which
-  **can't be piped** — transit-freeze caps pipe-able fuel at ~mag 2000. Built
-  milling, force-fuel, and an explicit ladder agent; **all stall ~1e16–1e21** (vs
-  1e133 untaxed). Fractally unsatisfiable as a physical/piped network.
-  (`sim/fuel-tax.ts`, `sim/fuel-forced.ts`; `--milling`/`--ladder`/`--fuel-factory`.)
-- **RULED OUT — milling/cascade as a fuel *source*** (re-confirmed): fuel =
-  magnitude is **conserved**, so milling only *right-sizes* fuel, never *creates*
-  it. Removing baseRate to force a self-fueling cascade collapses it (the free
-  successor base can't feed every amplifier).
-- **LANDED — reduced amplifier baseRate + diminishing overpay** (two new knobs):
-  `amplifierBaseRateScale` (amplifiers — mult and up — accrue baseRate × this, so
-  fuel *matters*; **never 0** — that collapses the cascade; successor/addition
-  stay fully free) and `fuelOverpayExp` p (a fuel block contributes
-  `grade^(1-p)·V^p`, so dumping one giant block is wasteful and a *stream of
-  grade-sized fuel* is optimal — the "most efficient when paying exactly" feel).
-  Sweep `sim/fuel-overpay.ts`: **stable across the whole range**, smooth throttle
-  −48 oom (gentle) → −114 oom (aggressive), no collapse — *provided the agent
-  fuels only the frontier and lets fuel trees creep* (hand-feeding the whole
-  factory collapses it). **Live in the game** at `amplifierBaseRateScale: 0.5,
-  fuelOverpayExp: 0.5` (`src/lib/view/game-view.ts` → `GAME_TUNING`);
-  headless-verified (a mult reached 8.7% in 60 ticks unfuelled, then streamed
-  grade-100 fuel finished it → 1e6; zero console errors). **Sim tuning of the
-  two values: DONE — see the lock entry above** (promoted to `DEFAULT_TUNING`,
-  sims re-baselined).
-
-**Stacking, dev presets, honest agents (prior session).** Three things landed:
-
-- **Loose-block stacking.** Identical un-piped outputs merge into one movable
-  `×N` stack (engine `LooseBlock.count`, gated by `World.stacking` — on in the
-  game, **off by default so the sims are untouched**). Kills the "invisible heap
-  on the output port" + a perf bomb; economically a no-op (a stack of N ≡ N
-  blocks for score/counts). Output now also spills clear of the output nub
-  (`OUTPUT_SPILL_OFFSET`) so the port stays wireable. `core/engine.ts` +
-  `src/lib/view/game-view.ts`; 4 new engine tests.
-- **Dev menu: reset + factory presets.** A Reset button + stage snapshots in the
-  monitor panel — `src/lib/view/presets.ts`, engine `resetWorld` +
-  `placeCell(..., {built:true})`, view `reset()`/`loadPreset()` (also on `__nbg`).
-  **Refreshed to the agent's best-play strategy** (deep fuel + wide frontier):
-  Opening (early) · **Deep fuel** (depth-4 → 65,536/op) · **Wide bank** (depth-4 +
-  8 mults) · **Engaged climb / agent's best** (depth-5 → ~4.3e9/op + 16 mults,
-  ~110 cells). The fuel tree auto-runs; frontier mults wait for you to feed op1 +
-  fuel from the pool.
-- **The manager is now an honest benchmark.** Found + fixed `sim/manager.ts`'s
-  backbone (arg-shifted `placePipe` → its leaf adders never fired) and removed
-  its **free pool-merge cheat** (`sum the two smallest`); made it stacking-aware.
-  With a real squaring backbone it climbs to **~1.3e36 @1/s** — the old
-  ~1e22–1e24 was an artifact of the broken tree propped up by the free-merge.
-  NB: `sim/strategy-test.ts` carries the *same* wiring bug + free-merge (left as-is
-  — we only care about the manager).
-- **Then pushed the agent higher — and corrected a long-held belief.** Added
-  `--strategy spread|concentrate` + `--fuel-trees N` to the manager. The
-  project believed "concentrate-one-frontier ≫ spread" and "spread regresses at
-  high APM" (from `strategy-test.ts`). In the *honest* manager both are **false**:
-  the regression is **fuel starvation**, and scaling fuel production fixes it —
-  spread goes monotonic and climbs far higher (1 tree @10/s ≈ **6e35** → 2 trees
-  (50 cells) ≈ **5e67** → 8 trees ≈ **3e91**). Concentrate is a **dead end** here
-  (one fuel grade → its op1 multiplier and fuel contend → self-starves, caps
-  ~1e31–1e38); strategy-test's "win" was an artifact of its early-stop at 1e30.
-  **Fuel production is the dominant reach-higher lever** ("build a wider fuel
-  plant, keep it fed"). See learning #5.
-- **Built auto-scaling fuel + fixed the rest of the suite.** The manager now
-  **self-scales fuel**: under sustained starvation it BUILDS another backbone
-  (action-costed, via a queue; constructs over real time), so fuel production
-  tracks the digits³ demand — one honest curve, no `--fuel-trees` knob needed
-  (the flag still sets the *initial* count). Result: spread is monotonic and
-  climbs to **~1.9e53 over 5h @10/s** (it builds a 2nd tree, then correctly stops
-  once the pool saturates). Also **fixed `strategy-test.ts`** (same arg-shifted
-  backbone + free-merge) and **`agent.ts`** (free-merge in `capPool`) — both now
-  wired correctly, stacking-aware, with drop-not-merge pool safety.
-- **Then auto-scaling frontier WIDTH (symmetric lever) — and the key insight it
-  surfaced.** The agent now also builds more frontier mults under "APM I can't
-  spend" pressure (on by default; `--no-auto-width`). **Finding: at human action
-  rates (≤~30/s) the initial 4 mults already absorb the APM, so width NEVER fires
-  — fuel is the only lever that binds in the human range** (and it self-scales,
-  monotonic). Width engages only past ~100/s (superhuman), where it helps (×~16
-  @100/s). Beware cross-rate comparisons: I briefly mis-read width as harmful by
-  comparing different rates; the correct *same-rate* test shows it neutral-to-
-  helpful. (Exact numbers ≥~1e60 are sawtooth-noisy.)
-- **Holistic study → the biggest win yet: smart fuel-depth scaling.** Built
-  `sim/study.ts` (action breakdown · build accounting · value-flow · per-tick
-  bottleneck attribution · pool composition). It showed the agent was
-  **fuel-throughput-bound** (80–99% fuel-starved) while leaking 15–23k unusable
-  ONES. The fix was NOT consolidating the 1s (a trap: ~0.5 fuel-value/action, and
-  the 1s are ~1% of fuel need) but **deeper fuel trees**: a depth-3 root emits
-  256/op (~9.5 value/tick); a depth-5 root emits 2³²/op — one block finishes any
-  op in ~1 action. The agent now **scales fuel depth with the frontier** (root ≥
-  op-work, no overkill), default on; `--fuel-depth N` forces a fixed depth. Result
-  vs the old depth-3 agent (10k ticks): STEADY **5.6e42 → 3.1e85 (+43 orders)**,
-  FAST **6.9e69 → 4.0e118 (+49 orders)**; SLOW unchanged (rate-limited, never
-  fuel-bound). The wasted-1s problem is now moot — fuel is abundant.
-- **Width pass → another +41/+44 orders: frontier width is FREE throughput.** With
-  deep fuel abundant, the next ceiling was frontier-mult count. Crucial engine
-  fact (Architecture B): **each cell runs at `baseRate` for free, in parallel** —
-  so more frontier mults = more free parallel op-progress, *not* fragmentation
-  (my earlier "width fragments" was the fuel-*scarce* regime). Swept it: **16
-  mults is the peak** at both STEADY (3.1e85 → **2.7e126**) and FAST (1.2e86 →
-  **2.9e135**), neutral at SLOW (rate-limited); beyond ~16 a single tree's fuel
-  dilutes and it regresses. Defaulted the agent to **16 mults from the start**.
-  *Gotcha:* scaling width GRADUALLY is counterproductive — adding a mult mid-climb
-  steals `op0` (the leader) and underperforms a fixed wide start; so the gradual
-  scaler is off by default (`--auto-width` to reproduce). Parallel fuel roots help
-  only at FAST (auto-fuel built ~9 trees → contributes), negligible at human rates.
-  **Combined two-pass result vs the original depth-3/4-mult agent (10k ticks):
-  STEADY 5.6e42 → 2.71e126 (+84 oom), FAST 6.9e69 → 3.60e162 (+93 oom)**; SLOW
-  unchanged. Superhuman numbers ≥1e120 are sawtooth-noisy — trust the trend.
-- **River intake + warehouses + the Mill verdict (this session).** (a) **River
-  intake** — successors now show a downward pencil spout with a rising `0`
-  (cosmetic, attached to the cell; the river stays screen-fixed so a literal pipe
-  would drift). (b) **Warehouses** — a new `warehouse` CellKind (engine): an
-  any-block store; pipe blocks in to stockpile (deposit), pipe out to withdraw
-  largest-first, drag a pile on to dump it in. Counts toward Total Score; returns
-  to the pool on delete. In the toolbar (unlocks with Addition). De-clutters
-  outputs + buffers fuel. (c) **Mill for the agent: tested, REJECTED** (learning
-  #11) — additive splitter can't climb a multiplicative ladder; forced milling
-  collapsed the climb 2.7e126 → 1.7e7. The Mill is a spatial/convenience tool, not
-  an efficiency lever — which is exactly the niche warehouses now fill.
+1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band
+   cross-sweep (`sim/scaffold-sweep.ts`) is currently confounded by challenger
+   brittleness: its mint-targeting hardcodes a 1.5× launch target and one note
+   band, so off-candidate rows measure the agent, not the law (non-monotonic α,
+   C=30 ≡ C=100). Needed: multi-target stocking, per-α launch sizing, judge
+   cadence by **paid** launches (`paidExps`), and ideally the recursive
+   note-LADDER (notes for notes) the design implies — the agent only climbs
+   the first rung today.
+2. **Launch cadence shaping.** At engaged pace paid launches FRONT-LOAD (the
+   8 launches land in the first ~20 min; the 9th is 3–4 h of pyramid rebuild
+   away — periods grow superlinearly with digits). Casual pace is well-spaced
+   (1/session). If playtest wants evener spacing: α↑ = smaller, cheaper, more
+   frequent jumps; also consider whether the rebuild curve should be the
+   sawtooth (intended?) or flattened.
+3. **The mid-rate teaching wall.** From-zero play at 1/30–1/3 action/s
+   plateaus (~e22 in the old measurement) until the player discovers deep
+   fuel; presets + narrator carry the teaching today. Verify the wall is
+   discoverable-through, or tune (fuel-tree depth hints? unlock beat?).
+4. **Slot schedule + opening pace.** `BUILD_SLOT_MILESTONES` and
+   `buildSlots: 1` are first guesses. Check the opening build-out feel at
+   1/3–1 action/s (~20–40 min to a full starter factory) and whether slot 2
+   at 1e6 lands at a satisfying moment.
+5. **Promote what survives.** Locked values go GAME_TUNING → DEFAULT_TUNING,
+   sims re-baselined (`play.ts` table, challenger from-zero table, HANDOVER §2),
+   lock-guard tests added — the same ritual as the 0.5/0.5 lock.
 
 ## 0b. The polish pass is DONE (2026-06-04)
 
@@ -360,9 +114,10 @@ container — visuals live in an inner `body`; the FX layer is `eventMode:'none'
 ## 1. Where the prototype stands
 
 A clean **pure-engine + thin-view** reconception of the core loop around **time
-as the resource**. It is buildable, tested, and economically validated by a
-suite of sim agents. It has **not yet had a human playtest** or a UI/UX polish
-pass — that polish pass is the *next* piece of work (§5).
+as the resource**. It is buildable, tested, economically validated by sim
+agents, and fully polished (the P-pass §0b and the UX pass UX_PLAN.md are both
+done). It has **not yet had a human playtest** — that comes after the sim-tuning
+session (§0a).
 
 **The loop, in one breath:** an infinite free river of zeros → Successors tap it
 into `1`s → Addition consolidates → Multiplication/Exponentiation amplify into
@@ -600,28 +355,16 @@ ground-truth correctness/visuals/feel.
 
 ---
 
-## 5. Next up — the full design / UX / polish pass (this session's pivot)
+## 5. Next up
 
-Goal: before the human playtest, make the prototype **feel finished** — proper
-design, UI/UX, animation, game-feel — at the now-known ~25–50-cell / e26–e45
-scale. This is a *brainstorm-first* pass (the user wants to ideate together),
-not a slice list yet. Candidate threads to develop with the user:
-
-- **The "draws-itself" feedback channel** (TIME_AS_LABOR §6): build-sketch-in,
-  stroke-by-stroke result fill, sliding transit numerals, the completion
-  flourish, long-op progress meters. How much is live vs. aspirational?
-- **The pressure→relief "whoosh"** — animation that *sells* the speed jump when
-  you feed/build/supply. Tie to a `physics.ts`-style juice layer (the old game
-  had one; this branch may not yet).
-- **Readability of big numbers** — the value-label ladder at e26–e45, and
-  reading factory state (idle vs working vs starving) at a glance.
-- **Onboarding / the opening 60 seconds** — the bootstrap must teach itself.
-- **Layout legibility** at 25–50 cells — areas (Farm / Production / Reprocessing),
-  zoom, the canvas-as-board feel.
-- **Narrator voice** — dry-academic marginalia on *duration* (deferred slice 5.4).
+**SIM TUNING — see §0a for the full agenda** (harden the sweep agent → lock
+the scaffold values → cadence shaping → slot schedule → promote + re-baseline).
+After that: the human playtest. The polish pass (§0b) and the UX pass
+(UX_PLAN.md, all six orders) are both DONE — the prototype teaches itself,
+answers questions, and stays legible at every altitude.
 
 Build status to maintain every slice: `npm run build` clean, `npm run check`
-0/0, `npm test` 47/47, `npm run test:e2e` green.
+0/0, `npm test` 62/62, `npm run test:e2e` 11/11 green.
 
 ---
 
