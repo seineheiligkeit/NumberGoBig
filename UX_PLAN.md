@@ -187,8 +187,20 @@ out).
 > under working cells at the honest current rate, under active builds, and
 > live build-cost previews on every shelf button), ✅ U1.7 (faint full ghost
 > under-trace from t=0 — long ops never read dead). Verified by Playwright
-> screenshots at 1× and framed altitude. REMAINING: Order 5 (U4.1 inspector,
-> U4.2 rates) + Order 6 (U2.4 zoom LOD, U2.5 pool shelf, U3.3–.5, U4.3–.5).
+> screenshots at 1× and framed altitude.
+>
+> **Order 5 SHIPPED (same session):** ✅ U4.1 (the inspector card — click a
+> cell/block without dragging → a live penciled index card bottom-right:
+> role line, state/queue/build %, held operands, labor, fuel grade or
+> notes-due + band, pipes in/out; accelerator shows charge/carry, warehouse
+> its stockpile; blocks show value, stack, fuel worth, and the one-shot
+> grade-fit hint. Esc/click-away/reset closes; refreshed live each monitor
+> tick. e2e-covered via DOM assertions), ✅ U4.2 (monitor instruments:
+> windowed Σ/s + blocks/s rates and the two-starvation bottleneck line —
+> "N idle for operands · M crawling unfuelled" — computed read-only from
+> existing engine signals). 11 e2e + 61 unit green. REMAINING: Order 6
+> (U2.4 zoom LOD, U2.5 pool shelf, U3.3–.5 warehouse verbs/pipe ergonomics/
+> undo, U4.3–.5 journal/legend/number language).
 
 ## Part II — The plan
 

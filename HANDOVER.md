@@ -9,6 +9,14 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ## 0. Latest
 
+**UX PASS, Order 5 (same session).** The stat-overview gap is closed: a live
+INSPECTOR card (click any cell/block without dragging — role, state, held
+operands, labor, fuel grade or notes-due/band, pipes; blocks show fuel worth
++ the one-shot grade-fit hint; Esc/click-away closes; e2e via DOM asserts)
+and player-grade MONITOR instruments (windowed Σ/s + blocks/s, and the
+two-starvation bottleneck line "N idle for operands · M crawling unfuelled").
+11 e2e + 61 unit green. UX_PLAN remaining: Order 6 only.
+
 **UX PASS, Orders 3–4 (same session).** The clutter floor + time visibility:
 river slimmed/fainter with a bank line and a ZOOM FADE (invisible past ~0.65×
 — altitude shows the factory, not soup), paper underlays guarantee numeral

@@ -5,6 +5,7 @@
   import { setAudioMuted } from './lib/view/audio';
   import { PRESETS } from './lib/view/presets';
   import Marginalia from './Marginalia.svelte';
+  import Inspector from './Inspector.svelte';
 
   function toggleMute() {
     audioMuted.update((m) => {
@@ -69,6 +70,13 @@
       <div class="row"><span>cells / working</span><b>{$statsStore.cells} / {$statsStore.working}</b></div>
       <div class="row"><span>pipes / loose</span><b>{$statsStore.pipes} / {$statsStore.loose}</b></div>
       <div class="row"><span>pencils (builds)</span><b>{$statsStore.building} / {$statsStore.slots === Infinity ? '∞' : $statsStore.slots}</b></div>
+      {#if $statsStore.scoreRate}
+        <div class="row"><span>Σ rate</span><b>{$statsStore.scoreRate}</b></div>
+        <div class="row"><span>production</span><b>{$statsStore.produceRate}</b></div>
+      {/if}
+      {#if $statsStore.bottleneck}
+        <p class="bottleneck">{$statsStore.bottleneck}</p>
+      {/if}
       <div class="speed">
         <span>speed</span>
         {#each speeds as s}
@@ -109,6 +117,7 @@
   {/if}
 
   <Marginalia />
+  <Inspector />
 </main>
 
 <style>
@@ -216,6 +225,13 @@
     font-size: 10.5px;
     opacity: 0.55;
     line-height: 1.5;
+  }
+  .monitor .bottleneck {
+    margin: 5px 0 0;
+    font-size: 11px;
+    font-style: italic;
+    opacity: 0.7;
+    line-height: 1.35;
   }
   .shelf button.active {
     background: rgba(244, 230, 138, 0.6);

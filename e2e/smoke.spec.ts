@@ -248,6 +248,22 @@ test('box-select: a marquee selects cells and dragging one moves the whole set',
   expect(pos.by).toBeGreaterThan(20);
 });
 
+test('clicking a cell (no drag) opens the live inspector card; Esc closes it', async ({ page }) => {
+  await bootPaused(page);
+  await page.evaluate(() => {
+    const n = window.__nbg;
+    n.place('multiplication', 0, 0);
+    for (let i = 0; i < 30; i++) n.tick(1); // build it
+  });
+  const box = (await page.locator('canvas').boundingBox())!;
+  await page.locator('canvas').click({ position: { x: box.width / 2, y: box.height * 0.42 } });
+  await expect(page.locator('.inspector')).toBeVisible();
+  await expect(page.locator('.inspector')).toContainText('multiplication');
+  await expect(page.locator('.inspector')).toContainText('idle');
+  await page.keyboard.press('Escape');
+  await expect(page.locator('.inspector')).toHaveCount(0);
+});
+
 test('shift-click deletes a cell (the rebalancing verb)', async ({ page }) => {
   await bootPaused(page);
   const id = await page.evaluate(() => {

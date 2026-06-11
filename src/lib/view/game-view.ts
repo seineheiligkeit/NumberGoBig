@@ -61,7 +61,7 @@ import { PRESETS } from './presets';
 import { createJuice, setJuice } from './physics';
 import { note } from './narrator';
 import { sndSnap, sndBurn, sndErase, sndMilestone, resumeAudio } from './audio';
-import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, buildPreviews, type Tool } from './stores';
+import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, buildPreviews, inspectorStore, type InspectorData, type Tool } from './stores';
 import { buildWork } from '../../../core/time';
 
 // --- View constants --------------------------------------------------------
@@ -350,8 +350,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   // Drag state for a loose block being moved.
   let drag: { id: number; root: Container } | null = null;
-  // Drag state for a cell being repositioned (grab offset keeps it under cursor).
-  let cellDrag: { id: number; dx: number; dy: number } | null = null;
+  // Drag state for a cell being repositioned (grab offset keeps it under cursor;
+  // ox/oy remember the grab position so a no-move release reads as a CLICK).
+  let cellDrag: { id: number; dx: number; dy: number; ox: number; oy: number } | null = null;
 
   // --- Interaction ---------------------------------------------------------
 
@@ -444,6 +445,115 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     selCells.clear();
     selBlocks.clear();
     selectionG.clear();
+    inspected = null;
+    inspectorStore.set(null);
+  }
+
+  // --- The inspector (U4.1): click (no drag) a cell or block ----------------
+  let inspected: { type: 'cell' | 'block'; id: number } | null = null;
+
+  const CELL_ROLE: Record<string, string> = {
+    successor: 'taps the river — writes 1s from zeros, gated by how many you build',
+    addition: 'plumbing — consolidates small numbers into fewer, larger operands',
+    multiplication: 'amplifier — the product is score AND future fuel',
+    exponentiation: 'the jump operator — demands working notes (show your work)',
+    mill: 'splits a block into ≤16 equal pieces, value conserved — the note right-sizer',
+    accelerator: 'a power plant — its charge carries blocks on covered pipes',
+    warehouse: 'a stockpile — pipes deposit; output pipes withdraw largest-first',
+  };
+
+  /** Largest op-work this block one-shots under the overpay law (the grade-fit
+   *  teaching hint): solve grade^(1-p)·V^p ≥ W with grade = c·W^g. */
+  function oneShotWork(v: ReturnType<typeof valueMagnitude>): ReturnType<typeof valueMagnitude> {
+    const p = GAME_TUNING.fuelOverpayExp;
+    const g = GAME_TUNING.gradeExp;
+    const c = GAME_TUNING.gradeCoeff;
+    // W^(1 - g(1-p)) ≤ c^(1-p) · V^p  →  W ≤ (c^(1-p) · V^p)^(1/(1-g(1-p)))
+    const expo = 1 - g * (1 - p);
+    return v.pow(p).mul(Math.pow(c, 1 - p)).pow(1 / Math.max(0.05, expo));
+  }
+
+  /** Rebuild the inspector card from live world state (called per monitor tick
+   *  and on click). Closes itself if the entity is gone. */
+  function refreshInspector(): void {
+    if (!inspected) return;
+    if (inspected.type === 'cell') {
+      const c = world.cells.get(inspected.id);
+      if (!c) {
+        inspected = null;
+        inspectorStore.set(null);
+        return;
+      }
+      const lines: InspectorData['lines'] = [];
+      if (!c.built) {
+        const pos = buildQueuePosition(world, c.id);
+        const slots = currentBuildSlots(world);
+        lines.push({
+          k: 'state',
+          v:
+            pos >= slots
+              ? `queued №${pos - slots + 1} (fuel may rush it)`
+              : `building — ${Math.round(buildFraction(c) * 100)}%`,
+        });
+        lines.push({ k: 'build work', v: formatScore(c.buildWork) });
+      } else if (c.kind === 'accelerator') {
+        lines.push({ k: 'charge', v: formatScore(c.charge) });
+        lines.push({ k: 'carries', v: c.charge.gt(1) ? `blocks ≤ ${formatScore(c.charge)} on covered pipes` : 'nothing (feed it)' });
+      } else if (c.kind === 'warehouse') {
+        let n = 0;
+        let biggest = valueOf(0);
+        for (const e of c.store) {
+          n += e.count;
+          if (valueMagnitude(e.value).gt(valueMagnitude(biggest))) biggest = e.value;
+        }
+        lines.push({ k: 'stockpile', v: n === 0 ? 'empty' : `${n} blocks · ≤ ${formatScore(valueMagnitude(biggest))}` });
+      } else if (c.op) {
+        lines.push({ k: 'state', v: `working — ${Math.round(opFraction(c) * 100)}%` });
+        const held = c.op.heldInputs;
+        if (held.length > 0) lines.push({ k: 'computing', v: held.map((h) => formatScore(valueMagnitude(h))).join(' , ') });
+        lines.push({ k: 'labor', v: formatScore(c.op.work) });
+        if (c.op.scaffold) {
+          lines.push({ k: 'notes due', v: `${formatScore(c.op.fuelPaid)} / ${formatScore(c.op.fuelRequired)}` });
+          lines.push({ k: 'note band', v: `${formatScore(c.op.scaffold.min)} – ${formatScore(c.op.scaffold.cap)}` });
+        } else {
+          lines.push({ k: 'fuel grade', v: `≥ ${formatScore(c.op.grade)}` });
+        }
+      } else {
+        const staged = c.operands.filter((o) => o !== null).length;
+        lines.push({ k: 'state', v: staged > 0 ? `waiting — ${staged}/${c.operands.length} operands staged` : 'idle' });
+        for (let i = 0; i < c.operands.length; i++) {
+          if (c.operands[i]) lines.push({ k: `operand ${i === 0 ? 'a' : 'b'}`, v: formatScore(valueMagnitude(c.operands[i]!)) });
+        }
+      }
+      let pin = 0;
+      let pout = 0;
+      for (const p of world.pipes.values()) {
+        if (p.toCell === c.id) pin++;
+        if (p.fromCell === c.id) pout++;
+      }
+      lines.push({ k: 'pipes', v: `${pin} in · ${pout} out` });
+      inspectorStore.set({ title: GLYPH[c.kind] + '  ' + c.kind, role: CELL_ROLE[c.kind] ?? '', lines });
+    } else {
+      const b = world.pool.find((bl) => bl.id === inspected!.id);
+      if (!b) {
+        inspected = null;
+        inspectorStore.set(null);
+        return;
+      }
+      const m = valueMagnitude(b.value);
+      const lines: InspectorData['lines'] = [
+        { k: 'value', v: formatScore(m) },
+        ...(b.count > 1 ? [{ k: 'stack', v: `×${b.count} (drag carries the pile; drops feed one)` }] : []),
+        { k: 'as fuel', v: `worth ${formatScore(m)} of progress, before overpay` },
+        { k: 'one-shots', v: `ops of labor ≤ ${formatScore(oneShotWork(m))}` },
+      ];
+      inspectorStore.set({
+        title: 'block',
+        role: 'a number — simultaneously score, operand, and fuel',
+        lines,
+        hint: 'fuel near an op’s asking grade goes furthest; oversized burns as smoke.',
+      });
+    }
   }
   function selectionSize(): number {
     return selCells.size + selBlocks.size;
@@ -609,7 +719,16 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.on('pointerupoutside', (e) => endDrag(e.global.x, e.global.y));
 
   function endDrag(globalX: number, globalY: number): void {
-    cellDrag = null;
+    if (cellDrag) {
+      // A grab that never moved is a CLICK — open the inspector (U4.1).
+      const c = world.cells.get(cellDrag.id);
+      if (c && Math.hypot(c.x - cellDrag.ox, c.y - cellDrag.oy) < 3) {
+        inspected = { type: 'cell', id: cellDrag.id };
+        refreshInspector();
+      }
+      cellDrag = null;
+      return;
+    }
     if (groupDrag) {
       groupDrag = null; // positions were applied live; the set stays selected
       return;
@@ -701,7 +820,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (remaining > 0) addLoose(world, stack.value, p.x, p.y, remaining);
       }
     } else {
-      moveLoose(world, id, p.x, p.y);
+      const b = world.pool.find((bl) => bl.id === id);
+      if (b && Math.hypot(p.x - b.x, p.y - b.y) < 3) {
+        // A pick-up that never travelled is a CLICK — inspect the block.
+        inspected = { type: 'block', id };
+        refreshInspector();
+      } else {
+        moveLoose(world, id, p.x, p.y);
+      }
     }
   }
 
@@ -1003,7 +1129,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         beginGroupDrag(p);
         return;
       }
-      cellDrag = { id, dx: p.x - c.x, dy: p.y - c.y };
+      cellDrag = { id, dx: p.x - c.x, dy: p.y - c.y, ox: c.x, oy: c.y };
     });
 
     const ports = new Graphics();
@@ -1546,6 +1672,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   let prevSlots = GAME_TUNING.buildSlots > 0 ? GAME_TUNING.buildSlots : Infinity;
   const unsubSpeed = speedStore.subscribe((s) => (speed = s));
   let monitorAccum = 0;
+  // Rate-instrument sampling state (U4.2).
+  let rateSampleScore: ReturnType<typeof totalScore> | null = null;
+  let rateSampleProduced = 0;
+  let rateSampleTick = 0;
+  let lastScoreRate = '';
+  let lastProduceRate = '';
   app.ticker.add((t) => {
     // Advance the model in whole ticks for determinism, at the dev speed.
     if (!enginePaused && speed > 0) {
@@ -1604,9 +1736,36 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       }
       let working = 0;
       let unbuilt = 0;
+      // The two starvation signatures (U4.2) — THE strategic signal: cells
+      // idle for OPERANDS want wider production; working amplifiers with no
+      // recent burn are crawling UNFUELLED and want fuel/notes.
+      let idleOps = 0;
+      let crawling = 0;
       for (const c of world.cells.values()) {
         if (c.op) working++;
-        if (!c.built) unbuilt++;
+        if (!c.built) {
+          unbuilt++;
+          continue;
+        }
+        if (c.kind === 'warehouse' || c.kind === 'accelerator' || c.kind === 'successor') continue;
+        if (!c.op) idleOps++;
+        else if (c.op.amplifier && c.recentBurn < 0.05) crawling++;
+      }
+      const bottleneckParts: string[] = [];
+      if (idleOps > 0) bottleneckParts.push(`${idleOps} idle for operands`);
+      if (crawling > 0) bottleneckParts.push(`${crawling} crawling unfuelled`);
+      // Windowed per-game-second rates (≥2 ticks between samples; survive pause).
+      const scoreNow = totalScore(world);
+      const dtTicks = elapsedTicks - rateSampleTick;
+      if (dtTicks >= 2) {
+        if (rateSampleScore) {
+          const ds = scoreNow.sub(rateSampleScore);
+          lastScoreRate = ds.lte(0) ? '0' : `${formatScore(ds.div(dtTicks))} / s`;
+          lastProduceRate = `${Math.max(0, Math.round((world.produced - rateSampleProduced) / dtTicks))} blocks / s`;
+        }
+        rateSampleScore = scoreNow;
+        rateSampleProduced = world.produced;
+        rateSampleTick = elapsedTicks;
       }
       const slots = currentBuildSlots(world);
       if (Number.isFinite(slots) && slots > prevSlots) {
@@ -1626,7 +1785,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         working,
         building: Math.min(unbuilt, Number.isFinite(slots) ? slots : unbuilt),
         slots,
+        scoreRate: lastScoreRate,
+        produceRate: lastProduceRate,
+        bottleneck: bottleneckParts.join(' · '),
       });
+      refreshInspector(); // the open card tracks live state
       // Toolbar build-cost previews (U1.6c): the next cell of each kind costs
       // more than the last — the shelf says so before you commit.
       const kindCounts: Record<string, number> = {};
@@ -1731,6 +1894,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     cellDrag = null;
     pipeSource = null;
     pipeGhost.clear();
+    clearSelection(); // also closes the inspector
     reachedMilestones.clear();
     elapsedTicks = 0;
     acc = 0;

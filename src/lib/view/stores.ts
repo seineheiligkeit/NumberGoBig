@@ -29,7 +29,28 @@ export const noteStore = writable<string | null>(null);
 export const frontierStore = writable('0');
 
 /** Live factory stats for the dev monitor. */
-export const statsStore = writable({ cells: 0, pipes: 0, loose: 0, elapsed: 0, working: 0, building: 0, slots: 1 });
+export const statsStore = writable({
+  cells: 0,
+  pipes: 0,
+  loose: 0,
+  elapsed: 0,
+  working: 0,
+  building: 0,
+  slots: 1,
+  scoreRate: '', // Σ gained per game-second (windowed)
+  produceRate: '', // blocks emitted per game-second
+  bottleneck: '', // the two starvation signatures, when nonzero
+});
+
+/** The inspector card (U4.1): whatever was last clicked, refreshed live by the
+ *  view. Null = closed. */
+export interface InspectorData {
+  title: string;
+  role: string;
+  lines: { k: string; v: string }[];
+  hint?: string;
+}
+export const inspectorStore = writable<InspectorData | null>(null);
 
 /** Playback speed in engine ticks per real second (0 = paused). The dev speed
  *  control writes this; the ticker reads it. */
