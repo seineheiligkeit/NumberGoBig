@@ -47,3 +47,7 @@ export const unlockedTools = writable<Tool[]>(['successor', 'addition', 'pipe'])
 
 /** Whether the synth audio layer is muted (the 🔊/🔇 toggle). */
 export const audioMuted = writable(false);
+
+/** Live build-time preview per tool ("~45s") — the cost grows with each cell
+ *  of that kind you own (a core rule the shelf should never let surprise you). */
+export const buildPreviews = writable<Record<string, string>>({});

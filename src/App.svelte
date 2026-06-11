@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
-  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, audioMuted, type Tool } from './lib/view/stores';
+  import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, audioMuted, buildPreviews, type Tool } from './lib/view/stores';
   import { setAudioMuted } from './lib/view/audio';
   import { PRESETS } from './lib/view/presets';
   import Marginalia from './Marginalia.svelte';
@@ -63,41 +63,45 @@
   </header>
 
   <aside class="monitor">
-    <div class="row big"><span>frontier</span><b>{$frontierStore}</b></div>
-    <div class="row"><span>time</span><b>{elapsed($statsStore.elapsed)}</b></div>
-    <div class="row"><span>cells / working</span><b>{$statsStore.cells} / {$statsStore.working}</b></div>
-    <div class="row"><span>pipes / loose</span><b>{$statsStore.pipes} / {$statsStore.loose}</b></div>
-    <div class="row"><span>pencils (builds)</span><b>{$statsStore.building} / {$statsStore.slots === Infinity ? '∞' : $statsStore.slots}</b></div>
-    <div class="speed">
-      <span>speed</span>
-      {#each speeds as s}
-        <button class:active={$speedStore === s} onclick={() => speedStore.set(s)}>
-          {s === 0 ? '⏸' : `${s}×`}
-        </button>
-      {/each}
-      <button class="mute" title="Mute audio" onclick={toggleMute}>{$audioMuted ? '🔇' : '🔊'}</button>
-    </div>
-    <div class="dev">
-      <span>snapshots</span>
-      <button class="reset" title="Clear the canvas" onclick={() => handle?.reset()}>⟲ Reset</button>
-      {#each PRESETS as p (p.key)}
-        <button class="preset" title={p.blurb} onclick={() => handle?.loadPreset(p.key)}>{p.label}</button>
-      {/each}
-    </div>
+    <details open>
+      <summary class="row big"><span>frontier</span><b>{$frontierStore}</b></summary>
+      <div class="row"><span>time</span><b>{elapsed($statsStore.elapsed)}</b></div>
+      <div class="row"><span>cells / working</span><b>{$statsStore.cells} / {$statsStore.working}</b></div>
+      <div class="row"><span>pipes / loose</span><b>{$statsStore.pipes} / {$statsStore.loose}</b></div>
+      <div class="row"><span>pencils (builds)</span><b>{$statsStore.building} / {$statsStore.slots === Infinity ? '∞' : $statsStore.slots}</b></div>
+      <div class="speed">
+        <span>speed</span>
+        {#each speeds as s}
+          <button class:active={$speedStore === s} onclick={() => speedStore.set(s)}>
+            {s === 0 ? '⏸' : `${s}×`}
+          </button>
+        {/each}
+        <button class="mute" title="Mute audio" onclick={toggleMute}>{$audioMuted ? '🔇' : '🔊'}</button>
+      </div>
+      <div class="dev">
+        <span>snapshots</span>
+        <button class="reset" title="Clear the canvas" onclick={() => handle?.reset()}>⟲ Reset</button>
+        {#each PRESETS as p (p.key)}
+          <button class="preset" title={p.blurb} onclick={() => handle?.loadPreset(p.key)}>{p.label}</button>
+        {/each}
+      </div>
+    </details>
   </aside>
 
   <aside class="shelf">
-    <h2>Literature</h2>
-    <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
+    <details open>
+      <summary><h2>Literature</h2></summary>
+      <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
     {#each tools.filter((t) => $unlockedTools.includes(t.tool)) as t, i (t.tool)}
       <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
-        {t.label}<span class="key">{i + 1}</span>
+        {t.label}<span class="key">{i + 1}</span>{#if $buildPreviews[t.tool]}<span class="eta">{$buildPreviews[t.tool]}</span>{/if}
       </button>
     {/each}
     <p class="keys">Space pause · −/+ speed · F fit view · Esc cancel · drag empty page to select</p>
     {#if $toolStore}
       <p class="placing">{hint($toolStore)}</p>
     {/if}
+    </details>
   </aside>
 
   {#if $statsStore.cells === 0}
@@ -178,6 +182,34 @@
     float: right;
     opacity: 0.4;
     font-size: 11px;
+  }
+  .shelf button .eta {
+    float: right;
+    opacity: 0.5;
+    font-size: 11px;
+    font-style: italic;
+    margin-right: 8px;
+  }
+  /* Collapsible cards (U2.3): the panels fold to a one-line header so the
+     factory underneath is reachable. Native <details> — penciled, no chrome. */
+  summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  summary::before {
+    content: '▾ ';
+    font-size: 10px;
+    opacity: 0.45;
+  }
+  details:not([open]) summary::before {
+    content: '▸ ';
+  }
+  summary h2 {
+    display: inline;
   }
   .shelf .keys {
     margin: 8px 2px 0;

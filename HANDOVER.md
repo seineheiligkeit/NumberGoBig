@@ -9,6 +9,19 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ## 0. Latest
 
+**UX PASS, Orders 3–4 (same session).** The clutter floor + time visibility:
+river slimmed/fainter with a bank line and a ZOOM FADE (invisible past ~0.65×
+— altitude shows the factory, not soup), paper underlays guarantee numeral
+contrast over the heaviness hatch, `frameWorld`/F frames into the UNOCCUPIED
+viewport (shelf/monitor/river margins), marginalia raised clear of the river,
+both panels collapse (`<details>` cards). Drag-aware drop targets (compatible
+ports brighten; refusing fuel sockets show faint JAM dash), `~3m` remaining-
+time under working cells + active builds (honest current-rate), live
+build-cost previews on every shelf button, and a faint ghost under-trace so
+long ops never read dead. See UX_PLAN's progress note; remaining: Orders 5–6
+(inspector + rates, zoom LOD, pool shelf, warehouse verbs, pipe ergonomics,
+undo, journal, legend).
+
 **UX PASS, Orders 1–2 of UX_PLAN.md (2026-06-10).** The audit's two highest-
 stakes workstreams are live (see UX_PLAN's progress note for the slice list):
 the game now SAYS what it wants — fuel-grade readout at every working socket,

@@ -21,7 +21,7 @@
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import { drawPaper } from '../pixi/paper';
 import { setupRiver } from '../pixi/river';
-import { setupCamera, screenToCanvas, restoreCamera } from '../camera';
+import { setupCamera, screenToCanvas, restoreCamera, snapshotCamera } from '../camera';
 import { pencilStrokeDouble, pencilWaypoints, strokeWaypoints } from '../pixi/pencil';
 import { drawValueLabel } from '../pixi/value-label';
 import { GRAPHITE, PENCIL_FONT_FAMILY } from '../pixi/typography';
@@ -61,7 +61,8 @@ import { PRESETS } from './presets';
 import { createJuice, setJuice } from './physics';
 import { note } from './narrator';
 import { sndSnap, sndBurn, sndErase, sndMilestone, resumeAudio } from './audio';
-import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, type Tool } from './stores';
+import { scoreStore, toolStore, frontierStore, statsStore, speedStore, milestoneStore, unlockedTools, buildPreviews, type Tool } from './stores';
+import { buildWork } from '../../../core/time';
 
 // --- View constants --------------------------------------------------------
 
@@ -124,6 +125,8 @@ interface CellVisual {
   queueBadge: Text | null; // "№k" while waiting for a build slot (lazy)
   gradeLabel: Text | null; // "≥ N" fuel-grade readout beside the fuel socket (lazy)
   opLabels: Text[]; // staged/held operand value labels, one per operand port
+  etaLabel: Text | null; // "~3m" remaining-time under a working/building cell (lazy)
+  ghostUnder: Container | null; // faint full under-trace so long ops never read dead
 }
 
 interface BlockVisual {
@@ -702,6 +705,46 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
   }
 
+  // Drag-aware drop targets (U1.5): while a block is in hand, compatible
+  // ports brighten; fuel sockets that would REFUSE the carried value show a
+  // faint JAM dash instead. Redrawn each frame from the ticker while dragging.
+  const dragHintG = new Graphics();
+  dragHintG.zIndex = 60;
+  canvasLayer.addChild(dragHintG);
+
+  function drawDragHints(value: Value): void {
+    dragHintG.clear();
+    const fv = valueMagnitude(value);
+    for (const cell of world.cells.values()) {
+      if (!cell.built) continue;
+      if (cell.kind === 'accelerator' || cell.kind === 'warehouse') {
+        // Whole-body sinks: always-willing drop targets.
+        dashedRect(dragHintG, cell.x - CELL_W / 2 - 5, cell.y - CELL_H / 2 - 5, CELL_W + 10, CELL_H + 10);
+        continue;
+      }
+      const L = portLayout(cell.kind);
+      for (let i = 0; i < L.operands.length; i++) {
+        if (cell.operands[i] !== null) continue; // occupied — stays rest-state
+        dragHintG.circle(cell.x + L.operands[i].x, cell.y + L.operands[i].y, PORT_R + 4);
+      }
+    }
+    dragHintG.stroke({ color: GRAPHITE, width: 1.4, alpha: 0.55 });
+    // Fuel sockets second, color-split by acceptance.
+    for (const cell of world.cells.values()) {
+      if (!cell.built || cell.kind === 'accelerator' || cell.kind === 'warehouse') continue;
+      if (!cell.op) continue; // idle cells bounce fuel — no invitation
+      const L = portLayout(cell.kind);
+      const fx = cell.x + L.fuel.x;
+      const fy = cell.y + L.fuel.y;
+      const sc = cell.op.scaffold;
+      const accepts = fv.gte(cell.op.grade) && (!sc || (fv.gte(sc.min) && fv.lte(sc.cap)));
+      dragHintG.rect(fx - 12, fy - 12, 24, 24);
+      dragHintG.stroke(
+        accepts ? { color: GRAPHITE, width: 1.6, alpha: 0.7 } : { color: JAM_TINT, width: 1.1, alpha: 0.35 },
+      );
+    }
+  }
+
   /** One-shot refusal cue: a dashed JAM ring that expands and fades (~0.6s).
    *  The transient cousin of drawClogMark — same vocabulary, single beat. */
   function jamFlash(x: number, y: number): void {
@@ -1065,7 +1108,24 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     }
     root.addChild(hit, body);
     canvasLayer.addChild(root);
-    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero, hadScaffold: false, queueBadge: null, gradeLabel: null, opLabels };
+    return { root, body, outline, glyph, meter, ports, ghost: null, ghostKey: '', ghostMask: null, ghostBounds: null, builtFlourished: false, halo, info, clog: null, idleHint, prevBurn: 0, outlinePath, outlineCum, intakeZero, hadScaffold: false, queueBadge: null, gradeLabel: null, opLabels, etaLabel: null, ghostUnder: null };
+  }
+
+  /** Show/update the "~3m" remaining-time readout under a cell ('' hides). */
+  function setEta(vis: CellVisual, text: string): void {
+    if (!text) {
+      if (vis.etaLabel) vis.etaLabel.visible = false;
+      return;
+    }
+    if (!vis.etaLabel) {
+      vis.etaLabel = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 12, fill: GRAPHITE } });
+      vis.etaLabel.anchor.set(0.5, 0);
+      vis.etaLabel.position.set(0, CELL_H / 2 + 14);
+      vis.etaLabel.alpha = 0.55;
+      vis.body.addChild(vis.etaLabel);
+    }
+    if (vis.etaLabel.text !== text) vis.etaLabel.text = text;
+    vis.etaLabel.visible = true;
   }
 
   function updateCellVisual(cell: SimCell, vis: CellVisual): void {
@@ -1088,10 +1148,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const head = sub[sub.length - 1];
       if (head) vis.outline.circle(head.x, head.y, 2).fill({ color: GRAPHITE, alpha: 0.9 });
       vis.glyph.alpha = 0.12 + 0.5 * frac; // the symbol fades in as the box forms
-      // BUILD SLOTS: a cell waiting for a pencil shows its place in the queue.
+      // BUILD SLOTS: a cell waiting for a pencil shows its place in the queue;
+      // an ACTIVE build shows its remaining time instead (U1.6b).
       const pos = buildQueuePosition(world, cell.id);
       const slots = currentBuildSlots(world);
       if (pos >= slots) {
+        setEta(vis, '');
         if (!vis.queueBadge) {
           vis.queueBadge = new Text({
             text: '',
@@ -1104,9 +1166,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           note('It must wait its turn — one pencil, one sketch. Fuel may persuade it sooner.', 'first-queue');
         }
         vis.queueBadge.text = `№${pos - slots + 1} in queue`;
-      } else if (vis.queueBadge) {
-        vis.queueBadge.destroy();
-        vis.queueBadge = null;
+      } else {
+        if (vis.queueBadge) {
+          vis.queueBadge.destroy();
+          vis.queueBadge = null;
+        }
+        setEta(vis, fmtEta(cell.buildWork.sub(cell.buildProgress).toNumber() / GAME_TUNING.baseRate));
       }
     } else if (!vis.builtFlourished) {
       // Snap to the finished cell: filled, rounded outline + a small flourish.
@@ -1115,6 +1180,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         vis.queueBadge.destroy();
         vis.queueBadge = null;
       }
+      setEta(vis, '');
       vis.outline.clear();
       drawCellOutline(vis.outline);
       vis.glyph.alpha = 1;
@@ -1196,8 +1262,15 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // Output result: the numeral is WRITTEN left-to-right over the op (a reveal
     // mask), with a clock-sweep ring around the operator glyph for progress.
     vis.meter.clear();
-    if (!cell.op && vis.gradeLabel) vis.gradeLabel.visible = false;
+    if (!cell.op) {
+      if (vis.gradeLabel) vis.gradeLabel.visible = false;
+      if (cell.built) setEta(vis, '');
+    }
     if (cell.op) {
+      // Remaining time at the CURRENT free rate (U1.6a) — honest about fuel:
+      // it shows what waiting costs, which is exactly what sells feeding it.
+      const opRate = GAME_TUNING.baseRate * (cell.op.amplifier ? GAME_TUNING.amplifierBaseRateScale : 1);
+      setEta(vis, fmtEta(cell.op.work.sub(cell.op.progress).toNumber() / Math.max(1e-9, opRate)));
       // Fuel-grade readout (UX_PLAN's #1 finding): a working op pencils its
       // asking denomination beside the fuel socket — under-grade fuel is
       // silently refused by the engine, so SAY the grade up front. Scaffolded
@@ -1225,11 +1298,21 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       const key = out ? `${out.kind}:${valueMagnitude(out).toString()}` : 'none';
       if (out && vis.ghostKey !== key) {
         if (vis.ghost) vis.ghost.destroy({ children: true });
+        if (vis.ghostUnder) vis.ghostUnder.destroy({ children: true });
         vis.ghost = drawValueLabel(out.kind === 'real' ? out : { kind: 'real', n: valueMagnitude(out) }, {
           baseFontSize: 22,
           color: GRAPHITE,
         });
         const L = portLayout(cell.kind);
+        // Faint full under-trace from t=0 (U1.7): a long op's numeral is no
+        // longer invisible for its first stretch — the wipe stays the signal.
+        vis.ghostUnder = drawValueLabel(out.kind === 'real' ? out : { kind: 'real', n: valueMagnitude(out) }, {
+          baseFontSize: 22,
+          color: GRAPHITE,
+        });
+        vis.ghostUnder.alpha = 0.13;
+        vis.ghostUnder.position.set(L.output.x + 34, L.output.y);
+        vis.body.addChild(vis.ghostUnder);
         vis.ghost.position.set(L.output.x + 34, L.output.y);
         vis.body.addChild(vis.ghost);
         // Reveal mask (child → auto-destroyed with the ghost). Drawn in
@@ -1302,6 +1385,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       // few shavings at the output where the result was written.
       vis.ghost.destroy({ children: true });
       vis.ghost = null;
+      if (vis.ghostUnder) {
+        vis.ghostUnder.destroy({ children: true });
+        vis.ghostUnder = null;
+      }
       vis.ghostKey = '';
       vis.ghostMask = null;
       vis.ghostBounds = null;
@@ -1367,6 +1454,15 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       baseFontSize: 24,
       color: GRAPHITE,
     });
+    // Contrast guarantee (U2.2): a paper underlay behind the numeral so the
+    // value always wins over the heaviness hatch — reading your big numbers
+    // IS the fantasy; the frozen metaphor stays underneath it.
+    const lb = label.getLocalBounds();
+    if (lb.width > 0.5) {
+      const under = new Graphics();
+      under.roundRect(lb.x - 3, lb.y - 1, lb.width + 6, lb.height + 2, 3).fill({ color: 0xfbf7ee, alpha: 0.82 });
+      body.addChild(under);
+    }
     body.addChild(label);
 
     // `×N` stack count, lower-right corner just outside the block (clear of the
@@ -1464,6 +1560,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     syncCells();
     syncBlocks();
     drawSelection(); // U3.1 halos track their (possibly moving) members
+    // Drag-aware drop targets: light the compatible ports while carrying.
+    if (drag) {
+      const blk = world.pool.find((b) => b.id === drag!.id);
+      if (blk) drawDragHints(blk.value);
+      else dragHintG.clear();
+    } else {
+      dragHintG.clear();
+    }
+    // The river is close-up ambiance: fade it toward invisible as the camera
+    // zooms out (U2.1) — at altitude it's pure noise behind the factory.
+    const camScale = snapshotCamera().scale;
+    river.alpha = Math.max(0, Math.min(1, (camScale - 0.35) / 0.3));
     juice.step(t.deltaMS); // visual-only, real-time (independent of sim pause/speed)
     scoreStore.set(formatScore(totalScore(world)));
     // Dev monitors — refresh a few times a second (frontier scan is O(pool)).
@@ -1519,6 +1627,17 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         building: Math.min(unbuilt, Number.isFinite(slots) ? slots : unbuilt),
         slots,
       });
+      // Toolbar build-cost previews (U1.6c): the next cell of each kind costs
+      // more than the last — the shelf says so before you commit.
+      const kindCounts: Record<string, number> = {};
+      for (const c of world.cells.values()) kindCounts[c.kind] = (kindCounts[c.kind] ?? 0) + 1;
+      const previews: Record<string, string> = {};
+      for (const t of TOOL_ORDER) {
+        if (t === 'pipe') continue;
+        const secs = buildWork(kindCounts[t] ?? 0, GAME_TUNING).toNumber() / GAME_TUNING.baseRate;
+        previews[t] = fmtEta(secs) || `~${Math.max(1, Math.round(secs))}s`;
+      }
+      buildPreviews.set(previews);
     }
   });
 
@@ -1579,9 +1698,15 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     const pad = 220;
     const w = maxX - minX + pad * 2;
     const h = maxY - minY + pad * 2;
-    const scale = Math.min(1, app.screen.width / w, app.screen.height / h);
+    // Frame into the UNOCCUPIED viewport (U2.3): the shelf (left), monitor
+    // (right) and river band (bottom) are reserved — a framed factory must
+    // never hide underneath the panels.
+    const M = { left: 235, right: 235, top: 16, bottom: 125 };
+    const availW = Math.max(200, app.screen.width - M.left - M.right);
+    const availH = Math.max(200, app.screen.height - M.top - M.bottom);
+    const scale = Math.min(1, availW / w, availH / h);
     const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    restoreCamera({ x: app.screen.width / 2 - cx * scale, y: app.screen.height / 2 - cy * scale, scale });
+    restoreCamera({ x: M.left + availW / 2 - cx * scale, y: M.top + availH / 2 - cy * scale, scale });
   }
 
   /** Clear the canvas to an empty world. Visual caches are purged HERE, not
@@ -1705,7 +1830,9 @@ function drawHeaviness(g: Graphics, R: number, h: number): void {
     const b1 = Math.min(inner, o + inner);
     if (b1 > b0) g.moveTo(b0, -b0 + o).lineTo(b1, -b1 + o); // slope -1
   }
-  g.stroke({ color: GRAPHITE, width: 0.8, alpha: 0.08 + 0.22 * h });
+  // Alpha capped (U2.2): the hatch is a texture, never a curtain — the
+  // numeral's paper underlay + this cap keep big values legible at any zoom.
+  g.stroke({ color: GRAPHITE, width: 0.8, alpha: 0.06 + 0.14 * h });
 }
 
 /** A faint dashed square — the "drop a block here" hint on an empty operand
@@ -1753,6 +1880,17 @@ function drawPortMarkers(g: Graphics, kind: CellKind): void {
   }
   // Output nub (not for the Mill's many-piece output — still useful as a hint).
   g.circle(L.output.x, L.output.y, 5).fill({ color: GRAPHITE, alpha: 0.5 });
+}
+
+/** Human-scale duration from ticks (1 tick = 1 s). Empty under 10s — short
+ *  waits don't need a caption; the meters carry them. */
+function fmtEta(ticks: number): string {
+  if (!Number.isFinite(ticks) || ticks < 10) return '';
+  if (ticks < 90) return `~${Math.round(ticks)}s`;
+  if (ticks < 5400) return `~${Math.round(ticks / 60)}m`;
+  if (ticks < 172800) return `~${(ticks / 3600).toFixed(ticks < 36000 ? 1 : 0)}h`;
+  if (ticks < 1e8) return `~${Math.round(ticks / 86400)}d`;
+  return '~ages'; // the narrator can elaborate
 }
 
 function formatScore(d: ReturnType<typeof totalScore>): string {

@@ -174,8 +174,21 @@ out).
 > click clears), ✅ U3.2 (sticky tools, Esc/right-click cancel cascade, hotkeys
 > 1–8/Space/−+/F with bindings on the shelf), ✅ U5.3 partial (e2e: sticky
 > tool, box-select group move; refusal-bounce e2e deferred — engine refusal
-> semantics already unit-tested). 10 e2e + 61 unit green. NEXT: Order 3
-> (U2.1–.3 river/contrast/overlay), then U1.5–.7, U4.
+> semantics already unit-tested). 10 e2e + 61 unit green.
+>
+> **Orders 3–4 SHIPPED (same session):** ✅ U2.1 (river slimmed ~35%, fainter,
+> a clean bank line, and FADES OUT past ~0.65× zoom — invisible at factory
+> altitude), ✅ U2.2 (paper underlay behind every block numeral + hatch alpha
+> capped), ✅ U2.3 (frameWorld respects shelf/monitor/river margins; marginalia
+> raised clear of the river; both panels are collapsible `<details>` cards),
+> ✅ U1.5 (drag-aware targets: empty operand ports + willing fuel sockets
+> brighten while carrying; grade/band-refusing sockets show a faint JAM dash;
+> warehouses/accelerators invite whole-body), ✅ U1.6 (remaining-time `~3m`
+> under working cells at the honest current rate, under active builds, and
+> live build-cost previews on every shelf button), ✅ U1.7 (faint full ghost
+> under-trace from t=0 — long ops never read dead). Verified by Playwright
+> screenshots at 1× and framed altitude. REMAINING: Order 5 (U4.1 inspector,
+> U4.2 rates) + Order 6 (U2.4 zoom LOD, U2.5 pool shelf, U3.3–.5, U4.3–.5).
 
 ## Part II — The plan
 

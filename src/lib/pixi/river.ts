@@ -21,19 +21,22 @@ import { GRAPHITE, PENCIL_FONT_FAMILY } from './typography';
  * the ones behind them.
  */
 
-const RIVER_BAND_HEIGHT_PX = 160;
-const RIVER_CENTER_FROM_BOTTOM_PX = 90;
+// Slimmed for screen hygiene (UX_PLAN U2.1): the river is ambiance for the
+// close-up game; at factory scale it must not own a third of the page or
+// drown the loose pool and marginalia that share the bottom band.
+const RIVER_BAND_HEIGHT_PX = 104;
+const RIVER_CENTER_FROM_BOTTOM_PX = 60;
 
-const ZERO_COUNT = 500; // absurd density — that is the river
+const ZERO_COUNT = 320; // dense enough to read as a torrent, not a wall
 
-const FONT_SIZE_MIN = 22;
-const FONT_SIZE_MAX = 54;
-const FILL_ALPHA_MIN = 0.18;
-const FILL_ALPHA_MAX = 0.9;
-const OUTLINE_ALPHA_MIN = 0.08;
-const OUTLINE_ALPHA_MAX = 0.45;
-const TEXT_ALPHA_MIN = 0.3;
-const TEXT_ALPHA_MAX = 0.95;
+const FONT_SIZE_MIN = 18;
+const FONT_SIZE_MAX = 40;
+const FILL_ALPHA_MIN = 0.14;
+const FILL_ALPHA_MAX = 0.7;
+const OUTLINE_ALPHA_MIN = 0.06;
+const OUTLINE_ALPHA_MAX = 0.32;
+const TEXT_ALPHA_MIN = 0.22;
+const TEXT_ALPHA_MAX = 0.78;
 const FLOW_SPEED_MIN_PX_PER_SEC = 12;
 const FLOW_SPEED_MAX_PX_PER_SEC = 70;
 const ROTATION_JITTER_RAD = 0.22;
@@ -104,6 +107,13 @@ export function setupRiver(app: Application, options: RiverOptions = {}): Contai
   const halfBand = RIVER_BAND_HEIGHT_PX / 2;
   const width = app.screen.width;
   const zeros: RiverZero[] = [];
+
+  // One clean margin line separating the river from the workspace (a ruled
+  // notebook line — the bank). Redrawn on resize by the caller recreating us.
+  const bank = new Graphics();
+  bank.moveTo(0, -halfBand - 12).lineTo(width, -halfBand - 12);
+  bank.stroke({ color: GRAPHITE, width: 1, alpha: 0.18 });
+  riverContainer.addChild(bank);
 
   for (let i = 0; i < ZERO_COUNT; i++) {
     const t = Math.random();

@@ -13,7 +13,7 @@
   .marginalia {
     position: absolute;
     left: 18px;
-    bottom: 22px;
+    bottom: 132px; /* clear of the river band (U2.3) — notes never drown in zeros */
     width: 250px;
     display: flex;
     flex-direction: column;
