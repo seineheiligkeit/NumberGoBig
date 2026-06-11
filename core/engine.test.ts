@@ -21,6 +21,8 @@ import {
   feedOperand,
   injectFuel,
   depositToWarehouse,
+  withdrawFromWarehouse,
+  collectNearby,
   addLoose,
   moveLoose,
   takeLooseById,
@@ -272,6 +274,22 @@ test('lock: overpaying fuel has √ diminishing returns (right-sized streams are
   const expected = grade.mul(new Decimal(v)).sqrt();
   assert.ok(gained.sub(expected).abs().div(expected).toNumber() < 1e-9, 'engine applies the overpay law');
   assert.ok(gained.toNumber() < v * 0.2, 'a 100×-grade block buys ~10% of its value, not 100%');
+});
+
+// --- Warehouse hand-verbs (U3.3) --------------------------------------------
+
+test('warehouse: manual withdraw takes the largest; collect sweeps the area', () => {
+  const w = createWorld();
+  const wh = placeCell(w, 'warehouse', 0, 0, { built: true });
+  depositToWarehouse(w, wh, valueOf(100), 2);
+  depositToWarehouse(w, wh, valueOf(5000));
+  assert.equal(withdrawFromWarehouse(w, wh), true);
+  assert.equal(poolCountOf(w, 5000), 1, 'largest-first lands loose');
+  // collect: nearby blocks sweep in; far ones stay
+  addLoose(w, valueOf(7), 100, 100, 3);
+  addLoose(w, valueOf(9), 2000, 0);
+  assert.equal(collectNearby(w, wh, 340), 4, 'nearby pile (incl. the withdrawn 5000) collected');
+  assert.equal(poolCountOf(w, 9), 1, 'distant block untouched');
 });
 
 // --- Build slots: one pencil — construction is a QUEUE, not a dump ----------

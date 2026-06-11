@@ -44,6 +44,8 @@ import {
   feedOperand,
   injectFuel,
   depositToWarehouse,
+  withdrawFromWarehouse,
+  collectNearby,
   operandArity,
   buildFraction,
   opFraction,
@@ -134,6 +136,8 @@ interface BlockVisual {
   body: Container; // visual; punched/scaled by the juice layer
   badge: Text; // `×N` stack-count, shown when count > 1
   lastCount: number; // last rendered count — to detect a stack growing/shrinking
+  label: Container; // the full ladder numeral (close-up)
+  lodText: Text; // magnitude-only "e22" swap-in at altitude (U2.4)
 }
 
 interface PipeVisual {
@@ -334,6 +338,11 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   const blockVisuals = new Map<number, BlockVisual>();
   const pipeVisuals = new Map<number, PipeVisual>();
 
+  // Zoom level-of-detail (U2.4): below this camera scale, cells drop to state
+  // chips (outline + glyph + clock ring) and blocks to magnitude-only labels —
+  // the altitude view becomes a readable BOARD instead of scribble.
+  let lodActive = false;
+
   // Pipe layer sits under cells/blocks so lines read as the substrate.
   const pipeLayer = new Container();
   pipeLayer.zIndex = 0;
@@ -377,7 +386,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     if (e.type !== 'keydown') return;
     // Escape / cancel: a half-laid pipe first, then the tool, then the selection.
     if (e.key === 'Escape') {
-      if (pipeSource !== null) {
+      if (wireDrag) {
+        wireDrag = null;
+        pipeGhost.clear();
+      } else if (pipeSource !== null) {
         pipeSource = null;
         drawPipeGhost();
       } else if (tool) {
@@ -411,7 +423,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       });
       return;
     }
-    if (e.key === 'f' || e.key === 'F') frameWorld();
+    if (e.key === 'f' || e.key === 'F') {
+      frameWorld();
+      return;
+    }
+    if ((e.key === 'z' || e.key === 'Z') && e.ctrlKey) {
+      e.preventDefault();
+      undoRemoval();
+    }
   };
   window.addEventListener('keydown', onKey);
   window.addEventListener('keyup', onKey);
@@ -421,10 +440,19 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
 
   // Pipe placement: first click picks a source output, second a dest port.
   let pipeSource: number | null = null;
+  // Drag-to-wire (U3.4): pointerdown on an output nub → release on a port.
+  // Also set by grabbing an existing pipe's ARRIVAL end (reroute in place).
+  let wireDrag: { src: number } | null = null;
   let lastPointer = { x: 0, y: 0 };
   const pipeGhost = new Graphics();
   pipeGhost.zIndex = 50;
   canvasLayer.addChild(pipeGhost);
+  // Hover tooltip for pipes: what it carries + how long the trip has left.
+  const pipeTip = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 12, fill: GRAPHITE } });
+  pipeTip.alpha = 0.8;
+  pipeTip.visible = false;
+  pipeTip.zIndex = 95;
+  canvasLayer.addChild(pipeTip);
 
   // --- Box-select + group move (U3.1) ---------------------------------------
   // Drag on empty canvas (no tool) sketches a dashed pencil marquee; the cells
@@ -447,6 +475,42 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     selectionG.clear();
     inspected = null;
     inspectorStore.set(null);
+  }
+
+  // --- One-step undo for deletions (U3.5) -----------------------------------
+  // Shift-click erases instantly; a slipped click mid-rearrange can cost
+  // minutes of build time. We cache the last removed cell (with its pipes) or
+  // pipe and restore on Ctrl+Z. Held blocks were returned loose by the engine,
+  // so the restored cell comes back EMPTY — no value is duplicated or lost.
+  let undoSnap: { cell?: SimCell; pipes: SimPipe[] } | null = null;
+
+  function cacheCellRemoval(c: SimCell): void {
+    const pipes = [...world.pipes.values()]
+      .filter((p) => p.fromCell === c.id || p.toCell === c.id)
+      .map((p) => ({ ...p, inFlight: null, stalled: false }));
+    undoSnap = {
+      cell: {
+        ...c,
+        operands: new Array(c.operands.length).fill(null),
+        op: null,
+        store: [],
+        outputStalled: false,
+        recentBurn: 0,
+      },
+      pipes,
+    };
+  }
+  function cachePipeRemoval(p: SimPipe): void {
+    undoSnap = { pipes: [{ ...p, inFlight: null, stalled: false }] };
+  }
+  function undoRemoval(): void {
+    if (!undoSnap) return;
+    if (undoSnap.cell) world.cells.set(undoSnap.cell.id, undoSnap.cell);
+    for (const p of undoSnap.pipes) {
+      if (world.cells.has(p.fromCell) && world.cells.has(p.toCell)) world.pipes.set(p.id, p);
+    }
+    note('Un-erased. The page forgives, once.');
+    undoSnap = null;
   }
 
   // --- The inspector (U4.1): click (no drag) a cell or block ----------------
@@ -507,6 +571,20 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           if (valueMagnitude(e.value).gt(valueMagnitude(biggest))) biggest = e.value;
         }
         lines.push({ k: 'stockpile', v: n === 0 ? 'empty' : `${n} blocks · ≤ ${formatScore(valueMagnitude(biggest))}` });
+        const wid = c.id;
+        inspectorStore.set({
+          title: GLYPH[c.kind] + '  ' + c.kind,
+          role: CELL_ROLE[c.kind] ?? '',
+          lines,
+          actions: [
+            { label: 'withdraw largest', run: () => withdrawFromWarehouse(world, wid) },
+            { label: 'collect nearby', run: () => {
+                const got = collectNearby(world, wid);
+                if (got > 0) note(`Swept ${got} loose block${got === 1 ? '' : 's'} into the stockpile.`);
+              } },
+          ],
+        });
+        return;
       } else if (c.op) {
         lines.push({ k: 'state', v: `working — ${Math.round(opFraction(c) * 100)}%` });
         const held = c.op.heldInputs;
@@ -616,6 +694,8 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (pid !== null) {
         juice.eraser(p.x, p.y, 18, 12); // erase where the pipe was clicked (it's thin)
         sndErase();
+        const pp = world.pipes.get(pid);
+        if (pp) cachePipeRemoval(pp); // Ctrl+Z restores (U3.5)
         removePipe(world, pid);
       }
       return;
@@ -630,6 +710,21 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       // tool stays in hand; Esc / right-click / re-pressing its hotkey drops it.
       placeCell(world, tool, p.x, p.y);
       return;
+    }
+    // Grab an existing pipe's ARRIVAL end to reroute it in place (U3.4): the
+    // pipe lifts off (cached for Ctrl+Z) and follows the cursor to a new port.
+    for (const pipe of world.pipes.values()) {
+      const dst = world.cells.get(pipe.toCell);
+      if (!dst) continue;
+      const b = endpointPos(dst, pipe.toPort, pipe.fuel);
+      if (Math.hypot(p.x - b.x, p.y - b.y) <= 10) {
+        cachePipeRemoval(pipe);
+        const src = pipe.fromCell;
+        removePipe(world, pipe.id);
+        wireDrag = { src };
+        drawPipeGhost();
+        return;
+      }
     }
     // No tool, empty canvas: begin a box-select marquee (left-drag; the camera
     // pans on middle/right, so this verb is free).
@@ -670,8 +765,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   /** Ghost line from the chosen source to the cursor while wiring a pipe. */
   function drawPipeGhost(): void {
     pipeGhost.clear();
-    if (tool !== 'pipe' || pipeSource === null) return;
-    const src = world.cells.get(pipeSource);
+    const sourceId = wireDrag ? wireDrag.src : tool === 'pipe' ? pipeSource : null;
+    if (sourceId === null) return;
+    const src = world.cells.get(sourceId);
     if (!src) return;
     const a = endpointPos(src, -1, false);
     const b = lastPointer;
@@ -710,8 +806,26 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         Math.abs(p.y - marquee.y0),
       );
       marqueeG.stroke({ color: GRAPHITE, width: 1.2, alpha: 0.5 });
-    } else if (tool === 'pipe' && pipeSource !== null) {
+    } else if (wireDrag || (tool === 'pipe' && pipeSource !== null)) {
       drawPipeGhost();
+    } else if (!tool) {
+      // Pipe hover tooltip (U3.4): what it carries + the trip remaining.
+      const pid = findPipeAt(p.x, p.y, 8);
+      if (pid !== null) {
+        const pipe = world.pipes.get(pid)!;
+        let text: string;
+        if (pipe.inFlight) {
+          const eta = fmtEta(pipe.inFlight.work.sub(pipe.inFlight.progress).toNumber() / GAME_TUNING.baseRate);
+          text = `${formatScore(valueMagnitude(pipe.inFlight.value))} in transit${eta ? ` · ${eta}` : ''}`;
+        } else {
+          text = pipe.fuel ? 'fuel line · empty' : 'pipe · empty';
+        }
+        pipeTip.text = text;
+        pipeTip.position.set(p.x + 14, p.y - 18);
+        pipeTip.visible = true;
+      } else {
+        pipeTip.visible = false;
+      }
     }
   });
 
@@ -719,6 +833,17 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   app.stage.on('pointerupoutside', (e) => endDrag(e.global.x, e.global.y));
 
   function endDrag(globalX: number, globalY: number): void {
+    if (wireDrag) {
+      // Release the wire on a port to commit; anywhere else cancels.
+      const p = canvasPoint(globalX, globalY);
+      const dest = portAt(p.x, p.y);
+      if (dest && dest.cellId !== wireDrag.src) {
+        placePipe(world, wireDrag.src, 0, dest.cellId, dest.port, { fuel: dest.fuel });
+      }
+      wireDrag = null;
+      pipeGhost.clear();
+      return;
+    }
     if (cellDrag) {
       // A grab that never moved is a CLICK — open the inspector (U4.1).
       const c = world.cells.get(cellDrag.id);
@@ -992,6 +1117,9 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       }
       // Don't fight the drag: the dragged block follows the cursor.
       if (!drag || drag.id !== b.id) vis.root.position.set(b.x, b.y);
+      // Zoom LOD (U2.4): the full ladder numeral close-up, "e22" at altitude.
+      vis.label.visible = !lodActive;
+      vis.lodText.visible = lodActive;
     }
     for (const [id, vis] of blockVisuals) {
       if (!world.pool.find((b) => b.id === id)) {
@@ -1120,10 +1248,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (shiftHeld) {
         juice.eraser(c.x, c.y, CELL_W / 2, CELL_H / 2);
         sndErase();
+        cacheCellRemoval(c); // Ctrl+Z restores (U3.5)
         removeCell(world, id);
         return;
       }
       const p = canvasPoint(e.global.x, e.global.y);
+      // Grabbing the OUTPUT NUB starts a wire, not a move (drag-to-wire, U3.4).
+      const onub = endpointPos(c, -1, false);
+      if (c.built && Math.hypot(p.x - onub.x, p.y - onub.y) <= PORT_R + 2) {
+        wireDrag = { src: id };
+        drawPipeGhost();
+        return;
+      }
       // A selected member grabs the whole SET (U3.1 group move).
       if (selCells.has(id) && selectionSize() > 1) {
         beginGroupDrag(p);
@@ -1537,7 +1673,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // (starving) state, distinct from a fully-empty idle cell.
     vis.idleHint.clear();
     const arity = operandArity(cell.kind);
-    if (cell.built && !cell.op && arity > 0 && cell.kind !== 'accelerator') {
+    if (cell.built && !cell.op && arity > 0 && cell.kind !== 'accelerator' && !lodActive) {
       const L = portLayout(cell.kind);
       const filled = cell.operands.filter((o) => o !== null).length;
       const partial = filled > 0 && filled < arity;
@@ -1548,6 +1684,18 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         dashedSquare(vis.idleHint, L.operands[i].x, L.operands[i].y, 15, alpha);
       }
     }
+
+    // Zoom LOD (U2.4): below ~0.5× the detail layer hides — outline, glyph and
+    // the clock ring carry the state; labels, ports and spouts are sub-pixel
+    // noise at altitude. This is what makes the engaged factory a readable board.
+    vis.ports.visible = !lodActive;
+    if (vis.intakeZero) vis.intakeZero.visible = !lodActive;
+    for (const t of vis.opLabels) t.visible = !lodActive;
+    if (vis.gradeLabel) vis.gradeLabel.visible = vis.gradeLabel.visible && !lodActive;
+    if (vis.etaLabel) vis.etaLabel.visible = vis.etaLabel.visible && !lodActive;
+    if (vis.queueBadge) vis.queueBadge.visible = !lodActive;
+    if (vis.ghost) vis.ghost.visible = !lodActive;
+    if (vis.ghostUnder) vis.ghostUnder.visible = !lodActive;
   }
 
   function makeBlockVisual(id: number, value: Value, count: number): BlockVisual {
@@ -1590,6 +1738,21 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       body.addChild(under);
     }
     body.addChild(label);
+    // Altitude swap-in (U2.4): magnitude only, big and blunt — "e22".
+    const mag = valueMagnitude(value);
+    const magNum = mag.toNumber();
+    const lodStr = !Number.isFinite(magNum)
+      ? 'e↑↑'
+      : magNum >= 1e4
+        ? `e${Math.floor(Math.log10(magNum))}`
+        : `${Math.round(magNum)}`;
+    const lodText = new Text({
+      text: lodStr,
+      style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 26, fontWeight: '600', fill: GRAPHITE },
+    });
+    lodText.anchor.set(0.5);
+    lodText.visible = false;
+    body.addChild(lodText);
 
     // `×N` stack count, lower-right corner just outside the block (clear of the
     // centred numeral). Penciled, like a margin tally; hidden when count ≤ 1.
@@ -1614,7 +1777,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     });
 
     canvasLayer.addChild(root);
-    const vis: BlockVisual = { root, body, badge, lastCount: -1 };
+    const vis: BlockVisual = { root, body, badge, lastCount: -1, label, lodText };
     updateBlockBadge(vis, count);
     return vis;
   }
@@ -1704,6 +1867,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // zooms out (U2.1) — at altitude it's pure noise behind the factory.
     const camScale = snapshotCamera().scale;
     river.alpha = Math.max(0, Math.min(1, (camScale - 0.35) / 0.3));
+    lodActive = camScale < 0.5;
     juice.step(t.deltaMS); // visual-only, real-time (independent of sim pause/speed)
     scoreStore.set(formatScore(totalScore(world)));
     // Dev monitors — refresh a few times a second (frontier scan is O(pool)).
@@ -2057,10 +2221,24 @@ function fmtEta(ticks: number): string {
   return '~ages'; // the narrator can elaborate
 }
 
+/** ONE number language (U4.5): the same pretty ladder the blocks speak —
+ *  plain integers, then `1.23×10⁸` with superscript exponents, then the
+ *  Decimal tower notation for the truly large. Used by the header, monitor,
+ *  inspector, grade labels — everywhere a number meets the DOM or a caption. */
+const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+function supDigits(s: string): string {
+  let out = '';
+  for (const ch of s) out += ch === '-' ? '⁻' : (SUP[Number(ch)] ?? ch);
+  return out;
+}
 function formatScore(d: ReturnType<typeof totalScore>): string {
   const x = d.toNumber();
-  if (!Number.isFinite(x)) return d.toString();
-  if (x >= 1e6) return x.toExponential(2);
+  if (!Number.isFinite(x)) return d.toString(); // tower-class → break_eternity's notation
+  if (x >= 1e6) {
+    const e = Math.floor(Math.log10(x));
+    const m = x / Math.pow(10, e);
+    return `${m.toFixed(2)}×10${supDigits(String(e))}`;
+  }
   return Math.round(x).toLocaleString('en-US');
 }
 

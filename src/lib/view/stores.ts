@@ -49,6 +49,8 @@ export interface InspectorData {
   role: string;
   lines: { k: string; v: string }[];
   hint?: string;
+  /** Hand-verbs offered by this entity (warehouse withdraw/collect, …). */
+  actions?: { label: string; run: () => void }[];
 }
 export const inspectorStore = writable<InspectorData | null>(null);
 

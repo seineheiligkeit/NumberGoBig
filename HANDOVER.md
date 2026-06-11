@@ -9,6 +9,18 @@ This file is the fast on-ramp: where we are, what we learned, what's next.*
 
 ## 0. Latest
 
+**UX PASS, Order 6 (same session) — UX_PLAN.md is COMPLETE.** Zoom LOD (state
+chips + `e22` block tags below 0.5× — the altitude board), warehouse
+hand-verbs (inspector buttons → new engine `withdrawFromWarehouse` /
+`collectNearby`, tested), pipe ergonomics (drag-to-wire from any output nub,
+grab a pipe's arrival end to reroute in place, hover tooltip with cargo +
+trip remaining), one-step undo (Ctrl+Z un-erases the last cell/pipe — held
+blocks stay loose, no value dupes), the journal (timestamped back page for
+all narrator notes — nothing evaporates), "Apparatus" rename + tool tooltips
++ a `?` vocabulary legend, and ONE number language (`1.23×10⁸` superscripts
+everywhere; captions explain Σ vs frontier). 62 unit + 11 e2e green. Only
+the two deliberate deferrals remain: minimap, area labels.
+
 **UX PASS, Order 5 (same session).** The stat-overview gap is closed: a live
 INSPECTOR card (click any cell/block without dragging — role, state, held
 operands, labor, fuel grade or notes-due/band, pipes; blocks show fuel worth

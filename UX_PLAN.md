@@ -198,9 +198,28 @@ out).
 > tick. e2e-covered via DOM assertions), ✅ U4.2 (monitor instruments:
 > windowed Σ/s + blocks/s rates and the two-starvation bottleneck line —
 > "N idle for operands · M crawling unfuelled" — computed read-only from
-> existing engine signals). 11 e2e + 61 unit green. REMAINING: Order 6
-> (U2.4 zoom LOD, U2.5 pool shelf, U3.3–.5 warehouse verbs/pipe ergonomics/
-> undo, U4.3–.5 journal/legend/number language).
+> existing engine signals). 11 e2e + 61 unit green.
+>
+> **Order 6 SHIPPED (same session) — THE PLAN IS COMPLETE.** ✅ U2.4 (zoom
+> LOD: below 0.5× cells drop to state chips — outline + glyph + clock ring —
+> and blocks swap to magnitude-only `e22` tags; the altitude view is a
+> readable board), ✅ U2.5 (covered by loose-block stacking — spills pile into
+> single ×N stacks at the producer; no extra settle pass needed), ✅ U3.3
+> (warehouse hand-verbs via the inspector: withdraw-largest + collect-nearby,
+> engine-side `withdrawFromWarehouse`/`collectNearby` + tests), ✅ U3.4
+> (drag-to-wire straight off any output nub; grab a pipe's ARRIVAL end to
+> reroute it in place; hover a pipe → carried value + trip remaining), ✅ U3.5
+> (one-step undo: Ctrl+Z restores the last erased cell — with its pipes,
+> build state intact, held blocks stay loose so no value dupes — or pipe;
+> reroute-grabs are cached too), ✅ U4.3 (the journal — the notebook's back
+> page: every narrator note + milestone, timestamped, in a collapsible
+> monitor card; nothing evaporates), ✅ U4.4 ("Literature" → "Apparatus",
+> tooltips with micro-descriptions on every tool, a `?` canvas-vocabulary
+> legend), ✅ U4.5 (one number language: Σ, frontier, inspector, grade labels
+> all speak `1.23×10⁸` with superscripts; tower-class falls back to
+> break_eternity notation; header captioned "everything you hold · frontier =
+> your biggest single number"). 62 unit + 11 e2e green. Deferred by design
+> (unchanged): minimap, area-label naming UI.
 
 ## Part II — The plan
 

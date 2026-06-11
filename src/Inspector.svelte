@@ -13,6 +13,13 @@
     {#each $inspectorStore.lines as line (line.k)}
       <div class="row"><span>{line.k}</span><b>{line.v}</b></div>
     {/each}
+    {#if $inspectorStore.actions}
+      <div class="actions">
+        {#each $inspectorStore.actions as a (a.label)}
+          <button onclick={a.run}>{a.label}</button>
+        {/each}
+      </div>
+    {/if}
     {#if $inspectorStore.hint}
       <p class="hint">{$inspectorStore.hint}</p>
     {/if}
@@ -84,5 +91,24 @@
     font-style: italic;
     opacity: 0.6;
     line-height: 1.35;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .actions button {
+    flex: 1;
+    padding: 4px 6px;
+    background: transparent;
+    border: 1px solid rgba(58, 58, 58, 0.35);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 11.5px;
+    color: inherit;
+    cursor: pointer;
+  }
+  .actions button:hover {
+    background: rgba(58, 58, 58, 0.06);
   }
 </style>

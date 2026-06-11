@@ -329,6 +329,35 @@ export function depositToWarehouse(world: World, id: number, value: Value, count
   return true;
 }
 
+/** Manual withdraw (the view's click-a-warehouse verb, U3.3): take the largest
+ *  block from the stockpile and set it loose beside the cell. */
+export function withdrawFromWarehouse(world: World, id: number): boolean {
+  const c = world.cells.get(id);
+  if (!c || c.kind !== 'warehouse' || !c.built) return false;
+  const v = withdrawLargest(c);
+  if (!v) return false;
+  pushLoose(world, v, c.x + 90, c.y + 50);
+  return true;
+}
+
+/** Manual "collect nearby" (U3.3, tedium removal): sweep loose blocks within
+ *  `radius` of the warehouse into its stockpile. Returns blocks collected.
+ *  Hand-dragging is free and instant anyway — this just spares the wrist. */
+export function collectNearby(world: World, id: number, radius = 340): number {
+  const c = world.cells.get(id);
+  if (!c || c.kind !== 'warehouse' || !c.built) return 0;
+  let n = 0;
+  for (let i = world.pool.length - 1; i >= 0; i--) {
+    const b = world.pool[i];
+    if (Math.hypot(b.x - c.x, b.y - c.y) <= radius) {
+      depositToStore(c, b.value, b.count);
+      n += b.count;
+      world.pool.splice(i, 1);
+    }
+  }
+  return n;
+}
+
 /** Withdraw the largest-magnitude block from a warehouse's stockpile (or null). */
 function withdrawLargest(cell: SimCell): Value | null {
   if (cell.store.length === 0) return null;

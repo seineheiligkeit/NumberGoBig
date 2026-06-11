@@ -3,6 +3,7 @@
   import { setupGameView, type GameViewHandle } from './lib/view/game-view';
   import { scoreStore, toolStore, frontierStore, statsStore, speedStore, unlockedTools, audioMuted, buildPreviews, type Tool } from './lib/view/stores';
   import { setAudioMuted } from './lib/view/audio';
+  import { journal } from './lib/view/narrator';
   import { PRESETS } from './lib/view/presets';
   import Marginalia from './Marginalia.svelte';
   import Inspector from './Inspector.svelte';
@@ -17,15 +18,15 @@
   let canvasContainer: HTMLDivElement;
   let handle: GameViewHandle | null = null;
 
-  const tools: { tool: Tool; label: string }[] = [
-    { tool: 'successor', label: '{ }  Successor' },
-    { tool: 'addition', label: '+  Addition' },
-    { tool: 'multiplication', label: '×  Multiplication' },
-    { tool: 'exponentiation', label: '^  Exponentiation' },
-    { tool: 'mill', label: 'M  Mill (split → fuel)' },
-    { tool: 'accelerator', label: '»  Accelerator' },
-    { tool: 'warehouse', label: 'W  Warehouse (store → fuel)' },
-    { tool: 'pipe', label: '↳  Pipe' },
+  const tools: { tool: Tool; label: string; desc: string }[] = [
+    { tool: 'successor', label: '{ }  Successor', desc: 'Taps the river: writes 1s from zeros. Build many — width is the source.' },
+    { tool: 'addition', label: '+  Addition', desc: 'Plumbing: consolidates small numbers into fewer, larger operands.' },
+    { tool: 'multiplication', label: '×  Multiplication', desc: 'The amplifier: the product is score AND future fuel.' },
+    { tool: 'exponentiation', label: '^  Exponentiation', desc: 'The jump operator: a^b. Big jumps demand working notes — show your work.' },
+    { tool: 'mill', label: 'M  Mill', desc: 'Splits a block into ≤16 equal pieces (value conserved) — right-sizes fuel and notes.' },
+    { tool: 'accelerator', label: '»  Accelerator', desc: 'A power plant: its charge carries blocks on covered pipes. Feed it to keep logistics flowing.' },
+    { tool: 'warehouse', label: 'W  Warehouse', desc: 'A stockpile: pipes deposit; output pipes withdraw largest-first. Click it for hand-verbs.' },
+    { tool: 'pipe', label: '↳  Pipe', desc: 'Wire an output to a port. Tip: drag straight from an output nub — no tool needed.' },
   ];
 
   onMount(() => {
@@ -58,9 +59,10 @@
 <main>
   <div class="canvas-container" bind:this={canvasContainer}></div>
 
-  <header class="score">
+  <header class="score" title="Total Score — the magnitude of every number you possess (loose, staged, in transit)">
     <div class="sigma">Σ</div>
     <div class="value">{$scoreStore}</div>
+    <div class="caption">everything you hold · frontier = your biggest single number</div>
   </header>
 
   <aside class="monitor">
@@ -93,22 +95,42 @@
           <button class="preset" title={p.blurb} onclick={() => handle?.loadPreset(p.key)}>{p.label}</button>
         {/each}
       </div>
+      <details class="journal">
+        <summary>journal — the back page</summary>
+        <div class="entries">
+          {#each [...$journal].reverse() as j (j.id)}
+            <p><span>{j.t}</span>{j.text}</p>
+          {:else}
+            <p class="empty">Nothing noted yet.</p>
+          {/each}
+        </div>
+      </details>
     </details>
   </aside>
 
   <aside class="shelf">
     <details open>
-      <summary><h2>Literature</h2></summary>
-      <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete.</p>
+      <summary><h2>Apparatus</h2></summary>
+      <p class="hint">Place a cell, then drop blocks onto its ports. Drag cells to move; shift-click a cell or pipe to delete (Ctrl+Z un-erases).</p>
     {#each tools.filter((t) => $unlockedTools.includes(t.tool)) as t, i (t.tool)}
-      <button class:active={$toolStore === t.tool} onclick={() => pick(t.tool)}>
+      <button class:active={$toolStore === t.tool} title={t.desc} onclick={() => pick(t.tool)}>
         {t.label}<span class="key">{i + 1}</span>{#if $buildPreviews[t.tool]}<span class="eta">{$buildPreviews[t.tool]}</span>{/if}
       </button>
     {/each}
-    <p class="keys">Space pause · −/+ speed · F fit view · Esc cancel · drag empty page to select</p>
+    <p class="keys">Space pause · −/+ speed · F fit view · Esc cancel · Ctrl+Z un-erase · drag empty page to select</p>
     {#if $toolStore}
       <p class="placing">{hint($toolStore)}</p>
     {/if}
+    <details class="legend">
+      <summary>? the canvas vocabulary</summary>
+      <p>○ operand port · □ fuel socket · ● output nub</p>
+      <p>dashed square — drop a block here</p>
+      <p>ring — the operation's clock · dashed outer ring — working notes due</p>
+      <p>≥ N — the fuel grade it accepts · ~3m — time left at current rate</p>
+      <p>dashed red — refused or clogged</p>
+      <p>hatching — heavy (slow on pipes; mill it, or power the pipe)</p>
+      <p>×N — a stack · №k — waiting for a build pencil</p>
+    </details>
     </details>
   </aside>
 
@@ -232,6 +254,48 @@
     font-style: italic;
     opacity: 0.7;
     line-height: 1.35;
+  }
+  .score .caption {
+    font-size: 10px;
+    opacity: 0.5;
+    text-align: right;
+    margin-top: -2px;
+  }
+  .legend,
+  .journal {
+    margin-top: 9px;
+    font-size: 11px;
+  }
+  .legend summary,
+  .journal summary {
+    font-size: 11.5px;
+    opacity: 0.7;
+  }
+  .legend p {
+    margin: 3px 0;
+    opacity: 0.65;
+    line-height: 1.35;
+  }
+  .journal .entries {
+    max-height: 180px;
+    overflow-y: auto;
+    margin-top: 4px;
+  }
+  .journal .entries p {
+    margin: 3px 0;
+    opacity: 0.75;
+    line-height: 1.35;
+    border-top: 1px dashed rgba(58, 58, 58, 0.12);
+    padding-top: 3px;
+  }
+  .journal .entries p span {
+    opacity: 0.5;
+    margin-right: 6px;
+    font-size: 10px;
+  }
+  .journal .empty {
+    font-style: italic;
+    opacity: 0.5;
   }
   .shelf button.active {
     background: rgba(244, 230, 138, 0.6);
