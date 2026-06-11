@@ -41,6 +41,13 @@ import {
   operationWork,
   scaffoldRequirement,
   transitWork,
+  unifiedNeed,
+  unifiedTier,
+  unifiedBand,
+  materialBill,
+  unifiedBuildSlots,
+  UNIFIED_BUILD_TIME,
+  UNIFIED_NOTES_FLOOR,
   type TimeTuning,
 } from './time.ts';
 
@@ -117,6 +124,10 @@ interface ActiveOp {
    *  protects the player from fat-fingering their frontier into the cell).
    *  Null = no band (the normal grade-only fuel rules). */
   scaffold: { min: Decimal; cap: Decimal } | null;
+  /** UNIFIED law only: the op's universal fuel need √(output). In-band fuel
+   *  pays PRO-RATA (progress += work·v/need); paying the full need completes
+   *  the work. Null in legacy mode. */
+  unifiedNeed: Decimal | null;
   /** True for amplifier ops (multiplication and up). When tuning.amplifierFuelOnly
    *  is set, these accrue NO baseRate — fuel is mandatory. */
   amplifier: boolean;
@@ -162,6 +173,11 @@ export interface SimCell {
    *  burned into it, decaying each tick. The view draws fuelled cells darker
    *  (graphite weight = fuel gauge). View-read. */
   recentBurn: number;
+  /** UNIFIED law only: the MATERIAL this cell still demands before its pencil
+   *  starts — one block in the tight band [min, max] deposited on the cell.
+   *  Null = paid (or waived/legacy). An unpaid cell neither builds nor holds
+   *  a pencil slot. */
+  materialNeed: { min: Decimal; max: Decimal } | null;
 }
 
 export interface SimPipe {
@@ -293,7 +309,12 @@ export function placeCell(
   let owned = 0;
   for (const c of world.cells.values()) if (c.kind === kind) owned++;
   const id = world.nextId++;
-  const work = buildWork(owned, world.tuning);
+  // UNIFIED law: flat per-kind pencil time — the MATERIAL is the project.
+  const work = world.tuning.unifiedCosts
+    ? new Decimal(UNIFIED_BUILD_TIME[kind] ?? 24)
+    : buildWork(owned, world.tuning);
+  const material =
+    world.tuning.unifiedCosts && !opts.built ? materialBill(kind, owned, world.peakMagnitude) : null;
   world.cells.set(id, {
     id,
     kind,
@@ -309,6 +330,7 @@ export function placeCell(
     emitCursor: 0,
     outputStalled: false,
     recentBurn: 0,
+    materialNeed: material,
   });
   return id;
 }
@@ -506,6 +528,7 @@ function pipeBoost(world: World, pipe: SimPipe): number {
  *  the tuning's base count plus one per BUILD_SLOT_MILESTONE the world's peak
  *  magnitude has crossed. Infinity when the slots rule is off (buildSlots ≤ 0). */
 export function currentBuildSlots(world: World): number {
+  if (world.tuning.unifiedCosts) return unifiedBuildSlots(world.peakMagnitude); // one per rung
   const base = world.tuning.buildSlots;
   if (base <= 0) return Infinity;
   let slots = base;
@@ -515,11 +538,12 @@ export function currentBuildSlots(world: World): number {
 
 /** A cell's position in the build queue: 0-based among unbuilt cells in
  *  placement order. Positions < currentBuildSlots are actively drawing the
- *  free baseRate; the rest wait (fuel still rushes them). -1 if built/absent. */
+ *  free baseRate; the rest wait (fuel still rushes them). -1 if built/absent.
+ *  Cells still AWAITING MATERIALS aren't in the queue at all (-1). */
 export function buildQueuePosition(world: World, cellId: number): number {
   let pos = 0;
   for (const cell of world.cells.values()) {
-    if (cell.built) continue;
+    if (cell.built || cell.materialNeed) continue;
     if (cell.id === cellId) return pos;
     pos++;
   }
@@ -530,11 +554,12 @@ function tickConstruction(world: World, base: number): void {
   // Build slots: only the first `slots` unbuilt cells (placement order) accrue
   // the free baseRate — ONE pencil sketches at a time, early on. Fuel-rushed
   // builds (applyFuel) are unaffected: paid parallelism is always available.
+  // A cell awaiting its MATERIAL neither builds nor holds a pencil.
   const slots = currentBuildSlots(world);
   let active = 0;
   for (const cell of world.cells.values()) {
-    if (cell.built) continue;
-    if (active >= slots) break; // the rest of the queue waits its turn
+    if (cell.built || cell.materialNeed) continue;
+    if (active >= slots) continue; // the rest of the queue waits its turn
     active++;
     cell.buildProgress = cell.buildProgress.add(base);
     if (cell.buildProgress.gte(cell.buildWork)) {
@@ -633,20 +658,32 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
   const grade = minFuelDenomination(work, world.tuning);
   let fuelRequired = Decimal.dZero;
   let scaffold: { min: Decimal; cap: Decimal } | null = null;
+  let uNeed: Decimal | null = null;
+  const expTier = cell.kind === 'exponentiation' || cell.kind === 'tetration' || cell.kind === 'pentation';
   if (amplifier && emits.length) {
     let maxMag = Decimal.dZero;
     for (const e of emits) maxMag = Decimal.max(maxMag, valueMagnitude(e.value));
-    fuelRequired = fuelTax(maxMag, world.tuning);
-    // SCAFFOLDING ("show your work"): exp-tier ops additionally demand burned
-    // working notes scaling with the OUTPUT's value, payable only in the
-    // denomination band [S/band, S]. Multiplication is never scaffolded — the
-    // accelerant economy is its whole cost model.
-    const expTier = cell.kind === 'exponentiation' || cell.kind === 'tetration' || cell.kind === 'pentation';
-    if (expTier) {
-      const s = scaffoldRequirement(maxMag, world.tuning);
-      if (s.gt(Decimal.dZero)) {
-        fuelRequired = Decimal.max(fuelRequired, s);
-        scaffold = { min: Decimal.max(grade, s.div(world.tuning.scaffoldBand)), cap: s };
+    if (world.tuning.unifiedCosts) {
+      // THE UNIFIED LAW: an operator k tiers up is paid k rungs down —
+      // need = M^(1/2^k), in the band [need/16, need], pro-rata. OPTIONAL for
+      // mult-tier (baseRate still finishes — fuel is speed); MANDATORY for
+      // exp-tier above the floor (the working notes — scaffolding IS this
+      // law, and the 2^-k root is exp's crazy-leap license).
+      uNeed = unifiedNeed(maxMag, unifiedTier(cell.kind));
+      scaffold = unifiedBand(uNeed);
+      if (expTier && maxMag.gt(UNIFIED_NOTES_FLOOR)) fuelRequired = uNeed;
+    } else {
+      fuelRequired = fuelTax(maxMag, world.tuning);
+      // SCAFFOLDING ("show your work"): exp-tier ops additionally demand burned
+      // working notes scaling with the OUTPUT's value, payable only in the
+      // denomination band [S/band, S]. Multiplication is never scaffolded — the
+      // accelerant economy is its whole cost model.
+      if (expTier) {
+        const s = scaffoldRequirement(maxMag, world.tuning);
+        if (s.gt(Decimal.dZero)) {
+          fuelRequired = Decimal.max(fuelRequired, s);
+          scaffold = { min: Decimal.max(grade, s.div(world.tuning.scaffoldBand)), cap: s };
+        }
       }
     }
   }
@@ -660,6 +697,7 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
     fuelPaid: Decimal.dZero,
     amplifier,
     scaffold,
+    unifiedNeed: uNeed,
   };
 }
 
@@ -755,6 +793,19 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
     return;
   }
   if (!cell.built) {
+    // UNIFIED law: an unpaid cell takes its MATERIAL first — one block in the
+    // tight band [min, max]. Out-of-band blocks bounce (machine them to fit:
+    // Mill down, Add up). Only after the bill is paid does fuel rush the time.
+    if (cell.materialNeed) {
+      if (fv.gte(cell.materialNeed.min) && fv.lte(cell.materialNeed.max)) {
+        cell.materialNeed = null; // the material is consumed into the structure
+        world.burned = world.burned.add(fv);
+        cell.recentBurn = 1;
+      } else {
+        pushLoose(world, value, cell.x, cell.y + 40);
+      }
+      return;
+    }
     cell.buildProgress = cell.buildProgress.add(fv);
     world.burned = world.burned.add(fv);
     cell.recentBurn = 1; // fuelling a build lights the glow too
@@ -772,6 +823,17 @@ function applyFuel(world: World, cell: SimCell, value: Value): void {
     const sc = cell.op.scaffold;
     if (sc && (fv.lt(sc.min) || fv.gt(sc.cap))) {
       pushLoose(world, value, cell.x, cell.y + 40);
+      return;
+    }
+    // UNIFIED law: in-band fuel pays PRO-RATA against the universal need —
+    // progress += work·v/need; the full √(output) completes the work. The
+    // same payment counts toward a mandatory requirement (exp-tier notes).
+    if (cell.op.unifiedNeed) {
+      const share = cell.op.work.mul(fv).div(cell.op.unifiedNeed);
+      cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(share));
+      cell.op.fuelPaid = cell.op.fuelPaid.add(fv);
+      world.burned = world.burned.add(fv);
+      cell.recentBurn = 1;
       return;
     }
     if (fv.gte(cell.op.grade)) {

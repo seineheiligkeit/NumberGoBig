@@ -156,6 +156,26 @@ export interface TimeTuning {
    *  blueprint-dumping everything at t=0. 0 = unlimited (off — the legacy
    *  parallel-build behaviour every sim baseline assumes). */
   buildSlots: number;
+  /** THE UNIFIED LAW ("everything is paid one rung down"). When true, the
+   *  grade/overpay/scaffold zoo collapses into ONE closed form anchored on the
+   *  game's natural tier ladder (the squaring ladder, rung = log₂ digits):
+   *
+   *    · An op producing magnitude M wants `need = √M` of fuel, payable ONLY
+   *      in the band [need/16, need], pro-rata (paying the full need completes
+   *      the work). OPTIONAL for mult-tier amplifiers (baseRate still finishes
+   *      — fuel is speed), MANDATORY for exp-tier ops above the floor (the
+   *      working notes — scaffolding IS this law).
+   *    · Constructing a cell demands a MATERIAL: one block in a tight band
+   *      [bill, 1.1·bill] deposited before the pencil starts. First cells of a
+   *      kind have fixed bills (the "construct this number" puzzles); repeats
+   *      cost max(firstBill, √peak) — priced in the game's own currency.
+   *    · Build slots grow one per RUNG of the frontier (digits 6, 12, 24, …).
+   *    · Fixed ratios stay fixed (band 16 = the Mill's split; the powered-pipe
+   *      service fraction) — the other scale-free shape.
+   *
+   *  Self-similarity is structural: tier n+1's economy is tier n's with every
+   *  number squared. Off = the legacy hand-tuned laws (sims' old baselines). */
+  unifiedCosts: boolean;
   /** POWERED LOGISTICS (Slice 3): a covering accelerator's CHARGE carries
    *  transit. A block entering a powered pipe gets effective magnitude
    *  `m / (1 + charge·accelChargeCarry)` for its transit work — "a powered
@@ -229,7 +249,143 @@ export const DEFAULT_TUNING: TimeTuning = {
   // Powered logistics OFF by default (legacy log-boost only) — the live game
   // opts in via GAME_TUNING while the lever is play-validated.
   accelChargeCarry: 0,
+  // The unified law OFF by default — legacy baselines stay byte-identical.
+  unifiedCosts: false,
 };
+
+/**
+ * THE UNIFIED ECONOMY — the re-anchored candidate (2026-06-10 brainstorm:
+ * "everything is paid one rung down"). This is the preset the unified sims and
+ * tests target; it is promoted to the live game only after the from-zero arc
+ * is validated. Addition drops to d^1.5 (big sums cost a beat, never a wall —
+ * the always-cheap machining op); slots and powered logistics are part of the
+ * law itself.
+ */
+export const UNIFIED_TUNING: TimeTuning = {
+  ...DEFAULT_TUNING,
+  unifiedCosts: true,
+  opExponent: {
+    successor: 1,
+    addition: 1.5,
+    multiplication: 3,
+    exponentiation: 4,
+    tetration: 5,
+    pentation: 6,
+  },
+  buildSlots: 1,
+  accelChargeCarry: 1,
+};
+
+// --- The unified law's constants -------------------------------------------
+
+/** The universal denomination band ratio: payments live in [need/16, need].
+ *  Deliberately equal to the Mill's split count — one pass of the Mill takes a
+ *  block from "just too big" to "in band". */
+export const UNIFIED_BAND = 16;
+/** Material bills with max below this are waived (pocket lint — the opening
+ *  successors and adders are free to sketch). */
+export const UNIFIED_BILL_WAIVE = 4;
+/** Tight-band tolerance on material bills: accept [bill, bill·1.1]. */
+export const UNIFIED_BILL_TOLERANCE = 1.1;
+/** Exp-tier fuel becomes MANDATORY (the working notes) above this output
+ *  magnitude; below it a fresh exponentiation cell is a free toy. */
+export const UNIFIED_NOTES_FLOOR = 1e6;
+
+/** First-of-a-kind material bills — the "construct this number" puzzles. The
+ *  first multiplication wants a 16 (an adder-chain product: addition's first
+ *  moment); the first exponentiation wants a MILLION (the mult game's goal,
+ *  visible from the start). 0 = free. */
+export const UNIFIED_FIRST_BILL: Record<string, number> = {
+  successor: 0,
+  addition: 0,
+  multiplication: 16,
+  mill: 64,
+  warehouse: 256,
+  accelerator: 1024,
+  exponentiation: 1e6,
+  tetration: 1e12,
+  pentation: 1e15,
+};
+
+/** Flat pencil time per kind (the TIME part of construction — small; the
+ *  MATERIAL is the project). No geometric repurchase: expansion is priced by
+ *  the √peak material anchor instead. */
+export const UNIFIED_BUILD_TIME: Record<string, number> = {
+  successor: 10,
+  addition: 12,
+  multiplication: 20,
+  mill: 24,
+  warehouse: 24,
+  accelerator: 24,
+  exponentiation: 48,
+  tetration: 96,
+  pentation: 96,
+};
+
+const dSixteen = new Decimal(UNIFIED_BAND);
+
+/** The universal cost, indexed by operator tier: "an operator k tiers up is
+ *  paid k rungs down" — need = M^(1/2^k). Multiplication (k=1) pays √M (one
+ *  squaring-rung below its product); exponentiation (k=2) pays the fourth
+ *  root — which is why exp keeps its CRAZY-LEAP identity: an e20→e80 jump
+ *  demands exactly one frontier-class commitment (e20 of notes), affordable
+ *  but dramatic, while mult to the same e80 would demand unreachable e40. */
+export function unifiedNeed(outputMagnitude: Decimal, tier = 1): Decimal {
+  return outputMagnitude.root(Math.pow(2, tier));
+}
+
+/** Operator tier for the unified need: how many rungs up the hierarchy the
+ *  operator jumps (mult 1, exp 2, tet 3, pent 4). Non-amplifiers are tier 0
+ *  (no unified need). */
+export function unifiedTier(kind: string): number {
+  switch (kind) {
+    case 'multiplication':
+      return 1;
+    case 'exponentiation':
+      return 2;
+    case 'tetration':
+      return 3;
+    case 'pentation':
+      return 4;
+    default:
+      return 0;
+  }
+}
+
+/** The acceptance band for a unified payment of `need`: [need/16, need].
+ *  Blocks outside are refused — right-size them (Mill down, Add up). */
+export function unifiedBand(need: Decimal): { min: Decimal; cap: Decimal } {
+  return { min: Decimal.max(dOne, need.div(dSixteen)), cap: need };
+}
+
+/** Material bill for the (owned+1)-th cell of a kind, given the world's peak
+ *  magnitude: first cells use the fixed puzzle bills; repeats cost
+ *  max(firstBill, √peak) — always payable from the factory you have, never
+ *  trivial. Null = waived (below the pocket-lint floor). */
+export function materialBill(
+  kind: string,
+  owned: number,
+  peakMagnitude: Decimal,
+): { min: Decimal; max: Decimal } | null {
+  const first = new Decimal(UNIFIED_FIRST_BILL[kind] ?? 0);
+  // Leaf-class kinds (first bill 0: successor, addition) are waived FOREVER —
+  // the fractal farm's volume cells must stay cheap; their throttle is pencil
+  // time. Only amplifier-class kinds carry √peak repeat bills.
+  if (first.lte(0)) return null;
+  const bill = owned <= 0 ? first : Decimal.max(first, unifiedNeed(peakMagnitude));
+  if (bill.mul(UNIFIED_BILL_TOLERANCE).lt(UNIFIED_BILL_WAIVE)) return null;
+  return { min: bill, max: bill.mul(UNIFIED_BILL_TOLERANCE) };
+}
+
+/** Pencil count under the unified law: one per RUNG of the frontier — a new
+ *  pencil each time the peak's digit-count doubles past 6 (6, 12, 24, 48 …). */
+export function unifiedBuildSlots(peakMagnitude: Decimal): number {
+  const digits = magnitudeDigits({ kind: 'real', n: peakMagnitude }).toNumber();
+  if (!Number.isFinite(digits)) return 12; // tower-class — pencils are not the constraint
+  let slots = 1;
+  for (let t = 6; digits >= t && slots < 12; t *= 2) slots++;
+  return slots;
+}
 
 /** Frontier magnitudes that each grant +1 build slot (the second pencil, the
  *  third hand…). Shared by the game (narrator + monitor) and the sims so the

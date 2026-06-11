@@ -405,6 +405,28 @@ extending.
   current rules (opening / mult factory / launch prep / powered age), all
   verified headlessly. 61 unit + 8 e2e green.
 
+- ✅ **THE UNIFIED LAW, sim-first (2026-06-11).** The grade/overpay/scaffold
+  zoo re-anchored into one closed form: **"an operator k tiers up is paid k
+  rungs down"** — need = M^(1/2^k) (mult √M, exp ⁴√M, tet ⁸√M), payable only
+  in [need/16, need], pro-rata (the full need completes the work); OPTIONAL
+  for mult (fuel = speed), MANDATORY for exp+ above 10⁶ (the notes). MATERIAL
+  bills gate construction: first-of-kind fixed puzzles (mult = a 16 —
+  addition's first moment; exp = a MILLION, visible from the start), repeats
+  max(first, √peak) in a tight ×1.1 band, leaf kinds (successor/addition)
+  waived forever; pencils = one per rung (digits 6/12/24/48…); addition drops
+  to d^1.5 (the always-cheap machining op — band-fitting by binary-fill is
+  its job). All behind `UNIFIED_TUNING` (legacy baselines byte-identical).
+  Challenger `--unified --from-zero` machines bills (pool → mill → mult-pair
+  → adder binary-fill). **4 h @ 1 act/s: adder 0.8m → mult 2.0m → mill 8.3m →
+  exp 12.0m → first launch 17.3m → 5 paid launches → e4932.** Design
+  discoveries: (1) pure √M-for-everything NEUTERS exp (cost depends only on
+  the landing point → every step caps at digit-doubling) — the tier index is
+  exp's crazy-leap license; (2) √peak repeat-bills on leaf kinds tax the
+  fractal farm — waived; (3) **the OPERAND TRAP**: a frontier committed to a
+  mandatory op whose remaining notes can only be minted USING that frontier
+  is imprisoned forever — the engine needs a cancel-op verb before the law
+  goes live in the game. 71 unit tests, check 0/0.
+
 - ✅ **The UX pass — UX_PLAN.md executed in full, Orders 1–6 (2026-06-10).**
   Four commits on `main`. Feedback: fuel-grade readouts, never-silent refusals
   (JAM flash + narrator), overpay smoke, staged-operand labels, a/b port

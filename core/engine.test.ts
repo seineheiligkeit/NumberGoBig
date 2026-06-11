@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'break_eternity.js';
 import { valueOf, valueMul, valueMagnitude, VALUE_ONE, type Value } from './value.ts';
-import { DEFAULT_TUNING, buildWork, operationWork, type TimeTuning } from './time.ts';
+import { DEFAULT_TUNING, UNIFIED_TUNING, buildWork, operationWork, type TimeTuning } from './time.ts';
 import {
   createWorld,
   placeCell,
@@ -274,6 +274,70 @@ test('lock: overpaying fuel has √ diminishing returns (right-sized streams are
   const expected = grade.mul(new Decimal(v)).sqrt();
   assert.ok(gained.sub(expected).abs().div(expected).toNumber() < 1e-9, 'engine applies the overpay law');
   assert.ok(gained.toNumber() < v * 0.2, 'a 100×-grade block buys ~10% of its value, not 100%');
+});
+
+// --- THE UNIFIED LAW (everything is paid one rung down) ---------------------
+
+test('unified: the first multiplication is BUILT FROM a 16 — addition’s moment', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  const s = placeCell(w, 'successor');
+  assert.equal(getCell(w, s)!.materialNeed, null, 'opening cells are waived');
+  const m = placeCell(w, 'multiplication');
+  const bill = getCell(w, m)!.materialNeed!;
+  assert.ok(bill.min.eq(16), 'the construct-a-16 puzzle (1+1→2→4→8→16)');
+  run(w, 60);
+  assert.equal(getCell(w, m)!.built, false, 'no material, no pencil');
+  injectFuel(w, m, valueOf(64)); // out of band → bounces back
+  assert.equal(poolCountOf(w, 64), 1);
+  injectFuel(w, m, valueOf(16)); // in band → consumed into the structure
+  assert.equal(getCell(w, m)!.materialNeed, null);
+  run(w, 25); // flat pencil time (20) — no geometric repurchase
+  assert.equal(getCell(w, m)!.built, true);
+});
+
+test('unified: mult fuel is OPTIONAL, in-band, pro-rata against √(output)', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  const m = placeCell(w, 'multiplication', 0, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(256));
+  feedOperand(w, m, 1, valueOf(256)); // 65536: work 125, need √65536 = 256
+  tick(w, 1);
+  const op = getCell(w, m)!.op!;
+  assert.ok(op.unifiedNeed!.eq(256), 'need = the tier-below tree root');
+  assert.ok(op.fuelRequired.eq(0), 'mult: fuel is speed, never a wall');
+  assert.ok(op.scaffold!.min.eq(16) && op.scaffold!.cap.eq(256), 'band [need/16, need]');
+  injectFuel(w, m, valueOf(128)); // half the need → half the work
+  assert.ok(getCell(w, m)!.op!.progress.gte(op.work.div(2)));
+  injectFuel(w, m, valueOf(200)); // rest (overshoot caps at work)
+  tick(w, 1);
+  assert.equal(getCell(w, m)!.op, null, 'paying the need completes the op');
+  assert.equal(poolCountOf(w, 65536), 1);
+});
+
+test('unified: exponentiation notes are MANDATORY above the floor (tier-indexed need)', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  const f = placeCell(w, 'exponentiation', 0, 0, { built: true });
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(8)); // 10⁸ > the 10⁶ floor; exp is tier 2: need = (10⁸)^(1/4) = 100
+  tick(w, 1);
+  assert.ok(getCell(w, f)!.op!.fuelRequired.eq(100), 'exp pays TWO rungs down — the crazy-leap license');
+  run(w, 14000); // clock fills at baseRate…
+  assert.ok(getCell(w, f)!.op !== null, '…but the notes hold it open');
+  injectFuel(w, f, valueOf(60));
+  injectFuel(w, f, valueOf(50)); // 110 ≥ the 100 need (both in band [6.25, 100])
+  tick(w, 1);
+  assert.equal(getCell(w, f)!.op, null);
+  assert.equal(poolCountOf(w, 1e8), 1);
+});
+
+test('unified: pencils per rung; repeat bills priced in √peak', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  assert.equal(currentBuildSlots(w), 1);
+  addLoose(w, valueOf(1e7)); // peak 8 digits ≥ 6 → the second pencil
+  assert.equal(currentBuildSlots(w), 2);
+  placeCell(w, 'multiplication');
+  const m2 = placeCell(w, 'multiplication'); // the 2nd mult at peak 1e7
+  const bill = getCell(w, m2)!.materialNeed!;
+  assert.ok(Math.abs(bill.min.toNumber() - Math.sqrt(1e7)) < 1, 'repeat ≈ √peak');
 });
 
 // --- Warehouse hand-verbs (U3.3) --------------------------------------------

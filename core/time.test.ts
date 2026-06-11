@@ -21,7 +21,12 @@ import {
   minFuelDenomination,
   scaffoldRequirement,
   ticksToComplete,
+  unifiedNeed,
+  unifiedBand,
+  materialBill,
+  unifiedBuildSlots,
   DEFAULT_TUNING,
+  UNIFIED_TUNING,
   type TimeTuning,
 } from './time.ts';
 
@@ -154,6 +159,58 @@ test('scaffolding: requirement is a shrinking FRACTION of output (climbing stays
   const frac1 = scaffoldRequirement(m1, SCAFFOLD_ON).div(m1);
   const frac2 = scaffoldRequirement(m2, SCAFFOLD_ON).div(m2);
   assert.ok(frac2.lt(frac1), 'bigger jumps burn a smaller share of what they create');
+});
+
+// --- THE UNIFIED LAW: everything is paid one rung down ----------------------
+
+test('unified: an operator k tiers up is paid k rungs down — need = M^(1/2^k)', () => {
+  assert.equal(n(unifiedNeed(new Decimal(65536))), 256, 'mult (k=1): the tier-below root');
+  assert.ok(Math.abs(n(unifiedNeed(new Decimal(1e40)).log10()) - 20) < 1e-9, '√ in digit terms: half the digits');
+  // exp (k=2): the fourth root — an e20→e80 leap costs exactly one e20 commitment
+  assert.ok(Math.abs(n(unifiedNeed(new Decimal('1e80'), 2).log10()) - 20) < 1e-9);
+  // tet (k=3): the eighth root — the hierarchy stays a ladder of leaps
+  assert.ok(Math.abs(n(unifiedNeed(new Decimal('1e80'), 3).log10()) - 10) < 1e-9);
+});
+
+test('unified: the band is [need/16, need] — the Mill ratio', () => {
+  const b = unifiedBand(new Decimal(256));
+  assert.equal(n(b.min), 16);
+  assert.equal(n(b.cap), 256);
+  // tiny ops accept 1s (the band floor never drops below 1)
+  assert.equal(n(unifiedBand(new Decimal(2)).min), 1);
+});
+
+test('unified: material bills — the construct-this-number puzzles', () => {
+  // first multiplication wants a 16 (addition’s first moment: 1+1→2→4→8→16)
+  const mult0 = materialBill('multiplication', 0, new Decimal(100))!;
+  assert.equal(n(mult0.min), 16);
+  assert.ok(n(mult0.max) < 18, 'tight band: [16, 17.6]');
+  // first exponentiation wants a MILLION — visible from the start
+  assert.equal(n(materialBill('exponentiation', 0, new Decimal(100))!.min), 1e6);
+  // leaf-class kinds are waived FOREVER — even at a huge peak, the 20th
+  // successor is free (the fractal farm's volume cells; pencils throttle them)
+  assert.equal(materialBill('successor', 0, new Decimal(1)), null);
+  assert.equal(materialBill('addition', 2, new Decimal(8)), null);
+  assert.equal(materialBill('successor', 20, new Decimal(1e12)), null);
+  assert.equal(materialBill('addition', 20, new Decimal(1e12)), null);
+  // repeats are priced in the game’s own currency: max(firstBill, √peak)
+  const mult5 = materialBill('multiplication', 5, new Decimal(1e10))!;
+  assert.equal(n(mult5.min), 1e5, 'the 6th mult at peak 1e10 costs a √peak-class block');
+});
+
+test('unified: pencils grow one per rung of the frontier (digits 6, 12, 24…)', () => {
+  assert.equal(unifiedBuildSlots(new Decimal(100)), 1);
+  assert.equal(unifiedBuildSlots(new Decimal(1e6)), 2); // 7 digits ≥ 6
+  assert.equal(unifiedBuildSlots(new Decimal(1e12)), 3); // 13 ≥ 12
+  assert.equal(unifiedBuildSlots(new Decimal(1e24)), 4);
+  assert.equal(unifiedBuildSlots(new Decimal(1e50)), 5);
+});
+
+test('unified: addition is the always-cheap op (d^1.5, never a wall)', () => {
+  const big = operationWork(valueOf(1e20), 'addition', UNIFIED_TUNING); // 21 digits
+  assert.ok(big.toNumber() < 100, `a 20-digit sum costs a beat (~${big}), not an evening`);
+  const mult = operationWork(valueOf(1e20), 'multiplication', UNIFIED_TUNING);
+  assert.ok(mult.gt(big.mul(50)), 'amplifiers stay dramatically pricier than machining');
 });
 
 // --- Pacing guards: pin the intended feel ----------------------------------

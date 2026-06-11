@@ -52,10 +52,13 @@ import {
 import { valueMagnitude, valueMul, valuePow, type Value } from '../core/value.ts';
 import {
   DEFAULT_TUNING,
+  UNIFIED_TUNING,
   magnitudeDigits,
   operationWork,
   minFuelDenomination,
   scaffoldRequirement,
+  unifiedNeed,
+  unifiedBand,
   type TimeTuning,
 } from '../core/time.ts';
 import { runManager } from './manager.ts';
@@ -245,6 +248,36 @@ function bestPlan(
     if (outDigits.lte(maxOperandD)) return null; // must strictly grow past its inputs
     const work = operationWork(out, kind, T);
     const grade = minFuelDenomination(work, T);
+    if (T.unifiedCosts) {
+      // THE UNIFIED LAW: need = √(output) in the band [need/16, need], pro-rata.
+      const need = unifiedNeed(valueMagnitude(out), kind === 'exponentiation' ? 2 : 1);
+      const band = unifiedBand(need);
+      const mandatory = kind === 'exponentiation' && valueMagnitude(out).gt(1e6);
+      if (mandatory && (outDigits.lt(minLaunchD) || outDigits.lte(apexD))) return null;
+      // free exp toys that don't advance the apex are wasted actions
+      if (kind === 'exponentiation' && !mandatory && outDigits.lte(apexD)) return null;
+      if (work.gt(CREEP_OK) || mandatory) {
+        // Full coverage before committing operands. (A 0.3 start-fraction was
+        // tried — "stream the rest during the burn" — and produced the OPERAND
+        // TRAP: the frontier locked inside an op whose remaining notes could
+        // only be minted USING the frontier. Wealth imprisoned forever. The
+        // real game needs a cancel-op verb before streaming is player-safe.)
+        const startFrac = 1;
+        let sum = Decimal.dZero;
+        let n = 0;
+        for (const v of vs) {
+          if (v.m.lt(band.min) || v.m.gt(band.cap)) continue;
+          for (let c2 = 0; c2 < v.copies && n < MAX_NOTES; c2++) {
+            sum = sum.add(v.m);
+            n++;
+            if (sum.gte(need.mul(startFrac))) break;
+          }
+          if (sum.gte(need.mul(startFrac))) break;
+        }
+        if (sum.lt(need.mul(startFrac))) return null;
+      }
+      return { kind, aMag: aM, bMag: bM, outDigits, work, grade };
+    }
     if (kind === 'exponentiation') {
       const s = scaffoldRequirement(valueMagnitude(out), T);
       if (s.gt(Decimal.dZero)) {
@@ -318,6 +351,9 @@ interface Result {
   ops: number;
   exps: number;
   paidExps: number; // scaffolded launches (above the floor) — the real milestones
+  /** Experience-curve landmarks: tick each operator first completed + first launch. */
+  landmarks: Record<string, number>;
+  firstLaunchTick: number;
   /** Session timeline (12 samples): production/burn/build telemetry over time. */
   timeline: {
     t: number;
@@ -343,6 +379,7 @@ export function runChallenger(
   const world = createWorld(T, { stacking: true });
   const hands: number[] = [];
   let millId: number | null = null;
+  let handAdder: number | null = null; // the machining bench (unified bills)
 
   // Backbone builder; `run` either executes immediately (the pre-built
   // convention) or queues the thunk as one ACTION (from-zero play, where the
@@ -401,19 +438,31 @@ export function runChallenger(
   };
   if (fromZero) {
     const always = () => true;
-    const r1 = step(always); // the opening: a depth-2 starter + 2 hand mults
+    const r1 = step(always); // the opening: a depth-2 starter + the bench + 2 hand mults
     buildBackbone(2, 0, r1);
+    r1(() => {
+      handAdder = placeCell(world, 'addition', 1200, -140); // the machining bench
+    });
     r1(() => hands.push(placeCell(world, 'multiplication', 1200, 0)));
     r1(() => hands.push(placeCell(world, 'multiplication', 1200, 120)));
     const r2 = step(() => world.peakMagnitude.gte(4096)); // the snowball is rolling → real fuel tree
     buildBackbone(3, 600, r2);
+    if (T.unifiedCosts) {
+      r2(() => {
+        millId = placeCell(world, 'mill', 1400, 260); // bills need right-sizing early
+      });
+    }
     if (useExp) {
-      const r3 = step(() => world.peakMagnitude.gte(1e9)); // the game's exp unlock milestone
+      // exp arrives when its first bill (1e6) is plausibly machinable —
+      // unified: shortly past a million; legacy: the 1e9 toolbar milestone.
+      const r3 = step(() => world.peakMagnitude.gte(T.unifiedCosts ? 1.2e6 : 1e9));
       r3(() => hands.push(placeCell(world, 'exponentiation', 1400, 0)));
       r3(() => hands.push(placeCell(world, 'exponentiation', 1400, 120)));
-      r3(() => {
-        millId = placeCell(world, 'mill', 1400, 260); // the note right-sizer
-      });
+      if (!T.unifiedCosts) {
+        r3(() => {
+          millId = placeCell(world, 'mill', 1400, 260); // the note right-sizer
+        });
+      }
     }
     const r4 = step(() => world.peakMagnitude.gte(1e12)); // mid-game: deepen the farm
     buildBackbone(4, 1400, r4);
@@ -462,6 +511,25 @@ export function runChallenger(
     const grade = c.op.grade;
     const sc = c.op.scaffold;
     let bi = -1;
+    if (c.op.unifiedNeed && sc) {
+      // UNIFIED: pay the largest in-band block (pro-rata — fewest actions).
+      // Skip near-done optional ops (the clock will finish them).
+      const fuelLeft = Decimal.max(needPay, c.op.unifiedNeed.mul(remaining).div(c.op.work));
+      if (fuelLeft.lt(c.op.unifiedNeed.mul(0.05))) return false;
+      for (let i = 0; i < world.pool.length; i++) {
+        const m = mag(world.pool[i].value);
+        if (m.lt(sc.min) || m.gt(sc.cap)) continue;
+        if (bi < 0 || m.gt(mag(world.pool[bi].value))) bi = i;
+      }
+      if (bi < 0) return false;
+      const f0 = peel(world, bi);
+      if (!f0) return false;
+      if (!act(() => injectFuel(world, id, f0))) {
+        pushBack(world, f0);
+        return false;
+      }
+      return true;
+    }
     if (sc) {
       // largest in-band note (pays requirement AND clock fastest per action)
       for (let i = 0; i < world.pool.length; i++) {
@@ -524,6 +592,13 @@ export function runChallenger(
   function currentReserves(): { reserves: Reserve[]; mintBand: Reserve | null } {
     const reserves: Reserve[] = [];
     let mintBand: Reserve | null = null;
+    // Outstanding material bills reserve their bands — merges must not eat
+    // the very block that pays a bill.
+    if (T.unifiedCosts) {
+      for (const c of world.cells.values()) {
+        if (c.materialNeed) reserves.push({ min: c.materialNeed.min, cap: c.materialNeed.max });
+      }
+    }
     for (const id of hands) {
       const c = world.cells.get(id)!;
       if (c.op?.scaffold && c.op.fuelPaid.lt(c.op.fuelRequired)) reserves.push(c.op.scaffold);
@@ -546,9 +621,10 @@ export function runChallenger(
         // the locked target (the old launch would no longer be a milestone).
         if (!campaign || apexD.gte(campaign.refApexD.mul(LAUNCH_GAIN))) {
           const targetMag = Decimal.pow(10, apexD.mul(LAUNCH_GAIN));
-          const sStar = scaffoldRequirement(targetMag, T);
+          const sStar = T.unifiedCosts ? unifiedNeed(targetMag, 2) : scaffoldRequirement(targetMag, T);
+          const ratio = T.unifiedCosts ? 16 : T.scaffoldBand;
           campaign = sStar.gt(Decimal.dZero)
-            ? { refApexD: apexD, sStar, bandLo: sStar.div(T.scaffoldBand) }
+            ? { refApexD: apexD, sStar, bandLo: sStar.div(ratio) }
             : null;
         }
         if (campaign) {
@@ -604,9 +680,12 @@ export function runChallenger(
     ops++;
     if (plan.kind === 'exponentiation') {
       exps++;
-      // a PAID launch (above the scaffolding floor) is a real milestone;
+      // a PAID launch (above the scaffolding/notes floor) is a real milestone;
       // sub-floor toys are free and uncounted as achievements
-      if (T.scaffoldCoeff > 0 && plan.outDigits.gt(Math.log10(Math.max(10, T.scaffoldFloor)) + 1)) {
+      const isPaid = T.unifiedCosts
+        ? plan.outDigits.gt(7) // unified notes floor: outputs above 10⁶
+        : T.scaffoldCoeff > 0 && plan.outDigits.gt(Math.log10(Math.max(10, T.scaffoldFloor)) + 1);
+      if (isPaid) {
         paidExps++;
         campaign = null; // launched — the next campaign re-derives from the new apex
       }
@@ -666,13 +745,145 @@ export function runChallenger(
     return true;
   }
 
+  /** Pay outstanding MATERIAL bills (unified law): a one-block deposit in the
+   *  tight band [min, max]. Route order: an in-band pool block → MILL an
+   *  oversized one down (16ths) → MULT a pair into the band → grow toward it
+   *  with the hand ADDER (binary-fill — addition's job: making things FIT). */
+  function payBills(): boolean {
+    if (!T.unifiedCosts) return false;
+    for (const c of world.cells.values()) {
+      if (!c.materialNeed) continue;
+      const { min, max } = c.materialNeed;
+      // 1) direct: the smallest in-band pool block
+      let bi = -1;
+      for (let i = 0; i < world.pool.length; i++) {
+        const m = mag(world.pool[i].value);
+        if (m.gte(min) && m.lte(max) && (bi < 0 || m.lt(mag(world.pool[bi].value)))) bi = i;
+      }
+      if (bi >= 0) {
+        const f = peel(world, bi);
+        if (f && act(() => injectFuel(world, c.id, f))) return true;
+        if (f) pushBack(world, f);
+        return false;
+      }
+      // 2) mill: a block whose sixteenth lands in the band
+      if (millId !== null) {
+        const mill = world.cells.get(millId);
+        if (mill?.built && !mill.op && mill.operands[0] === null) {
+          for (let i = 0; i < world.pool.length; i++) {
+            const m = mag(world.pool[i].value);
+            if (m.gte(min.mul(16)) && m.lte(max.mul(16))) {
+              const f = peel(world, i);
+              if (f && act(() => feedOperand(world, millId!, 0, f))) return true;
+              if (f) pushBack(world, f);
+              return false;
+            }
+          }
+        }
+      }
+      // 3) mult a pair into the band (the squaring pool usually has the factors)
+      // — pair routes are ATOMIC: both feeds in one burst, or a half-staged
+      // cell deadlocks the bench (the bug this comment commemorates).
+      if (budget < 2) return false;
+      const mc = hands.find((h) => {
+        const hc = world.cells.get(h);
+        return hc?.kind === 'multiplication' && hc.built && !hc.op && hc.operands.every((o) => o === null);
+      });
+      if (mc !== undefined) {
+        const vs = virtualPool(world).slice(0, 14);
+        for (let i = 0; i < vs.length; i++) {
+          for (let j = i; j < vs.length; j++) {
+            if (i === j && vs[i].copies < 2) continue;
+            const prod = vs[i].m.mul(vs[j].m);
+            if (prod.gte(min) && prod.lte(max)) {
+              const a2 = peelByMag(world, vs[i].m);
+              if (!a2) return false;
+              const b2 = peelByMag(world, vs[j].m);
+              if (!b2) {
+                pushBack(world, a2);
+                return false;
+              }
+              if (!act(() => feedOperand(world, mc, 0, a2))) {
+                pushBack(world, a2);
+                pushBack(world, b2);
+                return false;
+              }
+              if (!act(() => feedOperand(world, mc, 1, b2))) {
+                pushBack(world, b2);
+                return false;
+              }
+              return true;
+            }
+          }
+        }
+      }
+      // 4) adder binary-fill: take the largest sub-band block, add the largest
+      //    partner that stays ≤ max — monotone progress toward the band.
+      if (handAdder !== null) {
+        const ad = world.cells.get(handAdder);
+        // recovery: a half-staged pair (operand 0 only) just needs its partner
+        if (ad?.built && !ad.op && ad.operands[0] !== null && ad.operands[1] === null) {
+          const staged = mag(ad.operands[0]!);
+          let rM: Decimal | null = null;
+          for (let i = 0; i < world.pool.length; i++) {
+            const m = mag(world.pool[i].value);
+            if (staged.add(m).lte(max) && (rM === null || m.gt(rM))) rM = m;
+          }
+          if (rM !== null) {
+            const r3b = peelByMag(world, rM);
+            if (r3b && act(() => feedOperand(world, handAdder!, 1, r3b))) return true;
+            if (r3b) pushBack(world, r3b);
+          }
+          return false;
+        }
+        if (ad?.built && !ad.op && ad.operands.every((o) => o === null)) {
+          let ai = -1;
+          for (let i = 0; i < world.pool.length; i++) {
+            const m = mag(world.pool[i].value);
+            if (m.lt(min) && (ai < 0 || m.gt(mag(world.pool[ai].value)))) ai = i;
+          }
+          if (ai >= 0) {
+            const accM = mag(world.pool[ai].value);
+            let bM: Decimal | null = null;
+            for (let i = 0; i < world.pool.length; i++) {
+              if (i === ai && (world.pool[i].count ?? 1) < 2) continue;
+              const m = mag(world.pool[i].value);
+              if (accM.add(m).lte(max) && (bM === null || m.gt(bM))) bM = m;
+            }
+            if (bM !== null) {
+              const a3 = peel(world, ai);
+              if (!a3) return false;
+              const b3 = peelByMag(world, bM);
+              if (!b3) {
+                pushBack(world, a3);
+                return false;
+              }
+              if (!act(() => feedOperand(world, handAdder, 0, a3))) {
+                pushBack(world, a3);
+                pushBack(world, b3);
+                return false;
+              }
+              if (!act(() => feedOperand(world, handAdder, 1, b3))) {
+                pushBack(world, b3);
+                return false;
+              }
+              return true;
+            }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
   /** Rush the build-queue HEAD with a right-sized block (build fuel is 1:1 and
    *  grade-agnostic; surplus past completion is wasted, so prefer the smallest
    *  block that finishes it — capped at 8× to avoid torching real product). */
   function rushBuilds(): boolean {
     let head: ReturnType<typeof getCell> = null;
     for (const c of world.cells.values()) {
-      if (!c.built) {
+      if (!c.built && !c.materialNeed) {
+        // unpaid cells are payBills' job — fuel-rushing them just bounces
         head = c;
         break;
       }
@@ -720,6 +931,11 @@ export function runChallenger(
   const t75 = Math.floor(ticks * 0.75);
   const timeline: Result['timeline'] = [];
   const tlSample = Math.max(1, Math.floor(ticks / 12));
+  // Experience-curve landmarks: the tick each operator kind first COMPLETES,
+  // and the first paid launch — the "minutes to each stage" the design tunes.
+  const landmarks: Record<string, number> = {};
+  const pendingKinds = new Set(['addition', 'multiplication', 'mill', 'exponentiation']);
+  let firstLaunchTick = 0;
   for (let t = 1; t <= ticks; t++) {
     budget = Math.min(BUDGET_CAP, budget + rate);
     if (t === t75) digitsAt75 = magnitudeDigits({ kind: 'real', n: frontier() });
@@ -750,6 +966,11 @@ export function runChallenger(
         acted = true;
         continue;
       }
+      // 0.5) unified: pay/machine outstanding material bills (the critical path)
+      if (payBills()) {
+        acted = true;
+        continue;
+      }
       const working = hands
         .map((id) => world.cells.get(id)!)
         .filter((c) => c.built && c.op && c.op.work.gt(c.op.progress))
@@ -769,6 +990,15 @@ export function runChallenger(
       if (!acted && fromZero && rushBuilds()) acted = true;
     }
     tick(world, 1);
+    if (pendingKinds.size > 0) {
+      for (const c of world.cells.values()) {
+        if (c.built && pendingKinds.has(c.kind)) {
+          landmarks[c.kind] = t;
+          pendingKinds.delete(c.kind);
+        }
+      }
+    }
+    if (firstLaunchTick === 0 && paidExps > 0) firstLaunchTick = t;
     if (trace && t % sample === 0) {
       const f = frontier();
       console.log(
@@ -788,6 +1018,8 @@ export function runChallenger(
     ops,
     exps,
     paidExps,
+    landmarks,
+    firstLaunchTick,
     timeline,
   };
 }
@@ -807,6 +1039,7 @@ function main(): void {
   let slots = DEFAULT_TUNING.buildSlots;
   let carry = DEFAULT_TUNING.accelChargeCarry;
   let fromZero = false;
+  let unified = false;
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--rate') rate = Number(a[++i]);
@@ -820,6 +1053,7 @@ function main(): void {
     else if (a[i] === '--floor') floor = Number(a[++i]);
     else if (a[i] === '--slots') slots = Number(a[++i]); // build slots; 0 = unlimited
     else if (a[i] === '--from-zero') fromZero = true;
+    else if (a[i] === '--unified') unified = true; // THE UNIFIED LAW (UNIFIED_TUNING)
     else if (a[i] === '--live') {
       // the LIVE game's exact rules (GAME_TUNING): scaffolding + powered
       // logistics + one starting build slot — the gameplay agent's benchmark
@@ -828,19 +1062,22 @@ function main(): void {
       slots = 1;
     }
   }
-  const tuning: TimeTuning = {
-    ...DEFAULT_TUNING,
-    scaffoldCoeff: scaffold,
-    scaffoldExp: alpha,
-    scaffoldBand: band,
-    scaffoldFloor: floor,
-    buildSlots: slots,
-    accelChargeCarry: carry,
-  };
-  const scLabel =
-    (scaffold > 0 ? ` · SCAFFOLDING C=${scaffold} α=${alpha} band=${band}` : '') +
-    (slots > 0 ? ` · SLOTS ${slots}+milestones` : '') +
-    (fromZero ? ' · FROM ZERO' : '');
+  const tuning: TimeTuning = unified
+    ? UNIFIED_TUNING
+    : {
+        ...DEFAULT_TUNING,
+        scaffoldCoeff: scaffold,
+        scaffoldExp: alpha,
+        scaffoldBand: band,
+        scaffoldFloor: floor,
+        buildSlots: slots,
+        accelChargeCarry: carry,
+      };
+  const scLabel = unified
+    ? ' · THE UNIFIED LAW' + (fromZero ? ' · FROM ZERO' : '')
+    : (scaffold > 0 ? ` · SCAFFOLDING C=${scaffold} α=${alpha} band=${band}` : '') +
+      (slots > 0 ? ` · SLOTS ${slots}+milestones` : '') +
+      (fromZero ? ' · FROM ZERO' : '');
   const fmtN = (x: number) =>
     !Number.isFinite(x) ? '>1e308' : Math.abs(x) >= 1e6 ? x.toExponential(2) : Math.round(x).toLocaleString('en-US');
 
@@ -851,6 +1088,10 @@ function main(): void {
     const r = runChallenger(rate, ticks, { trace, useExp, tuning, fromZero });
     console.log(
       `\n  frontier ${r.frontierStr} (${r.digits.toString()} digits) | score ${r.score.toString()} | ${r.actions} actions | ${r.ops} hand-ops (${r.exps} exp, ${r.paidExps} paid launches)`,
+    );
+    const lm = (k: string): string => (r.landmarks[k] ? `${(r.landmarks[k] / 60).toFixed(1)}m` : '—');
+    console.log(
+      `  LANDMARKS  first adder ${lm('addition')} · first MULT ${lm('multiplication')} · mill ${lm('mill')} · first EXP ${lm('exponentiation')} · first paid launch ${r.firstLaunchTick ? (r.firstLaunchTick / 60).toFixed(1) + 'm' : '—'}`,
     );
     console.log('\n  SESSION TELEMETRY (cumulative):');
     console.log('      t |  digits |     score     | cells(built/placed) | produced | burned (mag) | ops | launches | pool');

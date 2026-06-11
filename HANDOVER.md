@@ -67,7 +67,34 @@ page — use the Playwright harness scripts in repo-ignored `tmp-uxaudit/`
 `peakMagnitude`); the challenger prints a 12-row session timeline on single
 runs.
 
-## 0a. Next session — SIM TUNING agenda (the open balance items)
+## 0a. THE UNIFIED LAW — built sim-first (2026-06-11); supersedes the agenda below
+
+The tuning session pivoted to a RE-ANCHORING: one closed form replaces the
+grade/overpay/scaffold zoo. **"An operator k tiers up is paid k rungs down":
+need = M^(1/2^k)** (mult √M, exp ⁴√M), band [need/16, need], pro-rata (full
+need completes the work); optional for mult (fuel = speed), mandatory notes
+for exp+ above 10⁶. **Material bills** gate construction (first mult = a 16 —
+addition's moment; first exp = a MILLION; repeats √peak ×1.1 tight band;
+successor/addition waived forever — pencils throttle leaves). **Pencils per
+rung** (digits 6/12/24/48…). **Addition d^1.5** — the always-cheap machining
+op; band-fitting by binary-fill (2^a sums) is its recurring job. All in
+`UNIFIED_TUNING` (`core/time.ts`); legacy baselines byte-identical; 71/71
+unit, check 0/0. Challenger `--unified --from-zero` machines bills
+(pool → mill → mult-pair → adder binary-fill) and walks the whole ladder:
+**adder 0.8m → mult 2.0m → mill 8.3m → exp 12.0m → first launch 17.3m → 5
+paid launches → e4932 in 4 h @ 1 act/s** (1/3 pace: mult 2.6m, exp 33.9m;
+1/10: mult 8.2m, exp 55.2m). Discoveries worth re-reading: pure
+√M-for-everything NEUTERS exp (cost depends only on the landing point — every
+step caps at digit-doubling; the tier index is exp's crazy-leap license);
+leaf repeat-bills tax the fractal farm (waived); **the OPERAND TRAP** — a
+frontier committed to a mandatory op whose remaining notes require that very
+frontier to mint is imprisoned forever → **the engine needs a cancel-op verb
+before the law reaches GAME_TUNING**. Open next: agent campaign-hardening at
+slow paces (1 launch then stall at 1/3—1/10), launch-cadence shaping, then
+the promote-to-game pass (bills UI on unbuilt cells, tier-band displays,
+cancel verb, unlock-as-answer events from the UX brainstorm).
+
+## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band
    cross-sweep (`sim/scaffold-sweep.ts`) is currently confounded by challenger
