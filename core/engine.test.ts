@@ -18,6 +18,7 @@ import {
   placeCell,
   placePipe,
   removeCell,
+  cancelWork,
   feedOperand,
   injectFuel,
   depositToWarehouse,
@@ -416,6 +417,27 @@ test('ink tax: below the pocket-lint floor there is no tax at all', () => {
   run(w, 50);
   assert.equal(poolCountOf(w, 1000), 5, 'the opening is never taxed');
   assert.equal(w.inkCoverage, 1);
+});
+
+test('cancelWork: the rescue verb — operands come back, burned ink does not', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  const f = placeCell(w, 'exponentiation', 0, 0, { built: true });
+  feedOperand(w, f, 0, valueOf(10));
+  feedOperand(w, f, 1, valueOf(8)); // 10⁸: mandatory notes (the trap scenario)
+  tick(w, 1);
+  injectFuel(w, f, valueOf(60)); // partial notes — burned
+  const before = score(w);
+  assert.ok(cancelWork(w, f), 'an active op can be cancelled');
+  assert.equal(getCell(w, f)!.op, null);
+  assert.equal(poolCountOf(w, 10), 1, 'the base returns loose');
+  assert.equal(poolCountOf(w, 8), 1, 'the exponent returns loose');
+  assert.equal(score(w), before, 'cancelling moves blocks, never mints or burns');
+  // staged-but-unfired operands un-stage too
+  const m = placeCell(w, 'multiplication', 200, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(7));
+  assert.ok(cancelWork(w, m));
+  assert.equal(poolCountOf(w, 7), 1);
+  assert.ok(!cancelWork(w, m), 'nothing left to cancel');
 });
 
 test('write-time floor: a fully paid op still has to WRITE its digits', () => {

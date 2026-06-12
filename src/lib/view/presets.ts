@@ -154,11 +154,11 @@ export const PRESETS: Preset[] = [
       fuelBackbone(world, 4, 0, 260);
       frontierMult(world, 1500, -160, 1e10);
       const exp = placeCell(world, 'exponentiation', 1500, 0, BUILT);
-      // The launch: 1e12 ^ 2 → 1e24. Scaffolding S = √(1e24) = 1e12, band
-      // [≈1.6e10, 1e12]. Four 4e11 notes are minted and waiting beside it.
+      // The launch: 1e12 ^ 2 → 1e24. Unified tier-2 need = (1e24)^(1/4) = 10⁶,
+      // band [62.5k, 10⁶]. Four 2.5×10⁵ notes are minted and waiting beside it.
       feedOperand(world, exp, 0, valueOf(1e12));
       feedOperand(world, exp, 1, valueOf(2));
-      addLoose(world, valueOf(4e11), 1700, 80, 4); // the working notes (drop on the cell)
+      addLoose(world, valueOf(2.5e5), 1700, 80, 4); // the working notes (drop on the cell)
       addLoose(world, valueOf(65536), 1300, 160, 12); // deep-tree fuel for the mults
       addLoose(world, valueOf(2), 1700, -80, 3); // spare exponents
     },

@@ -227,6 +227,28 @@ playtest. Snapshot presets regenerated under the lock (155-cell tower).
 NEXT: the cancel-op verb, then promote GAME_TUNING := INK_TUNING and take
 the game to a human playtest.
 
+**Follow-up 7 (2026-06-12) — THE PROMOTION: the ink era IS the live game.**
+The last prerequisite landed: **`cancelWork(world, cellId)`** (engine, tested)
+aborts any op or staged operands — operands return loose, burned notes do
+not (the operand-trap rescue; the inspector grows a "cancel (operands
+return)" action on any working/staged cell). Then **GAME_TUNING :=
+INK_TUNING** — the browser game now runs the unified law, bills, pencils,
+the write floor, the ink tax + grace, and the divisor-mill verbatim. View
+reconciliation: bills are VISIBLE (a "bill: N" badge on awaiting cells + an
+inspector bill line + a first-bill narrator note; fuel-dropping the bill on
+the cell pays it via the existing applyFuel path); the toolbar quotes the
+MATERIAL bill instead of legacy build-work; exponentiation's earned unlock
+moved 1e9 → **1e6** (the reveal and its first bill are the same number);
+the **Ledger tool unlocks the moment rent first comes due** (narrator: "the
+notebook begins to charge rent"); launchprep preset re-noted for tier-2
+needs (4 × 2.5e5 in [62.5k, 1e6]). e2e suite rewritten to ink-era physics
+(bill payment flows, divisor-mill ÷16 stack, mandatory-notes hold + band
+refusal + pro-rata launch, cancel verb) — **12 e2e + 85 unit, check 0/0,
+build clean, browser-verified** (inspector shows need 56 / band 4–56 on a
+10⁷ exp; bill badge live). THE GAME IS PLAYTEST-READY: the next session is
+a human playing from zero — watch the opening (mult ~5 m), the million
+moment, the first launch (~33 m), and the first rent shock.
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

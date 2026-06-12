@@ -405,6 +405,21 @@ extending.
   current rules (opening / mult factory / launch prep / powered age), all
   verified headlessly. 61 unit + 8 e2e green.
 
+- ✅ **THE INK ERA SHIPPED TO THE LIVE GAME (2026-06-12).** The full arc of
+  the pacing investigation — the unified law ("an operator k tiers up is paid
+  k rungs down"), MATERIAL bills, the write-time floor, the ink tax (Ledger-
+  paid, delayed shock), and the divisor-mill — was built sim-first, played by
+  the fresh PLAYER agent (`sim/player.ts`, claims-board architecture), tuned
+  by the ink-sweep grid (`sim/ink-sweep.ts`), provisionally locked
+  (`INK_TUNING`: write 2.5 d/s · tax ×2 · pencil ×3 · grace 180; measured:
+  mult 5.2 m · exp 31.6 m · launch 32.8 m · eras 33→…→234 m · e328/4 h), and
+  PROMOTED: `GAME_TUNING := INK_TUNING` after the cancel verb (`cancelWork`)
+  landed. Bills visible on cells + toolbar, exp unlocks at the million, the
+  Ledger drafts itself when rent first comes due, e2e rewritten to the new
+  physics (12 green). Agent gameplay snapshots ship as dev presets. The
+  next step is a HUMAN PLAYTEST from zero. See HANDOVER §0a follow-ups 1–7
+  for the complete investigation log.
+
 - ✅ **THE UNIFIED LAW, sim-first (2026-06-11).** The grade/overpay/scaffold
   zoo re-anchored into one closed form: **"an operator k tiers up is paid k
   rungs down"** — need = M^(1/2^k) (mult √M, exp ⁴√M, tet ⁸√M), payable only

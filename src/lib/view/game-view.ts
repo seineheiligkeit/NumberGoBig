@@ -46,6 +46,7 @@ import {
   depositToWarehouse,
   withdrawFromWarehouse,
   collectNearby,
+  cancelWork,
   operandArity,
   buildFraction,
   opFraction,
@@ -58,7 +59,7 @@ import {
   type SimPipe,
   type CellKind,
 } from '../../../core/engine';
-import { DEFAULT_TUNING } from '../../../core/time';
+import { INK_TUNING, materialBill, UNIFIED_BUILD_TIME } from '../../../core/time';
 import { PRESETS } from './presets';
 import { createJuice, setJuice } from './physics';
 import { note } from './narrator';
@@ -68,18 +69,16 @@ import { buildWork } from '../../../core/time';
 
 // --- View constants --------------------------------------------------------
 
-// The fuel-economy lever (amplifierBaseRateScale 0.5 / fuelOverpayExp 0.5) was
-// sim-tuned and PROMOTED into DEFAULT_TUNING (2026-06-10). The live game
-// additionally opts into the two Slice 2/3 levers while they are play-
-// validated (the sims' DEFAULT_TUNING baselines keep them off):
-//  - SCAFFOLDING (candidate lock α=0.5 C=1 band=64 floor=1e6): exp-tier ops
-//    demand working notes in [S/64, S] — sim-validated to ~8 paid milestone
-//    launches per engaged 4 h, exactly 1 per casual session.
-//  - POWERED LOGISTICS (carry 1): an accelerator's charge carries transit —
-//    pipe big blocks by keeping a power plant fed (charge decays).
-//  - BUILD SLOTS (1): one pencil — construction queues in placement order;
-//    fuel rushes any queued build; frontier milestones grant more pencils.
-const GAME_TUNING = { ...DEFAULT_TUNING, scaffoldCoeff: 1, accelChargeCarry: 1, buildSlots: 1 };
+// THE INK ERA IS THE GAME (promoted 2026-06-12, after the cancel verb landed
+// and the round-2 sweep locked the numbers — see HANDOVER §0a). The live game
+// runs INK_TUNING verbatim: the unified law (need = M^(1/2^k), bands /16,
+// pro-rata), MATERIAL bills on every machine, one pencil + frontier-rung
+// pencils, the write-time floor (2.5 d/s), the ink tax (×2, Ledger-paid,
+// 3-minute delayed shock), the divisor-mill, and powered logistics.
+// Measured by the Player agent at 1 act/s: mult 5.2 m · exp 31.6 m · first
+// launch 32.8 m · launch eras 33→65→…→234 m · e328 at 4 h. Locked until
+// first human playtest.
+const GAME_TUNING = INK_TUNING;
 
 const CELL_W = 100;
 const CELL_H = 76;
@@ -552,15 +551,21 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       }
       const lines: InspectorData['lines'] = [];
       if (!c.built) {
-        const pos = buildQueuePosition(world, c.id);
-        const slots = currentBuildSlots(world);
-        lines.push({
-          k: 'state',
-          v:
-            pos >= slots
-              ? `queued №${pos - slots + 1} (fuel may rush it)`
-              : `building — ${Math.round(buildFraction(c) * 100)}%`,
-        });
+        if (c.materialNeed) {
+          // THE BILL: the cell is a sketch until its material is deposited.
+          lines.push({ k: 'state', v: 'awaiting MATERIAL — drop the bill on the cell' });
+          lines.push({ k: 'bill', v: `one block, ${formatScore(c.materialNeed.min)} – ${formatScore(c.materialNeed.max)}` });
+        } else {
+          const pos = buildQueuePosition(world, c.id);
+          const slots = currentBuildSlots(world);
+          lines.push({
+            k: 'state',
+            v:
+              pos >= slots
+                ? `queued №${pos - slots + 1} (fuel may rush it)`
+                : `building — ${Math.round(buildFraction(c) * 100)}%`,
+          });
+        }
         lines.push({ k: 'build work', v: formatScore(c.buildWork) });
       } else if (c.kind === 'accelerator') {
         lines.push({ k: 'charge', v: formatScore(c.charge) });
@@ -620,7 +625,28 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (p.fromCell === c.id) pout++;
       }
       lines.push({ k: 'pipes', v: `${pin} in · ${pout} out` });
-      inspectorStore.set({ title: GLYPH[c.kind] + '  ' + c.kind, role: CELL_ROLE[c.kind] ?? '', lines });
+      // THE CANCEL VERB: any work-in-progress (or staged operands) can be
+      // aborted — operands come back, burned notes do not. The rescue for a
+      // regretted hours-long write or a launch staged before its notes exist.
+      const cancellable = c.op !== null || c.operands.some((o) => o !== null);
+      const cid = c.id;
+      inspectorStore.set({
+        title: GLYPH[c.kind] + '  ' + c.kind,
+        role: CELL_ROLE[c.kind] ?? '',
+        lines,
+        ...(cancellable
+          ? {
+              actions: [
+                {
+                  label: 'cancel (operands return)',
+                  run: () => {
+                    if (cancelWork(world, cid)) note('Abandoned. The operands return; the ink does not.');
+                  },
+                },
+              ],
+            }
+          : {}),
+      });
     } else {
       const b = world.pool.find((bl) => bl.id === inspected!.id);
       if (!b) {
@@ -1425,10 +1451,25 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       if (head) vis.outline.circle(head.x, head.y, 2).fill({ color: GRAPHITE, alpha: 0.9 });
       vis.glyph.alpha = 0.12 + 0.5 * frac; // the symbol fades in as the box forms
       // BUILD SLOTS: a cell waiting for a pencil shows its place in the queue;
-      // an ACTIVE build shows its remaining time instead (U1.6b).
+      // a cell awaiting its MATERIAL shows the bill; an ACTIVE build shows its
+      // remaining time instead (U1.6b).
       const pos = buildQueuePosition(world, cell.id);
       const slots = currentBuildSlots(world);
-      if (pos >= slots) {
+      if (cell.materialNeed) {
+        setEta(vis, '');
+        if (!vis.queueBadge) {
+          vis.queueBadge = new Text({
+            text: '',
+            style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 13, fill: GRAPHITE },
+          });
+          vis.queueBadge.anchor.set(0.5);
+          vis.queueBadge.position.set(0, CELL_H / 2 + 16);
+          vis.queueBadge.alpha = 0.55;
+          vis.body.addChild(vis.queueBadge);
+          note('A sketch awaits its MATERIAL — construct the bill and drop it on the cell.', 'first-bill');
+        }
+        vis.queueBadge.text = `bill: ${formatScore(cell.materialNeed.min)}`;
+      } else if (pos >= slots) {
         setEta(vis, '');
         if (!vis.queueBadge) {
           vis.queueBadge = new Text({
@@ -1912,12 +1953,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (!reachedMilestones.has(ms.key) && ms.hit(fi.mag)) {
           reachedMilestones.add(ms.key);
           hit = ms.label;
-          if (ms.key === '1e9') {
-            // The earned operator: a billion proves the multiplication factory.
+          if (ms.key === '1e6') {
+            // The earned operator: a million proves the multiplication factory
+            // — and a million is exactly exponentiation's asking price (its
+            // first MATERIAL bill). The reveal and the puzzle are one number.
             unlockTool(
               'exponentiation',
               'Exponentiation',
-              'One billion. Exponentiation is drafted — be warned, it will demand to see your work.',
+              'One million. Exponentiation is drafted — its bill is the very number you just wrote.',
             );
           }
         }
@@ -1947,6 +1990,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         else if (c.op.amplifier && c.recentBurn < 0.05) crawling++;
       }
       const bottleneckParts: string[] = [];
+      if (world.tuning.upkeepCoeff > 0 && world.inkDemand.gt(0)) {
+        // The rent era begins: the Ledger drafts itself the moment ink is owed.
+        unlockTool(
+          'ledger',
+          'the Ledger',
+          'The notebook begins to charge rent — holding numbers costs ink. A Ledger is drafted; keep it fed.',
+        );
+      }
       if (world.tuning.upkeepCoeff > 0 && world.inkDemand.gt(0) && world.inkCoverage < 0.75)
         bottleneckParts.push(`ink at ${Math.round(world.inkCoverage * 100)}% — the ledger runs dry`);
       if (idleOps > 0) bottleneckParts.push(`${idleOps} idle for operands`);
@@ -1991,15 +2042,17 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
             : '',
       });
       refreshInspector(); // the open card tracks live state
-      // Toolbar build-cost previews (U1.6c): the next cell of each kind costs
-      // more than the last — the shelf says so before you commit.
+      // Toolbar previews (U1.6c): under the unified law the pencil time is
+      // flat per kind — the real price is the MATERIAL bill, so the shelf
+      // quotes the bill (the construct-this-number puzzle) before you commit.
       const kindCounts: Record<string, number> = {};
       for (const c of world.cells.values()) kindCounts[c.kind] = (kindCounts[c.kind] ?? 0) + 1;
       const previews: Record<string, string> = {};
       for (const t of TOOL_ORDER) {
         if (t === 'pipe') continue;
-        const secs = buildWork(kindCounts[t] ?? 0, GAME_TUNING).toNumber() / GAME_TUNING.baseRate;
-        previews[t] = fmtEta(secs) || `~${Math.max(1, Math.round(secs))}s`;
+        const bill = materialBill(t as CellKind, kindCounts[t] ?? 0, world.peakMagnitude, GAME_TUNING);
+        const secs = (UNIFIED_BUILD_TIME[t] ?? 24) * GAME_TUNING.buildTimeScale;
+        previews[t] = bill ? `bill ${formatScore(bill.min)}` : fmtEta(secs) || `~${Math.max(1, Math.round(secs))}s`;
       }
       buildPreviews.set(previews);
     }

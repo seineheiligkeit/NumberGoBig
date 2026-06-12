@@ -477,6 +477,33 @@ export function removeCell(world: World, id: number): void {
   world.cells.delete(id);
 }
 
+/** THE CANCEL VERB. Abort a cell's work-in-progress: held operands (and any
+ *  staged-but-unfired operands) return loose beside the cell; progress and
+ *  every note already burned into the op are LOST — the page forgives, but
+ *  ink is ink. This is the rescue for the OPERAND TRAP (a frontier committed
+ *  to a mandatory op whose remaining notes can only be minted USING that
+ *  frontier would otherwise be imprisoned forever) and for any hours-long
+ *  write the player regrets. Returns false if there was nothing to cancel. */
+export function cancelWork(world: World, cellId: number): boolean {
+  const cell = world.cells.get(cellId);
+  if (!cell) return false;
+  let any = false;
+  if (cell.op) {
+    for (const h of cell.op.heldInputs) pushLoose(world, h, cell.x + OUTPUT_SPILL_OFFSET, cell.y + 40);
+    cell.op = null;
+    any = true;
+  }
+  for (let i = 0; i < cell.operands.length; i++) {
+    const o = cell.operands[i];
+    if (o) {
+      pushLoose(world, o, cell.x + OUTPUT_SPILL_OFFSET, cell.y + 40);
+      cell.operands[i] = null;
+      any = true;
+    }
+  }
+  return any;
+}
+
 /** Manually stage an operand on a built cell's port (models a hand-drop). */
 export function feedOperand(world: World, cellId: number, port: number, value: Value): boolean {
   const cell = world.cells.get(cellId);

@@ -73,8 +73,8 @@ test('a Successor builds, taps the river, and grows the score', async ({ page })
   await bootPaused(page);
   const id = await page.evaluate(() => window.__nbg.place('successor', 0, 0));
 
-  // Build (buildWork(0) = 24 at baseRate 1).
-  await steps(page, 26);
+  // Build: ink-era pencil time = 10 × buildTimeScale 3 = 30 ticks (no bill — leaves are waived).
+  await steps(page, 32);
   const built = await page.evaluate((i) => window.__nbg.cellState(i)!.built, id);
   expect(built).toBe(true);
 
@@ -85,11 +85,16 @@ test('a Successor builds, taps the river, and grows the score', async ({ page })
   expect(await page.evaluate(() => window.__nbg.poolSize())).toBeGreaterThan(0);
 });
 
-test('Multiplication amplifies score (3 × 4 → 12)', async ({ page }) => {
+test('Multiplication pays its 16-bill, builds, and amplifies (3 × 4 → 12)', async ({ page }) => {
   await bootPaused(page);
   const id = await page.evaluate(() => window.__nbg.place('multiplication', 0, 0));
 
-  await steps(page, 26); // build
+  // THE MATERIAL BILL: the first multiplication is a sketch until a 16 (the
+  // band [16, 17.6]) is deposited — addition's first moment, by construction.
+  await steps(page, 70);
+  expect(await page.evaluate((i) => window.__nbg.cellState(i)!.built, id)).toBe(false);
+  await page.evaluate((i) => window.__nbg.fuel(i, 16), id);
+  await steps(page, 66); // pencil time = 20 × 3
   expect(await page.evaluate((i) => window.__nbg.cellState(i)!.built, id)).toBe(true);
 
   // Stage the two operands; score now reflects the held inputs (3 + 4 = 7).
@@ -99,10 +104,9 @@ test('Multiplication amplifies score (3 × 4 → 12)', async ({ page }) => {
   }, id);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(7);
 
-  // Let the operation complete: work to write "12" = 2³ = 8, and the locked
-  // economy runs amplifiers at HALF baseRate (amplifierBaseRateScale 0.5) →
-  // ~16 ticks. Give it headroom.
-  await steps(page, 30);
+  // Mult fuel is OPTIONAL under the unified law — the clock finishes small
+  // products (work to write "12" = 2³ = 8 at half base ≈ 16 ticks).
+  await steps(page, 40);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(12);
 });
 
@@ -135,45 +139,51 @@ test('a pipe carries a Successor 1 into an Addition over time', async ({ page })
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBeGreaterThan(0);
 });
 
-test('a Mill liquefies a block into graded fuel, conserving score', async ({ page }) => {
+test('the divisor-mill partitions a block by its gear, conserving score', async ({ page }) => {
   await bootPaused(page);
   const m = await page.evaluate(() => window.__nbg.place('mill', 0, 0));
-  await steps(page, 26); // build
-  await page.evaluate((i) => window.__nbg.feed(i, 0, 8000), m); // → 8 × 1000
+  await page.evaluate((i) => window.__nbg.fuel(i, 64), m); // the mill's first bill
+  await steps(page, 76); // pencil time = 24 × 3
+  expect(await page.evaluate((i) => window.__nbg.cellState(i)!.built, m)).toBe(true);
+  await page.evaluate((i) => window.__nbg.feed(i, 0, 8000), m); // ÷16 (factory gear) → 16 × 500
   const before = await page.evaluate(() => Number(window.__nbg.score()));
+  // The mill WRITES its pieces: 16 × 3 digits at 2.5 d/s ≈ 20 ticks. Headroom.
   await steps(page, 40);
   const after = await page.evaluate(() => Number(window.__nbg.score()));
-  expect(after).toBe(before); // additive split conserves value
-  // The loose pool holds the milled pieces. With stacking ON (the live game),
-  // 8 identical 1000-blocks merge into ONE ×8 stack — count BLOCKS, not
-  // pool entities.
+  expect(after).toBe(before); // partition conserves value
+  // The pieces land as ONE ×16 stack (stacking is on in the live game).
   const blocks = await page.evaluate(() =>
     window.__nbg.world.pool.reduce((sum, b) => sum + (b.count ?? 1), 0),
   );
-  expect(blocks).toBeGreaterThanOrEqual(8);
+  expect(blocks).toBeGreaterThanOrEqual(16);
 });
 
-test('a scaffolded Exponentiation holds for working notes, then launches', async ({ page }) => {
+test('Exponentiation pays the MILLION bill, holds for notes, then launches', async ({ page }) => {
   await bootPaused(page);
   const f = await page.evaluate(() => window.__nbg.place('exponentiation', 0, 0));
-  await steps(page, 30); // build (first exp cell: buildWork(0) = 16)
+  // The famous first bill: one block in [10⁶, 1.1×10⁶] — visible from the start.
+  await page.evaluate((i) => window.__nbg.fuel(i, 1e6), f);
+  await steps(page, 148); // pencil time = 48 × 3
+  expect(await page.evaluate((i) => window.__nbg.cellState(i)!.built, f)).toBe(true);
   await page.evaluate((i) => {
     window.__nbg.feed(i, 0, 10);
-    window.__nbg.feed(i, 1, 7); // 10⁷ — above the 10⁶ scaffolding floor
+    window.__nbg.feed(i, 1, 7); // 10⁷ — above the 10⁶ notes floor → MANDATORY
   }, f);
-  // Let the CLOCK complete fully (work = 8⁴ = 4096 at amplifier half-base
-  // → ~8200 ticks). The unpaid working notes must still hold the op open.
-  await steps(page, 9500);
+  await steps(page, 1);
+  // Unified tier-2 need = (10⁷)^(1/4) ≈ 56.2, band ≈ [3.5, 56.2]. The clock
+  // NEVER closes a mandatory op — the notes hold it open.
+  await steps(page, 400);
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(17); // inputs held, no result
   // An oversized block is refused (returned loose), not burned.
   await page.evaluate((i) => window.__nbg.fuel(i, 5e6), f);
-  // Two in-band notes (S ≈ 2162, band ≈ [34, 2162]) pay the requirement.
+  // Two in-band notes pay the need in full — pro-rata completes the work...
   await page.evaluate((i) => {
-    window.__nbg.fuel(i, 1100);
-    window.__nbg.fuel(i, 1100);
+    window.__nbg.fuel(i, 30);
+    window.__nbg.fuel(i, 30);
   }, f);
-  await steps(page, 2);
-  // Result lands (10⁷) + the bounced oversized block (5e6) + held inputs gone.
+  // ...and the WRITE finishes it: 8 digits at 2.5 d/s ≈ 4 ticks. Headroom.
+  await steps(page, 8);
+  // Result lands (10⁷) + the bounced oversized block (5e6); held inputs gone.
   expect(await page.evaluate(() => Number(window.__nbg.score()))).toBe(1e7 + 5e6);
 });
 
@@ -252,8 +262,9 @@ test('clicking a cell (no drag) opens the live inspector card; Esc closes it', a
   await bootPaused(page);
   await page.evaluate(() => {
     const n = window.__nbg;
-    n.place('multiplication', 0, 0);
-    for (let i = 0; i < 30; i++) n.tick(1); // build it
+    const id = n.place('multiplication', 0, 0);
+    n.fuel(id, 16); // the first mult's MATERIAL bill
+    for (let i = 0; i < 66; i++) n.tick(1); // pencil time = 20 × 3
   });
   const box = (await page.locator('canvas').boundingBox())!;
   await page.locator('canvas').click({ position: { x: box.width / 2, y: box.height * 0.42 } });
@@ -262,6 +273,31 @@ test('clicking a cell (no drag) opens the live inspector card; Esc closes it', a
   await expect(page.locator('.inspector')).toContainText('idle');
   await page.keyboard.press('Escape');
   await expect(page.locator('.inspector')).toHaveCount(0);
+});
+
+test('the cancel verb: an inspector action frees a held op — operands return', async ({ page }) => {
+  await bootPaused(page);
+  const f = await page.evaluate(() => {
+    const n = window.__nbg;
+    const id = n.place('exponentiation', 0, 0);
+    n.fuel(id, 1e6); // the bill
+    for (let i = 0; i < 148; i++) n.tick(1); // pencil 48 × 3
+    n.feed(id, 0, 10);
+    n.feed(id, 1, 7); // 10⁷ — mandatory notes hold the op (the trap scenario)
+    n.tick(1);
+    return id;
+  });
+  const box = (await page.locator('canvas').boundingBox())!;
+  await page.locator('canvas').click({ position: { x: box.width / 2, y: box.height * 0.42 } });
+  await expect(page.locator('.inspector')).toContainText('working');
+  await page.getByRole('button', { name: /cancel/ }).click();
+  const state = await page.evaluate((i) => {
+    const n = window.__nbg;
+    return { op: n.cellState(i)!.op, score: Number(n.score()), pool: n.poolSize() };
+  }, f);
+  expect(state.op).toBe(0); // no operation any more
+  expect(state.score).toBe(17); // 10 + 7 back in the world — nothing destroyed
+  expect(state.pool).toBeGreaterThanOrEqual(1);
 });
 
 test('shift-click deletes a cell (the rebalancing verb)', async ({ page }) => {
