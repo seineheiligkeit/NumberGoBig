@@ -970,6 +970,8 @@ function main(): void {
   let snapshots = false;
   let writeSpeed = INK_TUNING.writeSpeed;
   let upkeep = INK_TUNING.upkeepCoeff;
+  let bill = INK_TUNING.firstBillScale;
+  let grace = INK_TUNING.upkeepGraceTicks;
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--rate') rate = Number(a[++i]);
@@ -978,8 +980,10 @@ function main(): void {
     else if (a[i] === '--snapshots') snapshots = true;
     else if (a[i] === '--write-speed') writeSpeed = Number(a[++i]);
     else if (a[i] === '--upkeep') upkeep = Number(a[++i]);
+    else if (a[i] === '--bill') bill = Number(a[++i]);
+    else if (a[i] === '--grace') grace = Number(a[++i]);
   }
-  const tuning: TimeTuning = { ...INK_TUNING, writeSpeed, upkeepCoeff: upkeep };
+  const tuning: TimeTuning = { ...INK_TUNING, writeSpeed, upkeepCoeff: upkeep, firstBillScale: bill, upkeepGraceTicks: grace };
 
   const SNAP_META: Record<string, { label: string; blurb: string }> = {
     mill: { label: 'Player: first machines', blurb: "the player agent's opening — trees up, the bench row arriving" },

@@ -189,6 +189,26 @@ transiently hits 0 after each launch (rent ×4 spike outruns the cascade,
 then recovers) — drama by design, EMA tunable. Snapshots regenerated from
 the better run (123-cell tower).
 
+**Follow-up 5 (2026-06-12) — the tuning pass, round 1: knobs + sweep built,
+coarse grid run (0/27 pass — informative).** New engine knobs, both tested:
+`upkeepGraceTicks` (THE DELAYED SHOCK — a rent spike >2× opens a full-speed
+grace window while the coverage gauge falls; the bite lands when it expires)
+and `firstBillScale` (multiplies first-of-kind bills only). `sim/ink-sweep.ts`
+grids writeSpeed × upkeepCoeff × firstBillScale against THE PLAYER at 1/s 4 h
++ 1/10 8 h and scores against the locked targets (opening 3–8 m mult /
+20–35 m exp / 30–50 m launch, burst ≤3 per 30 min, idle launches ≤5 h &
+≥20 digits, spread 3–15×, chore ≤30%). `sim/player.ts` gained --bill/--grace.
+COARSE-GRID READINGS: bill ×4 fixes the engaged opening (mult 3.1 m) but
+KILLS idle (bills eat 93% of actions — repeats at √peak compound on top);
+tax ×2 + bill ×1 tames bursts (2–3) but leaves the opening fast; chore% pins
+at the 34% ration cap nearly everywhere; nearest miss = ws 2 · tax 2 ·
+bill 1 (failing only mult-too-early + launch-slightly-early). NEXT-ROUND
+PLAN: (1) the opening lever should be BUILD TIME, not bills — a
+`buildTimeScale` knob (pencil time is idle-friendly pure time; bill scaling
+is labor that compounds) — and (2) kill the chore pin by AUTO-WIRING a
+dedicated tree → mill-chain → Ledger in the agent's builder (rent should be
+infrastructure, not clicks); then the fine sweep around ws 2 · tax 2.
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

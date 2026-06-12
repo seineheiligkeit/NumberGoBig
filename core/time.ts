@@ -204,6 +204,18 @@ export interface TimeTuning {
   /** Curvature of the ink throttle: throttle = floor + (1−floor)·coverage^γ.
    *  γ=2 makes near-full coverage nearly free and an empty ledger DRAMATIC. */
   upkeepThrottleGamma: number;
+  /** THE DELAYED SHOCK (ticks; 0 = off). When the rent SPIKES (demand more
+   *  than doubles — i.e. right after a launch lands), the throttle holds at
+   *  full speed for this many ticks while the coverage gauge falls — the
+   *  notebook takes a breath BEFORE it gasps. The player sees the dial drop
+   *  and has a grace window to react; then the slowdown bites wherever
+   *  coverage actually is. Rent still accrues and burns during grace. */
+  upkeepGraceTicks: number;
+  /** Scales every first-of-kind material bill (the construct-this-number
+   *  puzzles: mult ×16, mill ×64, exp ×10⁶…). The OPENING-pacing lever:
+   *  bigger first bills = more machining before each new machine. 1 = the
+   *  catalog values. Repeat bills (√peak) are unaffected. */
+  firstBillScale: number;
   /** WRITE-TIME FLOOR (digits per tick; 0 = off). An op can never complete
    *  faster than writing its output's digits: minTicks = digits(output)/
    *  writeSpeed. Fuel buys down the WORK, but the cell still has to write the
@@ -281,6 +293,8 @@ export const DEFAULT_TUNING: TimeTuning = {
   upkeepBandRatio: 16,
   upkeepThrottleFloor: 0.05,
   upkeepThrottleGamma: 2,
+  upkeepGraceTicks: 0,
+  firstBillScale: 1,
   // Write-time floor OFF by default (instant completion stays the baseline
   // until the unified-law experiments dial it in).
   writeSpeed: 0,
@@ -421,12 +435,14 @@ export function materialBill(
   kind: string,
   owned: number,
   peakMagnitude: Decimal,
+  t: TimeTuning = DEFAULT_TUNING,
 ): { min: Decimal; max: Decimal } | null {
-  const first = new Decimal(UNIFIED_FIRST_BILL[kind] ?? 0);
   // Leaf-class kinds (first bill 0: successor, addition) are waived FOREVER —
   // the fractal farm's volume cells must stay cheap; their throttle is pencil
   // time. Only amplifier-class kinds carry √peak repeat bills.
-  if (first.lte(0)) return null;
+  const base = UNIFIED_FIRST_BILL[kind] ?? 0;
+  if (base <= 0) return null;
+  const first = new Decimal(base).mul(t.firstBillScale); // the opening-pacing lever
   const bill = owned <= 0 ? first : Decimal.max(first, unifiedNeed(peakMagnitude));
   if (bill.mul(UNIFIED_BILL_TOLERANCE).lt(UNIFIED_BILL_WAIVE)) return null;
   return { min: bill, max: bill.mul(UNIFIED_BILL_TOLERANCE) };

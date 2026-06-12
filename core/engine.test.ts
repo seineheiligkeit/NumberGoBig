@@ -12,7 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import Decimal from 'break_eternity.js';
 import { valueOf, valueMul, valueMagnitude, VALUE_ONE, type Value } from './value.ts';
-import { DEFAULT_TUNING, UNIFIED_TUNING, buildWork, operationWork, type TimeTuning } from './time.ts';
+import { DEFAULT_TUNING, UNIFIED_TUNING, buildWork, operationWork, materialBill, type TimeTuning } from './time.ts';
 import {
   createWorld,
   placeCell,
@@ -365,6 +365,41 @@ test('ink tax: starved ink throttles the write — but wealth never shrinks', ()
   run(w, 14); // 20 elapsed·0.25 = 5 written
   assert.equal(getCell(w, m)!.op, null, 'the crawl floor still finishes it — never a death spiral');
   assert.ok(totalScore(w).gte(1e12), 'underfunding slows; it never confiscates');
+});
+
+test('ink tax: THE DELAYED SHOCK — a rent spike opens a grace window before the bite', () => {
+  const w = createWorld({ ...INK_TUNING, upkeepGraceTicks: 60, writeSpeed: 1 });
+  addLoose(w, valueOf(1e9)); // 10 digits → rent 3/s, nothing pays it
+  run(w, 120); // coverage decays with no grace (no spike yet — demand was never >2×)
+  assert.ok(w.inkCoverage < 0.1, 'pre-spike: the gauge falls normally');
+  addLoose(w, valueOf('1e40')); // the launch lands: demand 3 → 34 (a SPIKE)
+  tick(w, 1);
+  assert.ok(w.inkGrace > 0, 'the spike opens the grace window');
+  // during grace, a fully-paid mult write advances at FULL speed despite 0 coverage
+  const m = placeCell(w, 'multiplication', 0, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(256));
+  feedOperand(w, m, 1, valueOf(256)); // 65536: 5-digit write = 5 ticks at full ink
+  tick(w, 1);
+  injectFuel(w, m, valueOf(256));
+  run(w, 5);
+  assert.equal(getCell(w, m)!.op, null, 'in grace the machinery keeps full pace');
+  run(w, 60); // grace expires…
+  assert.equal(w.inkGrace, 0);
+  const m2 = placeCell(w, 'multiplication', 200, 0, { built: true });
+  feedOperand(w, m2, 0, valueOf(256));
+  feedOperand(w, m2, 1, valueOf(256));
+  tick(w, 1);
+  injectFuel(w, m2, valueOf(256));
+  run(w, 6);
+  assert.ok(getCell(w, m2)!.op !== null, '…and the shock finally bites');
+});
+
+test('material bills: firstBillScale stretches the opening puzzles', () => {
+  const big = { ...UNIFIED_TUNING, firstBillScale: 4 };
+  const b = materialBill('multiplication', 0, new Decimal(100), big)!;
+  assert.equal(b.min.toNumber(), 64, 'the first mult wants a 64 instead of a 16');
+  assert.equal(materialBill('exponentiation', 0, new Decimal(100), big)!.min.toNumber(), 4e6);
+  assert.equal(materialBill('successor', 0, new Decimal(100), big), null, 'leaves stay waived');
 });
 
 test('ink tax: below the pocket-lint floor there is no tax at all', () => {

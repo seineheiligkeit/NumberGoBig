@@ -250,6 +250,11 @@ export interface World {
   inkCoverage: number;
   /** Last tick's upkeep demand (magnitude/tick) — telemetry for the monitor. */
   inkDemand: Decimal;
+  /** THE DELAYED SHOCK: grace ticks remaining after a rent SPIKE (demand more
+   *  than doubled — a launch landed). While > 0 the throttle holds at full
+   *  speed even as the coverage gauge falls; when it expires, the slowdown
+   *  bites wherever coverage actually is. */
+  inkGrace: number;
 }
 
 export function createWorld(
@@ -268,6 +273,7 @@ export function createWorld(
     peakMagnitude: Decimal.dZero,
     inkCoverage: 1,
     inkDemand: Decimal.dZero,
+    inkGrace: 0,
   };
 }
 
@@ -284,6 +290,7 @@ export function resetWorld(world: World): void {
   world.peakMagnitude = Decimal.dZero;
   world.inkCoverage = 1;
   world.inkDemand = Decimal.dZero;
+  world.inkGrace = 0;
 }
 
 /** Materialise `count` loose blocks at a position. When the world has stacking
@@ -337,7 +344,7 @@ export function placeCell(
     ? new Decimal(UNIFIED_BUILD_TIME[kind] ?? 24)
     : buildWork(owned, world.tuning);
   const material =
-    world.tuning.unifiedCosts && !opts.built ? materialBill(kind, owned, world.peakMagnitude) : null;
+    world.tuning.unifiedCosts && !opts.built ? materialBill(kind, owned, world.peakMagnitude, world.tuning) : null;
   world.cells.set(id, {
     id,
     kind,
@@ -558,7 +565,14 @@ function tickInk(world: World, dt: number): void {
     return;
   }
   const demand = over.mul(T.upkeepCoeff).mul(dt);
-  world.inkDemand = over.mul(T.upkeepCoeff);
+  const newDemand = over.mul(T.upkeepCoeff);
+  // THE DELAYED SHOCK: a rent SPIKE (demand more than doubled — a launch just
+  // landed) opens a grace window. The gauge falls; the bite waits.
+  if (T.upkeepGraceTicks > 0 && world.inkDemand.gt(0) && newDemand.gt(world.inkDemand.mul(2))) {
+    world.inkGrace = T.upkeepGraceTicks;
+  }
+  if (world.inkGrace > 0) world.inkGrace = Math.max(0, world.inkGrace - dt);
+  world.inkDemand = newDemand;
   const cap = demand.mul(T.upkeepBandRatio);
   // pay largest-in-band first across every built ledger's store (each pass
   // burns at least one block item, so this terminates)
@@ -681,10 +695,10 @@ function tickOperations(world: World, base: number): void {
   // coverage 0.9 → 0.82×, coverage 0.5 → 0.29×, coverage 0 → 0.05×).
   const Tt = world.tuning;
   const throttle =
-    Tt.upkeepCoeff > 0
+    Tt.upkeepCoeff > 0 && world.inkGrace <= 0
       ? Tt.upkeepThrottleFloor +
         (1 - Tt.upkeepThrottleFloor) * Math.pow(world.inkCoverage, Tt.upkeepThrottleGamma)
-      : 1;
+      : 1; // in grace (or with the tax off): full speed while the gauge falls
   for (const cell of world.cells.values()) {
     if (!cell.built) continue;
     if (cell.kind === 'accelerator') continue; // handled in tickAccelerators
