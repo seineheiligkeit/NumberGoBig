@@ -185,6 +185,22 @@ export interface TimeTuning {
    *  delivery of scaffolding notes is automatable instead of hand-shuttled.
    *  0 = off (the legacy log-boost only; big blocks stay frozen on pipes). */
   accelChargeCarry: number;
+  /** THE INK TAX (upkeep; 0 = off). Holding wealth costs a FLOW of small
+   *  numbers: demand = upkeepCoeff · max(0, digits(score) − upkeepFloorDigits)
+   *  magnitude per tick, auto-pulled from the loose pool — but ONLY from
+   *  blocks of magnitude ≤ upkeepBandRatio · demand (band-limited, like
+   *  everything under the unified law). Your frontier block can NEVER pay its
+   *  own rent — only a broad small-number economy can. Coverage (an EMA of
+   *  paid/demand) throttles the factory: effective writeSpeed and amplifier
+   *  baseRate scale by max(upkeepThrottleFloor, coverage). Wealth is never
+   *  confiscated — underpaying SLOWS you, it never shrinks the number
+   *  (the idle contract: you return to a slow factory, not a smaller score).
+   *  NOTE: demand is linear in DIGITS (log of score), not score — a literal
+   *  %-of-score tax is unpayable in a doubly-exponential game. */
+  upkeepCoeff: number;
+  upkeepFloorDigits: number;
+  upkeepBandRatio: number;
+  upkeepThrottleFloor: number;
   /** WRITE-TIME FLOOR (digits per tick; 0 = off). An op can never complete
    *  faster than writing its output's digits: minTicks = digits(output)/
    *  writeSpeed. Fuel buys down the WORK, but the cell still has to write the
@@ -253,6 +269,13 @@ export const DEFAULT_TUNING: TimeTuning = {
   scaffoldExp: 0.5,
   scaffoldFloor: 1e6,
   scaffoldBand: 64,
+  // Ink tax OFF by default (coeff 0). Exploratory shape: free below 7 digits
+  // (the 10⁶ pocket-lint floor), payable in blocks up to 16× the demand, and
+  // an underfunded factory crawls at 25% — never 0 (anti-death-spiral).
+  upkeepCoeff: 0,
+  upkeepFloorDigits: 7,
+  upkeepBandRatio: 16,
+  upkeepThrottleFloor: 0.25,
   // Write-time floor OFF by default (instant completion stays the baseline
   // until the unified-law experiments dial it in).
   writeSpeed: 0,

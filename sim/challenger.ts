@@ -359,6 +359,9 @@ interface Result {
   firstLaunchTick: number;
   /** Tick of EVERY paid launch — the cadence curve the design tunes. */
   launchTicks: number[];
+  /** Ink-tax telemetry: final smoothed coverage + final demand (0 when off). */
+  inkCoverage: number;
+  inkDemand: string;
   /** Session timeline (12 samples): production/burn/build telemetry over time. */
   timeline: {
     t: number;
@@ -1028,6 +1031,8 @@ export function runChallenger(
     landmarks,
     firstLaunchTick,
     launchTicks,
+    inkCoverage: world.inkCoverage,
+    inkDemand: world.inkDemand.toString(),
     timeline,
   };
 }
@@ -1049,6 +1054,7 @@ function main(): void {
   let fromZero = false;
   let unified = false;
   let writeSpeed = 0; // digits/tick write-time floor; 0 = off
+  let upkeep = 0; // ink-tax coeff; 0 = off
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--rate') rate = Number(a[++i]);
@@ -1064,6 +1070,7 @@ function main(): void {
     else if (a[i] === '--from-zero') fromZero = true;
     else if (a[i] === '--unified') unified = true; // THE UNIFIED LAW (UNIFIED_TUNING)
     else if (a[i] === '--write-speed') writeSpeed = Number(a[++i]); // digits/tick floor; 0 = off
+    else if (a[i] === '--upkeep') upkeep = Number(a[++i]); // ink-tax coeff; 0 = off
     else if (a[i] === '--live') {
       // the LIVE game's exact rules (GAME_TUNING): scaffolding + powered
       // logistics + one starting build slot — the gameplay agent's benchmark
@@ -1073,7 +1080,7 @@ function main(): void {
     }
   }
   const tuning: TimeTuning = unified
-    ? { ...UNIFIED_TUNING, writeSpeed }
+    ? { ...UNIFIED_TUNING, writeSpeed, upkeepCoeff: upkeep }
     : {
         ...DEFAULT_TUNING,
         scaffoldCoeff: scaffold,
@@ -1085,7 +1092,10 @@ function main(): void {
         writeSpeed,
       };
   const scLabel = unified
-    ? ' · THE UNIFIED LAW' + (writeSpeed > 0 ? ` · WRITE ${writeSpeed} d/s` : '') + (fromZero ? ' · FROM ZERO' : '')
+    ? ' · THE UNIFIED LAW' +
+      (writeSpeed > 0 ? ` · WRITE ${writeSpeed} d/s` : '') +
+      (upkeep > 0 ? ` · INK TAX ×${upkeep}` : '') +
+      (fromZero ? ' · FROM ZERO' : '')
     : (scaffold > 0 ? ` · SCAFFOLDING C=${scaffold} α=${alpha} band=${band}` : '') +
       (slots > 0 ? ` · SLOTS ${slots}+milestones` : '') +
       (fromZero ? ' · FROM ZERO' : '');
@@ -1107,6 +1117,8 @@ function main(): void {
     console.log(
       `  LAUNCH CADENCE  ${r.launchTicks.length ? r.launchTicks.map((lt) => (lt / 60).toFixed(0) + 'm').join(' → ') : '(none)'}`,
     );
+    if (tuning.upkeepCoeff > 0)
+      console.log(`  INK  final coverage ${(r.inkCoverage * 100).toFixed(0)}% · demand ${r.inkDemand}/tick`);
     console.log('\n  SESSION TELEMETRY (cumulative):');
     console.log('      t |  digits |     score     | cells(built/placed) | produced | burned (mag) | ops | launches | pool');
     console.log('  ------+---------+---------------+---------------------+----------+--------------+-----+----------+-----');

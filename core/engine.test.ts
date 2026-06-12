@@ -313,6 +313,56 @@ test('unified: mult fuel is OPTIONAL, in-band, pro-rata against √(output)', ()
   assert.equal(poolCountOf(w, 65536), 1);
 });
 
+// --- The ink tax: holding wealth demands a FLOW of small numbers -------------
+
+const INK_TUNING = { ...UNIFIED_TUNING, upkeepCoeff: 1 };
+
+test('ink tax: off by default — no pull, coverage pinned at 1', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  addLoose(w, valueOf(1e12));
+  addLoose(w, valueOf(100), 0, 0, 50);
+  run(w, 50);
+  assert.equal(w.inkCoverage, 1);
+  assert.ok(totalScore(w).gte(1e12), 'nothing burned');
+});
+
+test('ink tax: demand is digits-linear and the frontier CANNOT pay its own rent', () => {
+  const w = createWorld(INK_TUNING);
+  addLoose(w, valueOf(1e12)); // 13 digits → demand = 13 − 7 = 6/tick
+  addLoose(w, valueOf(50), 0, 0, 100); // the small-number economy: 5000 of ink
+  tick(w, 1);
+  assert.ok(w.inkDemand.eq(6), 'demand = digits(score) − floor');
+  run(w, 100);
+  assert.equal(poolCountOf(w, 1e12), 1, 'the big block is never burned (out of band)');
+  assert.ok(poolCountOf(w, 50) < 100, 'the small blocks pay the rent');
+  assert.ok(w.inkCoverage > 0.9, 'a funded economy holds full coverage');
+});
+
+test('ink tax: starved ink throttles the write — but wealth never shrinks', () => {
+  const w = createWorld({ ...INK_TUNING, writeSpeed: 1, upkeepThrottleFloor: 0.25 });
+  addLoose(w, valueOf(1e12)); // demand 6/tick, NOTHING in band to pay it
+  run(w, 120); // coverage decays toward 0
+  assert.ok(w.inkCoverage < 0.1, `coverage starves (${w.inkCoverage})`);
+  const m = placeCell(w, 'multiplication', 0, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(256));
+  feedOperand(w, m, 1, valueOf(256)); // 65536: 5-digit write, 5 ticks at full ink
+  tick(w, 1);
+  injectFuel(w, m, valueOf(256)); // full need — only the ink floor remains
+  run(w, 6);
+  assert.ok(getCell(w, m)!.op !== null, 'at 25% ink the 5-tick write is still wet after 7');
+  run(w, 14); // 20 elapsed·0.25 = 5 written
+  assert.equal(getCell(w, m)!.op, null, 'the crawl floor still finishes it — never a death spiral');
+  assert.ok(totalScore(w).gte(1e12), 'underfunding slows; it never confiscates');
+});
+
+test('ink tax: below the pocket-lint floor there is no tax at all', () => {
+  const w = createWorld(INK_TUNING);
+  addLoose(w, valueOf(1000), 0, 0, 5); // 4-digit score, floor is 7 digits
+  run(w, 50);
+  assert.equal(poolCountOf(w, 1000), 5, 'the opening is never taxed');
+  assert.equal(w.inkCoverage, 1);
+});
+
 test('write-time floor: a fully paid op still has to WRITE its digits', () => {
   // The counter-law to pro-rata payment: fuel buys down the work, but the
   // cell cannot emit faster than digits(output)/writeSpeed ticks — without

@@ -94,6 +94,27 @@ slow paces (1 launch then stall at 1/3—1/10), launch-cadence shaping, then
 the promote-to-game pass (bills UI on unbuilt cells, tier-band displays,
 cancel verb, unlock-as-answer events from the UX brainstorm).
 
+**Follow-up (2026-06-12) — the WRITE-TIME FLOOR + the INK TAX, both prototyped
+behind knobs (off by default), 77/77:** (1) `writeSpeed` (digits/tick): an op
+can never complete faster than writing its output's digits — the counter-law
+to pro-rata payment, without which the recursive exp tower ("exp pays for
+exp": ⁴√ of a launch's output is its own operand class) runs at action-speed
+(e18→e4932 in 3 min; rebuild-enabled agent: e9864 by minute 54). At 0.5 d/s
+the 4 h arc forms geometric ERAS (20 min → 82 min → 5.5 h writes); user wants
+gentler (≈2 d/s) with pacing carried by (2) the INK TAX (`upkeepCoeff`):
+holding wealth demands a FLOW of small numbers — demand = coeff·(digits(score)
+− 7), auto-pulled from the pool, payable ONLY in blocks ≤ 16×demand (the
+frontier can never pay its own rent — only a broad small-number economy can);
+coverage EMA throttles writeSpeed + amplifier baseRate down to a 0.25 floor
+(never 0; wealth never confiscated — idle-safe). Sweep at write 2 d/s: off →
+48 launches/e9864-peak blowup; ×1 → exp 33 m, launches 41/43/48 m, e154 (the
+"spread out" pacing); ×10 → path-dependent (agent artifact); ×100 → walls at
+e9. Open: agent is not ink-aware (never builds dedicated leaf farms — arcs
+are lower bounds; the broadened-base strategy needs a playtest or smarter
+agent), the no-floor frontier-loss forensic, notation-ladder tax for
+tetration scales (digits itself goes astronomical at layer 2), and the
+cancel-op verb before any of this reaches GAME_TUNING.
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

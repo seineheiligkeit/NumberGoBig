@@ -237,6 +237,12 @@ export interface World {
   /** The largest magnitude ever produced/held — drives milestone-gated rules
    *  (build slots). Milestones don't un-happen, so this never decreases. */
   peakMagnitude: Decimal;
+  /** THE INK TAX: smoothed coverage of the upkeep demand (EMA of paid/demand,
+   *  in [0, 1]; 1 when the tax is off or fully paid). Throttles writeSpeed and
+   *  amplifier baseRate via max(upkeepThrottleFloor, inkCoverage). */
+  inkCoverage: number;
+  /** Last tick's upkeep demand (magnitude/tick) — telemetry for the monitor. */
+  inkDemand: Decimal;
 }
 
 export function createWorld(
@@ -253,6 +259,8 @@ export function createWorld(
     produced: 0,
     burned: Decimal.dZero,
     peakMagnitude: Decimal.dZero,
+    inkCoverage: 1,
+    inkDemand: Decimal.dZero,
   };
 }
 
@@ -267,6 +275,8 @@ export function resetWorld(world: World): void {
   world.produced = 0;
   world.burned = Decimal.dZero;
   world.peakMagnitude = Decimal.dZero;
+  world.inkCoverage = 1;
+  world.inkDemand = Decimal.dZero;
 }
 
 /** Materialise `count` loose blocks at a position. When the world has stacking
@@ -486,6 +496,7 @@ export function addLoose(world: World, value: Value, x = 0, y = 0, count = 1): n
 /** Advance the whole world by `dt` ticks (default 1). Deterministic. */
 export function tick(world: World, dt = 1): void {
   const base = world.tuning.baseRate * dt;
+  tickInk(world, dt);
   tickConstruction(world, base);
   tickOperations(world, base);
   tickAccelerators(world);
@@ -496,6 +507,63 @@ export function tick(world: World, dt = 1): void {
   for (const cell of world.cells.values()) {
     if (cell.recentBurn > 0) cell.recentBurn = cell.recentBurn < 1e-3 ? 0 : cell.recentBurn * decay;
   }
+}
+
+/** THE INK TAX. Holding wealth demands a flow of small numbers: demand =
+ *  upkeepCoeff · max(0, digits(score) − floor) magnitude per tick, auto-pulled
+ *  from the loose pool — largest in-band blocks first (fewest blocks burned),
+ *  where in-band means magnitude ≤ upkeepBandRatio · demand. Big blocks can
+ *  NEVER pay the rent: only a broad small-number economy covers the tax.
+ *  Coverage is smoothed into world.inkCoverage (EMA); the throttle it drives
+ *  lives in tickOperations. Wealth is never confiscated beyond the pull —
+ *  underfunding slows the factory, it never shrinks the score. */
+function tickInk(world: World, dt: number): void {
+  const T = world.tuning;
+  if (T.upkeepCoeff <= 0) {
+    world.inkCoverage = 1;
+    world.inkDemand = Decimal.dZero;
+    return;
+  }
+  const digits = magnitudeDigits({ kind: 'real', n: totalScore(world) });
+  const over = digits.sub(T.upkeepFloorDigits);
+  const alpha = 1 - Math.pow(0.97, dt); // EMA smoothing, dt-aware
+  if (over.lte(Decimal.dZero)) {
+    // below the pocket-lint floor: no tax, coverage recovers toward 1
+    world.inkDemand = Decimal.dZero;
+    world.inkCoverage += alpha * (1 - world.inkCoverage);
+    return;
+  }
+  const demand = over.mul(T.upkeepCoeff).mul(dt);
+  world.inkDemand = over.mul(T.upkeepCoeff);
+  const cap = demand.mul(T.upkeepBandRatio);
+  // pull largest-in-band first until the demand is covered (each pass burns
+  // at least one block item, so this terminates)
+  let paid = Decimal.dZero;
+  while (paid.lt(demand)) {
+    let bi = -1;
+    let bm = Decimal.dZero;
+    for (let i = 0; i < world.pool.length; i++) {
+      const m = valueMagnitude(world.pool[i].value);
+      if (m.lt(Decimal.dOne) || m.gt(cap)) continue;
+      if (bi < 0 || m.gt(bm)) {
+        bi = i;
+        bm = m;
+      }
+    }
+    if (bi < 0) break;
+    const b = world.pool[bi];
+    const have = b.count ?? 1;
+    const need = Decimal.max(Decimal.dOne, demand.sub(paid).div(bm).ceil()).toNumber();
+    const take = Math.min(have, Number.isFinite(need) ? need : have);
+    paid = paid.add(bm.mul(take));
+    if (take >= have) world.pool.splice(bi, 1);
+    else b.count = have - take;
+    world.burned = world.burned.add(bm.mul(take));
+  }
+  const sample = Decimal.min(Decimal.dOne, paid.div(demand)).toNumber();
+  world.inkCoverage += alpha * (sample - world.inkCoverage);
+  if (world.inkCoverage > 1) world.inkCoverage = 1;
+  if (world.inkCoverage < 0) world.inkCoverage = 0;
 }
 
 /** Accelerators drain their charge slowly each tick (it provides the boost). */
@@ -576,6 +644,13 @@ function tickConstruction(world: World, base: number): void {
 }
 
 function tickOperations(world: World, base: number): void {
+  // THE INK THROTTLE: an underfunded ink supply slows the expensive machinery —
+  // amplifier clocks and writing speed — but NEVER the leaves (successor/
+  // addition keep producing ink, so recovery is always possible).
+  const throttle =
+    world.tuning.upkeepCoeff > 0
+      ? Math.max(world.tuning.upkeepThrottleFloor, world.inkCoverage)
+      : 1;
   for (const cell of world.cells.values()) {
     if (!cell.built) continue;
     if (cell.kind === 'accelerator') continue; // handled in tickAccelerators
@@ -610,9 +685,10 @@ function tickOperations(world: World, base: number): void {
     // scaled by amplifierBaseRateScale (so fuel matters more), non-amplifiers get
     // it in full (the free base). baseRate never pays the fuel tax.
     if (cell.op !== null) {
-      const opBase = cell.op.amplifier ? base * world.tuning.amplifierBaseRateScale : base;
+      const opBase = cell.op.amplifier ? base * world.tuning.amplifierBaseRateScale * throttle : base;
       if (opBase > 0) cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(opBase));
-      cell.op.elapsed++;
+      // the write advances at full speed only when the ink flows
+      cell.op.elapsed += cell.op.amplifier ? throttle : 1;
       if (opSatisfied(cell.op)) {
         for (const e of cell.op.emits) emit(world, cell, e.portIndex, e.value);
         cell.op = null;
