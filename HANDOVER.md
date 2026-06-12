@@ -170,6 +170,25 @@ cost — is it an era or a desert?); **pace sensitivity is now superlinear**
 compounds slowness; against the "capped from APM" goal, wants a rent-floor/
 coeff pass); engine mill pieces get a near-integer snap (dust guard).
 
+**Follow-up 4 (2026-06-12) — the idle-pace stall was the AGENT, not the law.**
+Action accounting (`Result.actionsBy`, printed per run) traced the 1/10-pace
+freeze to a machinist treadmill: greedy adder pairing overshot the ×1.1 bill
+band (48+32=80 > cap), stranding dead blocks — 96% of an 8 h session spent
+on unpayable bills. Fixed with BAND-AWARE pairing (largest pair whose SUM
+stays ≤ cap). Second lesson: a flat ink-action cap self-locks (ink capped →
+coverage 0 → throttle stalls all actions → ink stays capped); bulk cascade
+feeds are now EXEMPT (one fed mid-block ≈ half an hour of rent — the best
+action in the game), only hand top-ups/rent-machining are rationed, and the
+cascade prefers the SHALLOWEST entry (deep equal-split cascades multiply
+block COUNT exponentially — the geometry that makes the frontier unrentable
+also makes deep liquidation impossible: ink must come from mid-tier FLOW,
+not wealth). Results: **1 act/s 4 h → e473, 7 launches (cadence 30/30/83/85/
+126/155/155 — real eras); 1/3 8 h → e105, 4 launches; 1/10 8 h → e77, 2
+launches** — idle play progresses (the user's contract holds). Coverage
+transiently hits 0 after each launch (rent ×4 spike outruns the cascade,
+then recovers) — drama by design, EMA tunable. Snapshots regenerated from
+the better run (123-cell tower).
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

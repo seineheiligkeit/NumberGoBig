@@ -162,6 +162,8 @@ export interface PlayerResult {
   landmarks: Record<string, number>;
   launchTicks: number[];
   coverageMin: number; // worst smoothed ink coverage seen after the rent began
+  /** Where the actions went — the agent's own time-and-motion study. */
+  actionsBy: Record<string, number>;
   timeline: { t: number; digits: string; score: string; cov: number; rent: string; cells: number; ops: number; launches: number }[];
 }
 
@@ -188,12 +190,23 @@ export function runPlayer(
       if (snap) snap(k, world);
     }
   };
+  const actionsBy: Record<string, number> = {};
+  let actSource = '?';
   const act = (fn: () => void): boolean => {
     if (budget < 1) return false;
     budget -= 1;
     actions++;
+    actionsBy[actSource] = (actionsBy[actSource] ?? 0) + 1;
     fn();
     return true;
+  };
+  /** Label the verbs of a subsystem call (for the time-and-motion study). */
+  const as = <T>(src: string, fn: () => T): T => {
+    const prev = actSource;
+    actSource = src;
+    const r = fn();
+    actSource = prev;
+    return r;
   };
 
   // ── BUILDER: the program ──────────────────────────────────────────────────
@@ -468,19 +481,34 @@ export function runPlayer(
         }
       }
     }
-    // route 3: an adder doubles toward the band floor.
+    // route 3: an adder sums toward the band — BAND-AWARE pairing. The bills
+    // band is ×1.1 tight: a greedy 48+32 overshoots 70 and strands an 80
+    // forever (the Sisyphus treadmill that ate 96% of the idle-pace session).
+    // Pick the largest pair whose SUM stays ≤ cap; equal halves land exactly.
     const ba = budget >= 2 ? anyIdle(adders) : null;
     if (ba) {
-      // grow the largest sub-band block by its own size (a+a) or the next best
-      const below = world.pool
-        .map((b) => mag(b.value))
-        .filter((m) => m.lt(claim.min) && mayTake(p, m, claim.prio))
-        .sort((a, b) => (a.gt(b) ? -1 : 1));
-      if (below.length > 0) {
-        const a = takeOne(p, claim.prio, (m) => m.eq(below[0]));
+      const below: { m: Decimal; copies: number }[] = [];
+      for (const b of world.pool) {
+        const m = mag(b.value);
+        if (m.gte(claim.min) || !mayTake(p, m, claim.prio)) continue;
+        const e = below.find((x) => x.m.eq(m));
+        if (e) e.copies += b.count ?? 1;
+        else below.push({ m, copies: b.count ?? 1 });
+      }
+      below.sort((a, b) => (b.m.gt(a.m) ? 1 : -1));
+      let pick: { x: Decimal; y: Decimal } | null = null;
+      for (const bx of below) {
+        for (const by of below) {
+          if (bx.m.eq(by.m) && bx.copies < 2) continue;
+          const sum = bx.m.add(by.m);
+          if (sum.gt(claim.cap)) continue; // never strand an overshoot
+          if (!pick || sum.gt(pick.x.add(pick.y))) pick = { x: bx.m, y: by.m };
+        }
+      }
+      if (pick) {
+        const a = takeOne(p, claim.prio, (m) => m.eq(pick!.x));
         if (a) {
-          const partner =
-            takeOne(p, claim.prio, (m) => m.eq(below[0])) ?? takeOne(p, claim.prio, (m) => m.lt(claim.min), true);
+          const partner = takeOne(p, claim.prio, (m) => m.eq(pick!.y));
           if (!partner) {
             pushBack(world, a);
             return false;
@@ -506,14 +534,19 @@ export function runPlayer(
     if (T.upkeepCoeff <= 0 || ledgerId < 0) return false;
     const led = world.cells.get(ledgerId);
     if (!led?.built || world.inkDemand.lte(0)) return false;
+    // The CHORE cap (hand top-ups, rent machining) — bulk cascade feeds are
+    // exempt: one fed mid-block is half an hour of rent, the best action in
+    // the game. (A flat all-ink cap self-locks: ink capped → coverage 0 →
+    // throttle stalls everything → total actions freeze → ink stays capped.)
+    const choresCapped = (actionsBy['ink'] ?? 0) > actions * 0.34;
     const cap = world.inkDemand.mul(T.upkeepBandRatio);
     const rentClaim = p.claims.find((c) => c.tag === 'rent');
     if (!rentClaim) return false;
-    // 1) feed the ink CASCADE — the BULK path (one debris block is minutes of
-    // rent; pieces flow to the office by pipe). Pick the entry stage whose
-    // remaining ÷16 passes land the final pieces inside the rent band;
-    // inkMills[0] is the deepest entry, the last drains into the office.
-    for (let entry = 0; entry < inkMills.length; entry++) {
+    // 1) feed the ink CASCADE — the BULK path (one fed mid-block is minutes
+    // of rent; pieces flow office-ward by pipe). SHALLOWEST entry first:
+    // fewer passes = fewer block-transfers and less writing. inkMills[0] is
+    // the deepest entry; the last stage drains into the office.
+    for (let entry = inkMills.length - 1; entry >= 0; entry--) {
       const mill = cellIdle(inkMills[entry]);
       if (!mill) continue;
       const passes = inkMills.length - entry;
@@ -527,6 +560,31 @@ export function runPlayer(
         return true;
       }
     }
+    // 1.5) REACTIVE DEEPENING: debris exists that NO entry stage can digest
+    // (each launch's leavings sit many rungs above the band — at e48 the
+    // debris is e12-class while the cap is ~700). Prepend another ÷16 stage;
+    // the cascade grows with the wealth it must liquefy.
+    if (world.inkCoverage < 0.75 && inkMills.length < 14 && budget >= 2) {
+      const deepest = D(16).pow(inkMills.length);
+      let orphan: Decimal | null = null;
+      for (const b of world.pool) {
+        const m = mag(b.value);
+        if (m.gt(cap.mul(deepest)) && (orphan === null || m.lt(orphan))) orphan = m;
+      }
+      if (orphan) {
+        // (deep orphans take several stages — each call prepends one)
+        const head = inkMills[0];
+        let placed = -1;
+        if (act(() => {
+            placed = placeCell(world, 'mill', 1300 - inkMills.length * 160, 320);
+          })) {
+          act(() => placePipe(world, placed, 0, head, 0));
+          inkMills.unshift(placed);
+          return true;
+        }
+      }
+    }
+    if (choresCapped) return false; // the rest is hand-shovelling — rationed
     // 2) hand top-up: a whole in-band stack per act (the drag-drop verb)
     let bi = -1;
     let best = Decimal.dZero;
@@ -764,52 +822,68 @@ export function runPlayer(
     while (budget >= 1 && acted && guard++ < 60) {
       acted = false;
       refreshClaims();
-      if (placeNext()) {
+      if (as('place', placeNext)) {
         acted = true;
         continue;
       }
-      if (payBills()) {
+      if (as('bills', payBills)) {
         acted = true;
         continue;
       }
-      if (service()) {
+      if (as('service', service)) {
         acted = true;
         continue;
       }
-      if (keepInk()) {
+      if (as('ink', keepInk)) {
         acted = true;
         continue;
       }
       planLaunch();
       refreshClaims();
-      if (tryLaunch()) {
+      if (as('launch', tryLaunch)) {
         acted = true;
         continue;
       }
       const stock = p.claims.find((c) => c.tag === 'stock');
-      if (stock && machine(stock)) {
+      if (stock && as('stock', () => machine(stock))) {
         acted = true;
         continue;
       }
       growPlan = null; // re-derived by grow() when coverage blocks it
-      if (grow()) {
+      if (as('grow', grow)) {
         acted = true;
         continue;
       }
       refreshClaims();
       const gstock = p.claims.find((c) => c.tag === 'growstock');
-      if (gstock && machine(gstock)) {
+      if (gstock && as('growstock', () => machine(gstock))) {
         acted = true;
         continue;
       }
       if (wantBudget) break; // saving up — optional spenders stand down
-      if (widen()) {
+      if (as('widen', widen)) {
         acted = true;
         continue;
       }
-      if (rush()) acted = true;
+      if (as('rush', rush)) acted = true;
     }
     tick(world, 1);
+    if (opts.trace && t === 12000) {
+      // TEMP probe
+      const classes = new Map<string, number>();
+      for (const b of world.pool) {
+        const k = mag(b.value).toString();
+        classes.set(k, (classes.get(k) ?? 0) + (b.count ?? 1));
+      }
+      const led = ledgerId >= 0 ? world.cells.get(ledgerId) : null;
+      console.log(
+        `  PROBE inkMills=${inkMills.length} cov=${world.inkCoverage.toFixed(2)} rent=${world.inkDemand} ledStore=${led?.store.length ?? -1} pool=${[...classes.entries()].slice(0, 12).map(([k, v]) => `${k}x${v}`).join(' ')}`,
+      );
+      for (const id of inkMills) {
+        const c = world.cells.get(id)!;
+        console.log(`  PROBE inkmill#${id} built=${c.built} bill=${c.materialNeed ? c.materialNeed.min.toString() : '-'} op=${c.op ? 'grinding' : 'idle'} gear=${c.millDivisor}`);
+      }
+    }
     if (T.upkeepCoeff > 0 && world.inkDemand.gt(0)) coverageMin = Math.min(coverageMin, world.inkCoverage);
     // landmarks (+ snapshots)
     for (const c of world.cells.values()) {
@@ -850,6 +924,7 @@ export function runPlayer(
     landmarks,
     launchTicks,
     coverageMin,
+    actionsBy,
     timeline,
   };
 }
@@ -934,6 +1009,12 @@ function main(): void {
   console.log(`  LANDMARKS  mult ${lm('mult')} · mill ${lm('mill')} · ledger ${lm('ledger')} · exp ${lm('exp')} · launch ${lm('launch')} · tower ${lm('tower')}`);
   console.log(`  CADENCE    ${r.launchTicks.length ? r.launchTicks.map((lt) => (lt / 60).toFixed(0) + 'm').join(' → ') : '(none)'}`);
   console.log(`  INK        worst coverage ${(r.coverageMin * 100).toFixed(0)}%`);
+  console.log(
+    `  ACTIONS    ${Object.entries(r.actionsBy)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `${k} ${v}`)
+      .join(' · ')}`,
+  );
   console.log('  TIMELINE   t · digits · cov · rent · cells · grows · launches');
   for (const row of r.timeline)
     console.log(
