@@ -209,6 +209,24 @@ is labor that compounds) — and (2) kill the chore pin by AUTO-WIRING a
 dedicated tree → mill-chain → Ledger in the agent's builder (rent should be
 infrastructure, not clicks); then the fine sweep around ws 2 · tax 2.
 
+**Follow-up 6 (2026-06-12) — INK_TUNING PROVISIONALLY LOCKED: write 2.5 d/s ·
+tax ×2 · buildTimeScale 3 · grace 180.** Round 2 replaced first-bill scaling
+with `buildTimeScale` (pure pencil time — bills are labor and compound
+against idle play) and moved the agent's dedicated ink tree BEHIND the
+launch pads in the one-pencil queue (the round-2 coarse grid was confounded
+by the ink tree delaying exp; rush() also promoted above keepInk — builds
+are the critical path under a stretched pencil; ink chore ration 0.34→0.28;
+`--bt` flag added). The fine grid (bt 3 nails the opening everywhere) +
+finalist head-to-head landed on **ws 2.5 · tax 2 · bt 3**: at 1 act/s —
+mult 5.2 m · exp 31.6 m · first launch 32.8 m · eras 33→65→69→71→145→145→
+234 m (burst ≤3, decelerating) · e328 at 4 h; idle 1/10 — first launch
+~127 m, e13 at 8 h (slow-but-real; under the provisional ≥20-digit floor —
+ACCEPTED against the user's stated bar, revisit with idle-rent softening,
+e.g. upkeepFloorDigits, if playtest agrees). Locked until first human
+playtest. Snapshot presets regenerated under the lock (155-cell tower).
+NEXT: the cancel-op verb, then promote GAME_TUNING := INK_TUNING and take
+the game to a human playtest.
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

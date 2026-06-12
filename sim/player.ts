@@ -224,6 +224,11 @@ export function runPlayer(
     return (t) => s.thunks.push(t);
   };
 
+  /** Root cells of every backbone, in placement order — the ink district
+   *  wires dedicated tree roots straight into the Ledger (rent should be
+   *  PLUMBING, not clicks). */
+  const treeRoots: number[] = [];
+
   /** A squaring backbone: 2^depth successors → leaf adders → mult tree. */
   function backbone(depth: number, x0: number, y0: number, r: (t: () => void) => void): void {
     const ref: Record<string, number> = {};
@@ -260,6 +265,7 @@ export function runPlayer(
       r(() => placePipe(world, ref[rr], 0, ref[slot], 1));
     };
     build(depth, 0, 'root');
+    r(() => treeRoots.push(ref.root));
   }
 
   // Benches the subsystems share (ids resolve at placement time). Mults and
@@ -292,11 +298,23 @@ export function runPlayer(
       inkMills.push(m);
       placePipe(world, m, 0, ledgerId, 0); // the ink line: pieces flow to the office
     });
+    // (the dedicated ink tree is staged AFTER the launch pads — the one-pencil
+    // queue is strictly ordered, and exp is the critical path)
     const r4 = stage(() => world.peakMagnitude.gte(1.2e6)); // exp's bill is machinable
     r4(() => handExps.push(placeCell(world, 'exponentiation', 1500, -40)));
     r4(() => handExps.push(placeCell(world, 'exponentiation', 1500, 80)));
+    // The dedicated ink tree comes AFTER the launch pads (the one-pencil queue
+    // is strictly ordered; exp is the critical path). Its 16s flow straight
+    // into the office forever — rent as infrastructure.
+    const r4b = stage(() => world.peakMagnitude.gte(1.2e6));
+    backbone(2, 0, 900, r4b);
+    r4b(() => placePipe(world, treeRoots[treeRoots.length - 1], 0, ledgerId, 0));
     const r5 = stage(() => world.peakMagnitude.gte(1e12)); // mid-game widening
     backbone(4, 0, 1200, r5);
+    // A second dedicated ink tree (256s) drains through the mill chain — the
+    // office's diet keeps pace with the rent band as digits grow.
+    backbone(3, 0, 2000, r5);
+    r5(() => placePipe(world, treeRoots[treeRoots.length - 1], 0, inkMills[inkMills.length - 1], 0));
     r5(() => {
       // THE CASCADE: rent denominations sit many rungs below launch debris —
       // one ÷16 pass can't reach them. A new mill is PREPENDED to the chain
@@ -538,7 +556,7 @@ export function runPlayer(
     // exempt: one fed mid-block is half an hour of rent, the best action in
     // the game. (A flat all-ink cap self-locks: ink capped → coverage 0 →
     // throttle stalls everything → total actions freeze → ink stays capped.)
-    const choresCapped = (actionsBy['ink'] ?? 0) > actions * 0.34;
+    const choresCapped = (actionsBy['ink'] ?? 0) > actions * 0.28;
     const cap = world.inkDemand.mul(T.upkeepBandRatio);
     const rentClaim = p.claims.find((c) => c.tag === 'rent');
     if (!rentClaim) return false;
@@ -834,6 +852,12 @@ export function runPlayer(
         acted = true;
         continue;
       }
+      // Rushing queued builds outranks rent under a stretched pencil — the
+      // build queue is the critical path the moment buildTimeScale > 1.
+      if (as('rush', rush)) {
+        acted = true;
+        continue;
+      }
       if (as('ink', keepInk)) {
         acted = true;
         continue;
@@ -861,11 +885,7 @@ export function runPlayer(
         continue;
       }
       if (wantBudget) break; // saving up — optional spenders stand down
-      if (as('widen', widen)) {
-        acted = true;
-        continue;
-      }
-      if (as('rush', rush)) acted = true;
+      if (as('widen', widen)) acted = true;
     }
     tick(world, 1);
     if (opts.trace && t === 12000) {
@@ -971,6 +991,7 @@ function main(): void {
   let writeSpeed = INK_TUNING.writeSpeed;
   let upkeep = INK_TUNING.upkeepCoeff;
   let bill = INK_TUNING.firstBillScale;
+  let bt = INK_TUNING.buildTimeScale;
   let grace = INK_TUNING.upkeepGraceTicks;
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
@@ -981,9 +1002,17 @@ function main(): void {
     else if (a[i] === '--write-speed') writeSpeed = Number(a[++i]);
     else if (a[i] === '--upkeep') upkeep = Number(a[++i]);
     else if (a[i] === '--bill') bill = Number(a[++i]);
+    else if (a[i] === '--bt') bt = Number(a[++i]);
     else if (a[i] === '--grace') grace = Number(a[++i]);
   }
-  const tuning: TimeTuning = { ...INK_TUNING, writeSpeed, upkeepCoeff: upkeep, firstBillScale: bill, upkeepGraceTicks: grace };
+  const tuning: TimeTuning = {
+    ...INK_TUNING,
+    writeSpeed,
+    upkeepCoeff: upkeep,
+    firstBillScale: bill,
+    buildTimeScale: bt,
+    upkeepGraceTicks: grace,
+  };
 
   const SNAP_META: Record<string, { label: string; blurb: string }> = {
     mill: { label: 'Player: first machines', blurb: "the player agent's opening — trees up, the bench row arriving" },

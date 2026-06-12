@@ -340,8 +340,9 @@ export function placeCell(
   for (const c of world.cells.values()) if (c.kind === kind) owned++;
   const id = world.nextId++;
   // UNIFIED law: flat per-kind pencil time — the MATERIAL is the project.
+  // buildTimeScale is the opening-pacing lever (pure waiting, APM-neutral).
   const work = world.tuning.unifiedCosts
-    ? new Decimal(UNIFIED_BUILD_TIME[kind] ?? 24)
+    ? new Decimal(UNIFIED_BUILD_TIME[kind] ?? 24).mul(world.tuning.buildTimeScale)
     : buildWork(owned, world.tuning);
   const material =
     world.tuning.unifiedCosts && !opts.built ? materialBill(kind, owned, world.peakMagnitude, world.tuning) : null;

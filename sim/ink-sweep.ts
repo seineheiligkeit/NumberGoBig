@@ -23,7 +23,7 @@ import { INK_TUNING, type TimeTuning } from '../core/time.ts';
 interface Score {
   ws: number;
   uk: number;
-  fb: number;
+  bt: number;
   // 1/s metrics
   mult: number; // minutes
   exp: number;
@@ -54,12 +54,12 @@ function burstMax(ticks: number[], window = 1800): number {
   return best;
 }
 
-function evaluate(ws: number, uk: number, fb: number, grace: number): Score {
+function evaluate(ws: number, uk: number, bt: number, grace: number): Score {
   const tuning: TimeTuning = {
     ...INK_TUNING,
     writeSpeed: ws,
     upkeepCoeff: uk,
-    firstBillScale: fb,
+    buildTimeScale: bt,
     upkeepGraceTicks: grace,
   };
   const fast = runPlayer(1, 14400, { tuning });
@@ -69,7 +69,7 @@ function evaluate(ws: number, uk: number, fb: number, grace: number): Score {
   const s: Score = {
     ws,
     uk,
-    fb,
+    bt,
     mult: lm(fast, 'mult'),
     exp: lm(fast, 'exp'),
     launch: lm(fast, 'launch'),
@@ -102,21 +102,24 @@ function main(): void {
   const gi = a.indexOf('--grace');
   if (gi >= 0) grace = Number(a[gi + 1]);
 
-  const WS = fine ? [2, 3, 4] : [1, 2, 4];
-  const UK = fine ? [0.75, 1, 1.5] : [0.5, 1, 2];
-  const FB = fine ? [4, 8, 16] : [1, 4, 16];
+  // Round 2: build-time replaces first-bill as the opening lever (bills are
+  // labor and compound against idle play); centered on round 1's near-miss
+  // (ws 2 · tax 2 · bill 1, failing only "opening too fast").
+  const WS = fine ? [2, 2.5, 3] : [2, 3];
+  const UK = fine ? [1.75, 2, 2.5] : [1.5, 2, 3];
+  const BT = fine ? [3, 4, 5] : [2, 4, 8];
 
-  console.log(`Ink-era sweep (${fine ? 'fine' : 'coarse'} grid, grace ${grace}): write × tax × first-bill, Player @ 1/s 4h + 1/10 8h`);
-  console.log('  ws · tax · bill |  mult |   exp | launch | n | burst | digits | cov% | chore% | idleL | idleD | verdict');
+  console.log(`Ink-era sweep (${fine ? 'fine' : 'coarse'} grid, grace ${grace}): write × tax × build-time, Player @ 1/s 4h + 1/10 8h`);
+  console.log('  ws · tax · bt |  mult |   exp | launch | n | burst | digits | cov% | chore% | idleL | idleD | verdict');
   const all: Score[] = [];
   for (const ws of WS)
     for (const uk of UK)
-      for (const fb of FB) {
-        const s = evaluate(ws, uk, fb, grace);
+      for (const bt of BT) {
+        const s = evaluate(ws, uk, bt, grace);
         all.push(s);
         const f = (x: number, w = 5): string => (Number.isFinite(x) ? x.toFixed(1).padStart(w) : '    —');
         console.log(
-          `  ${String(ws).padStart(2)} · ${String(uk).padStart(3)} · ${String(fb).padStart(4)} | ${f(s.mult)} | ${f(s.exp)} | ${f(s.launch, 6)} | ${s.launches} | ${String(s.burstMax).padStart(5)} | ${String(s.digits).padStart(6)} | ${String(Math.round(s.covMin * 100)).padStart(4)} | ${String(Math.round(s.chore * 100)).padStart(6)} | ${f(s.idleLaunch)} | ${String(s.idleDigits).padStart(5)} | ${s.pass.length === 0 ? 'PASS' : s.pass.join(',')}`,
+          `  ${String(ws).padStart(2)} · ${String(uk).padStart(3)} · ${String(bt).padStart(2)} | ${f(s.mult)} | ${f(s.exp)} | ${f(s.launch, 6)} | ${s.launches} | ${String(s.burstMax).padStart(5)} | ${String(s.digits).padStart(6)} | ${String(Math.round(s.covMin * 100)).padStart(4)} | ${String(Math.round(s.chore * 100)).padStart(6)} | ${f(s.idleLaunch)} | ${String(s.idleDigits).padStart(5)} | ${s.pass.length === 0 ? 'PASS' : s.pass.join(',')}`,
         );
       }
   const winners = all.filter((s) => s.pass.length === 0);
@@ -125,7 +128,7 @@ function main(): void {
     const ranked = [...all].sort((x, y) => x.pass.length - y.pass.length);
     console.log('  Nearest misses:');
     for (const s of ranked.slice(0, 5))
-      console.log(`    ws ${s.ws} · tax ${s.uk} · bill ${s.fb} — missing: ${s.pass.join(', ')}`);
+      console.log(`    ws ${s.ws} · tax ${s.uk} · bt ${s.bt} — missing: ${s.pass.join(', ')}`);
   }
 }
 

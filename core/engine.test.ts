@@ -394,6 +394,14 @@ test('ink tax: THE DELAYED SHOCK — a rent spike opens a grace window before th
   assert.ok(getCell(w, m2)!.op !== null, '…and the shock finally bites');
 });
 
+test('buildTimeScale: the pencil draws longer — pure time, no extra labor', () => {
+  const slow = createWorld({ ...UNIFIED_TUNING, buildTimeScale: 4 });
+  const fast = createWorld(UNIFIED_TUNING);
+  const a = placeCell(slow, 'successor');
+  const b = placeCell(fast, 'successor');
+  assert.ok(getCell(slow, a)!.buildWork.eq(getCell(fast, b)!.buildWork.mul(4)));
+});
+
 test('material bills: firstBillScale stretches the opening puzzles', () => {
   const big = { ...UNIFIED_TUNING, firstBillScale: 4 };
   const b = materialBill('multiplication', 0, new Decimal(100), big)!;

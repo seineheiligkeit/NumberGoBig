@@ -212,10 +212,16 @@ export interface TimeTuning {
    *  coverage actually is. Rent still accrues and burns during grace. */
   upkeepGraceTicks: number;
   /** Scales every first-of-kind material bill (the construct-this-number
-   *  puzzles: mult ×16, mill ×64, exp ×10⁶…). The OPENING-pacing lever:
-   *  bigger first bills = more machining before each new machine. 1 = the
-   *  catalog values. Repeat bills (√peak) are unaffected. */
+   *  puzzles: mult ×16, mill ×64, exp ×10⁶…). Bigger first bills = more
+   *  machining before each new machine. 1 = the catalog values. Repeat
+   *  bills (√peak) are unaffected. NOTE: the coarse sweep showed bills are
+   *  LABOR (priced in actions) and compound against idle play — prefer
+   *  buildTimeScale as the opening-pacing lever. */
   firstBillScale: number;
+  /** Scales unified pencil time (UNIFIED_BUILD_TIME). THE opening-pacing
+   *  lever: pure waiting, identical at every APM — the pencil just draws
+   *  longer. 1 = the catalog values. */
+  buildTimeScale: number;
   /** WRITE-TIME FLOOR (digits per tick; 0 = off). An op can never complete
    *  faster than writing its output's digits: minTicks = digits(output)/
    *  writeSpeed. Fuel buys down the WORK, but the cell still has to write the
@@ -295,6 +301,7 @@ export const DEFAULT_TUNING: TimeTuning = {
   upkeepThrottleGamma: 2,
   upkeepGraceTicks: 0,
   firstBillScale: 1,
+  buildTimeScale: 1,
   // Write-time floor OFF by default (instant completion stays the baseline
   // until the unified-law experiments dial it in).
   writeSpeed: 0,
@@ -331,15 +338,21 @@ export const UNIFIED_TUNING: TimeTuning = {
   accelChargeCarry: 1,
 };
 
-/** THE INK ERA — the converged candidate ruleset (2026-06-12): the unified
- *  law + the write-time floor (2 digits/s — a 2,466-digit launch writes for
- *  ~20 minutes) + the ink tax (×1, paid from the Ledger). This is what the
- *  player agent plays and what the `inkdistrict` dev preset installs; promote
- *  to GAME_TUNING only after the cancel-op verb exists. */
+/** THE INK ERA — the converged candidate ruleset, PROVISIONALLY LOCKED by
+ *  the round-2 sweep (2026-06-12; see HANDOVER §0a follow-ups): the unified
+ *  law + the write-time floor (2.5 d/s) + the ink tax (×2, Ledger-paid, with
+ *  a 3-minute delayed-shock grace) + a ×3 pencil stretch on the opening.
+ *  Measured by THE PLAYER at 1 act/s: mult 5.2 m · exp 31.6 m · first launch
+ *  32.8 m · launch eras 33→65→69→71→145→145→234 m (burst ≤3) · e328 at 4 h;
+ *  idle (1/10): first launch ~127 m, slow-but-real progression. "Locked until
+ *  first human playtest." Promote to GAME_TUNING only after the cancel-op
+ *  verb exists. */
 export const INK_TUNING: TimeTuning = {
   ...UNIFIED_TUNING,
-  writeSpeed: 2,
-  upkeepCoeff: 1,
+  writeSpeed: 2.5,
+  upkeepCoeff: 2,
+  buildTimeScale: 3,
+  upkeepGraceTicks: 180,
 };
 
 // --- The unified law's constants -------------------------------------------
