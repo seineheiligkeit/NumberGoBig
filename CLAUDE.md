@@ -4,10 +4,14 @@ A parody incremental game in which the player constructs the natural numbers
 — and eventually all of mathematics — from a river of zeros. Solo project.
 Web-first.
 
-> **⚠️ This IS the game — *Time as Labor*, promoted to `main` on 2026-06-10.**
-> A ground-up reconception around **time as the core resource** (build time,
-> operation time ∝ magnitude, distance, fuel-buys-speed; plus scaffolding,
-> powered logistics, and build slots). It **deleted** most of what this file
+> **⚠️ This IS the game — *Time as Labor*, promoted to `main` on 2026-06-10;
+> the INK ERA ruleset went live in `GAME_TUNING` on 2026-06-12** (the unified
+> law `need = M^(1/2^k)`, MATERIAL bills, the write-time floor, the ink tax
+> paid from the Ledger, the divisor-mill, the cancel verb — see
+> `core/time.ts: INK_TUNING` and HANDOVER §0a, locked until first human
+> playtest). A ground-up reconception around **time as the core resource**
+> (build time, operation time ∝ magnitude, distance, fuel-buys-speed; plus
+> powered logistics and build slots). It **deleted** most of what this file
 > documents below (the comprehension spine, the fuel ladder, the Adversary,
 > Sets, the old `world`/`interaction`/`sim`) — **that older game is preserved
 > on the [`legacy-main`](https://github.com/seineheiligkeit/NumberGoBig/tree/legacy-main)
