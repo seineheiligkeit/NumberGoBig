@@ -253,8 +253,11 @@ function bestPlan(
       const need = unifiedNeed(valueMagnitude(out), kind === 'exponentiation' ? 2 : 1);
       const band = unifiedBand(need);
       const mandatory = kind === 'exponentiation' && valueMagnitude(out).gt(1e6);
-      if (mandatory && (outDigits.lt(minLaunchD) || outDigits.lte(apexD))) return null;
-      // free exp toys that don't advance the apex are wasted actions
+      // Paid exps below the apex are NOT spam under the unified law — they are
+      // the TOWER REBUILD (re-minting operand-class blocks at ⁴√ prices is how
+      // the next launch gets funded). Greedy only picks them when nothing
+      // bigger is affordable, which is exactly when rebuilding is the move.
+      // Free toys (≤10⁶ output) that don't advance the apex stay banned.
       if (kind === 'exponentiation' && !mandatory && outDigits.lte(apexD)) return null;
       if (work.gt(CREEP_OK) || mandatory) {
         // Full coverage before committing operands. (A 0.3 start-fraction was
@@ -354,6 +357,8 @@ interface Result {
   /** Experience-curve landmarks: tick each operator first completed + first launch. */
   landmarks: Record<string, number>;
   firstLaunchTick: number;
+  /** Tick of EVERY paid launch — the cadence curve the design tunes. */
+  launchTicks: number[];
   /** Session timeline (12 samples): production/burn/build telemetry over time. */
   timeline: {
     t: number;
@@ -936,6 +941,7 @@ export function runChallenger(
   const landmarks: Record<string, number> = {};
   const pendingKinds = new Set(['addition', 'multiplication', 'mill', 'exponentiation']);
   let firstLaunchTick = 0;
+  const launchTicks: number[] = [];
   for (let t = 1; t <= ticks; t++) {
     budget = Math.min(BUDGET_CAP, budget + rate);
     if (t === t75) digitsAt75 = magnitudeDigits({ kind: 'real', n: frontier() });
@@ -999,6 +1005,7 @@ export function runChallenger(
       }
     }
     if (firstLaunchTick === 0 && paidExps > 0) firstLaunchTick = t;
+    while (launchTicks.length < paidExps) launchTicks.push(t);
     if (trace && t % sample === 0) {
       const f = frontier();
       console.log(
@@ -1020,6 +1027,7 @@ export function runChallenger(
     paidExps,
     landmarks,
     firstLaunchTick,
+    launchTicks,
     timeline,
   };
 }
@@ -1040,6 +1048,7 @@ function main(): void {
   let carry = DEFAULT_TUNING.accelChargeCarry;
   let fromZero = false;
   let unified = false;
+  let writeSpeed = 0; // digits/tick write-time floor; 0 = off
   const a = process.argv.slice(2);
   for (let i = 0; i < a.length; i++) {
     if (a[i] === '--rate') rate = Number(a[++i]);
@@ -1054,6 +1063,7 @@ function main(): void {
     else if (a[i] === '--slots') slots = Number(a[++i]); // build slots; 0 = unlimited
     else if (a[i] === '--from-zero') fromZero = true;
     else if (a[i] === '--unified') unified = true; // THE UNIFIED LAW (UNIFIED_TUNING)
+    else if (a[i] === '--write-speed') writeSpeed = Number(a[++i]); // digits/tick floor; 0 = off
     else if (a[i] === '--live') {
       // the LIVE game's exact rules (GAME_TUNING): scaffolding + powered
       // logistics + one starting build slot — the gameplay agent's benchmark
@@ -1063,7 +1073,7 @@ function main(): void {
     }
   }
   const tuning: TimeTuning = unified
-    ? UNIFIED_TUNING
+    ? { ...UNIFIED_TUNING, writeSpeed }
     : {
         ...DEFAULT_TUNING,
         scaffoldCoeff: scaffold,
@@ -1072,9 +1082,10 @@ function main(): void {
         scaffoldFloor: floor,
         buildSlots: slots,
         accelChargeCarry: carry,
+        writeSpeed,
       };
   const scLabel = unified
-    ? ' · THE UNIFIED LAW' + (fromZero ? ' · FROM ZERO' : '')
+    ? ' · THE UNIFIED LAW' + (writeSpeed > 0 ? ` · WRITE ${writeSpeed} d/s` : '') + (fromZero ? ' · FROM ZERO' : '')
     : (scaffold > 0 ? ` · SCAFFOLDING C=${scaffold} α=${alpha} band=${band}` : '') +
       (slots > 0 ? ` · SLOTS ${slots}+milestones` : '') +
       (fromZero ? ' · FROM ZERO' : '');
@@ -1092,6 +1103,9 @@ function main(): void {
     const lm = (k: string): string => (r.landmarks[k] ? `${(r.landmarks[k] / 60).toFixed(1)}m` : '—');
     console.log(
       `  LANDMARKS  first adder ${lm('addition')} · first MULT ${lm('multiplication')} · mill ${lm('mill')} · first EXP ${lm('exponentiation')} · first paid launch ${r.firstLaunchTick ? (r.firstLaunchTick / 60).toFixed(1) + 'm' : '—'}`,
+    );
+    console.log(
+      `  LAUNCH CADENCE  ${r.launchTicks.length ? r.launchTicks.map((lt) => (lt / 60).toFixed(0) + 'm').join(' → ') : '(none)'}`,
     );
     console.log('\n  SESSION TELEMETRY (cumulative):');
     console.log('      t |  digits |     score     | cells(built/placed) | produced | burned (mag) | ops | launches | pool');

@@ -185,6 +185,16 @@ export interface TimeTuning {
    *  delivery of scaffolding notes is automatable instead of hand-shuttled.
    *  0 = off (the legacy log-boost only; big blocks stay frozen on pipes). */
   accelChargeCarry: number;
+  /** WRITE-TIME FLOOR (digits per tick; 0 = off). An op can never complete
+   *  faster than writing its output's digits: minTicks = digits(output)/
+   *  writeSpeed. Fuel buys down the WORK, but the cell still has to write the
+   *  number. This is the counter-law to pro-rata payment: without it, a fully
+   *  paid op of ANY size completes instantly, and the recursive exp tower
+   *  ("exp pays for exp" — ⁴√ of a launch's output is its own operand class)
+   *  runs at action-speed: e18 → e4932 in three minutes. With it, each launch
+   *  level writes 4× the digits of the last — the cadence decelerates
+   *  geometrically and each rung becomes an era. */
+  writeSpeed: number;
 }
 
 export const DEFAULT_TUNING: TimeTuning = {
@@ -243,6 +253,9 @@ export const DEFAULT_TUNING: TimeTuning = {
   scaffoldExp: 0.5,
   scaffoldFloor: 1e6,
   scaffoldBand: 64,
+  // Write-time floor OFF by default (instant completion stays the baseline
+  // until the unified-law experiments dial it in).
+  writeSpeed: 0,
   // Build slots OFF by default (unlimited parallel construction — the legacy
   // behaviour the sim baselines assume); the live game opts in via GAME_TUNING.
   buildSlots: 0,

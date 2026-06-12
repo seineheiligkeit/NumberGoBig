@@ -313,6 +313,34 @@ test('unified: mult fuel is OPTIONAL, in-band, pro-rata against √(output)', ()
   assert.equal(poolCountOf(w, 65536), 1);
 });
 
+test('write-time floor: a fully paid op still has to WRITE its digits', () => {
+  // The counter-law to pro-rata payment: fuel buys down the work, but the
+  // cell cannot emit faster than digits(output)/writeSpeed ticks — without
+  // this, the recursive exp tower runs at action-speed (e18 → e4932 in 3 min).
+  const w = createWorld({ ...UNIFIED_TUNING, writeSpeed: 1 });
+  const m = placeCell(w, 'multiplication', 0, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(256));
+  feedOperand(w, m, 1, valueOf(256)); // 65536: 5 digits → 5-tick floor
+  tick(w, 1);
+  injectFuel(w, m, valueOf(256)); // the FULL need — work is done instantly...
+  tick(w, 2);
+  assert.ok(getCell(w, m)!.op !== null, '...but the ink is still wet');
+  run(w, 5);
+  assert.equal(getCell(w, m)!.op, null, 'five digits, five ticks, done');
+  assert.equal(poolCountOf(w, 65536), 1);
+});
+
+test('write-time floor: off by default — completion is unchanged', () => {
+  const w = createWorld(UNIFIED_TUNING);
+  const m = placeCell(w, 'multiplication', 0, 0, { built: true });
+  feedOperand(w, m, 0, valueOf(256));
+  feedOperand(w, m, 1, valueOf(256));
+  tick(w, 1);
+  injectFuel(w, m, valueOf(256));
+  tick(w, 1);
+  assert.equal(getCell(w, m)!.op, null, 'full need still completes immediately');
+});
+
 test('unified: exponentiation notes are MANDATORY above the floor (tier-indexed need)', () => {
   const w = createWorld(UNIFIED_TUNING);
   const f = placeCell(w, 'exponentiation', 0, 0, { built: true });

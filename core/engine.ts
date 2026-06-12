@@ -131,12 +131,18 @@ interface ActiveOp {
   /** True for amplifier ops (multiplication and up). When tuning.amplifierFuelOnly
    *  is set, these accrue NO baseRate — fuel is mandatory. */
   amplifier: boolean;
+  /** WRITE-TIME FLOOR: ticks this op has been running, and the minimum ticks
+   *  it must run (digits(output)/writeSpeed) regardless of fuel. The cell
+   *  still has to WRITE the number — fuel can't buy ink speed. 0 = no floor. */
+  elapsed: number;
+  minTicks: number;
 }
 
-/** An op is done only when its TIME work is met AND its fuel tax is paid. With
- *  the tax off (fuelRequired = 0) this is just `progress ≥ work`, as before. */
+/** An op is done only when its TIME work is met AND its fuel tax is paid AND
+ *  it has run at least its write-time floor. With the tax and floor off this
+ *  is just `progress ≥ work`, as before. */
 function opSatisfied(op: ActiveOp): boolean {
-  return op.progress.gte(op.work) && op.fuelPaid.gte(op.fuelRequired);
+  return op.progress.gte(op.work) && op.fuelPaid.gte(op.fuelRequired) && op.elapsed >= op.minTicks;
 }
 
 /** Read helper for the agent/view: is this cell's op fully satisfied (time +
@@ -606,6 +612,7 @@ function tickOperations(world: World, base: number): void {
     if (cell.op !== null) {
       const opBase = cell.op.amplifier ? base * world.tuning.amplifierBaseRateScale : base;
       if (opBase > 0) cell.op.progress = Decimal.min(cell.op.work, cell.op.progress.add(opBase));
+      cell.op.elapsed++;
       if (opSatisfied(cell.op)) {
         for (const e of cell.op.emits) emit(world, cell, e.portIndex, e.value);
         cell.op = null;
@@ -687,6 +694,14 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
       }
     }
   }
+  // WRITE-TIME FLOOR: even a fully paid op must spend the ticks to WRITE its
+  // output's digits. Fuel buys down the work; it cannot buy ink speed.
+  let minTicks = 0;
+  if (world.tuning.writeSpeed > 0 && emits.length) {
+    let maxDigits = Decimal.dZero;
+    for (const e of emits) maxDigits = Decimal.max(maxDigits, magnitudeDigits(e.value));
+    minTicks = maxDigits.div(world.tuning.writeSpeed).ceil().toNumber(); // Infinity for towers — that's tet-era ink tech's problem
+  }
   cell.op = {
     heldInputs: inputs,
     emits,
@@ -698,6 +713,8 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
     amplifier,
     scaffold,
     unifiedNeed: uNeed,
+    elapsed: 0,
+    minTicks,
   };
 }
 
