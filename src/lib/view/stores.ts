@@ -40,6 +40,7 @@ export const statsStore = writable({
   scoreRate: '', // Σ gained per game-second (windowed)
   produceRate: '', // blocks emitted per game-second
   bottleneck: '', // the two starvation signatures, when nonzero
+  ink: '', // ink-tax line: "rent · coverage" ('' when the tax is off / no rent)
 });
 
 /** The inspector card (U4.1): whatever was last clicked, refreshed live by the

@@ -326,16 +326,28 @@ test('ink tax: off by default — no pull, coverage pinned at 1', () => {
   assert.ok(totalScore(w).gte(1e12), 'nothing burned');
 });
 
-test('ink tax: demand is digits-linear and the frontier CANNOT pay its own rent', () => {
+test('ink tax: rent is paid from the LEDGER store — and the frontier cannot pay it', () => {
   const w = createWorld(INK_TUNING);
+  const led = placeCell(w, 'ledger', 0, 0, { built: true });
   addLoose(w, valueOf(1e12)); // 13 digits → demand = 13 − 7 = 6/tick
-  addLoose(w, valueOf(50), 0, 0, 100); // the small-number economy: 5000 of ink
+  for (let i = 0; i < 100; i++) feedOperand(w, led, 0, valueOf(50)); // funded office
+  feedOperand(w, led, 0, valueOf(1e9)); // an oversized deposit — a mistake, not a loss
   tick(w, 1);
   assert.ok(w.inkDemand.eq(6), 'demand = digits(score) − floor');
   run(w, 100);
-  assert.equal(poolCountOf(w, 1e12), 1, 'the big block is never burned (out of band)');
-  assert.ok(poolCountOf(w, 50) < 100, 'the small blocks pay the rent');
-  assert.ok(w.inkCoverage > 0.9, 'a funded economy holds full coverage');
+  assert.equal(poolCountOf(w, 1e12), 1, 'the big block is never touched');
+  const store = getCell(w, led)!.store;
+  assert.ok(store.some((e) => valueMagnitude(e.value).eq(1e9)), 'oversized deposits SIT (withdrawable), never pay');
+  assert.ok(w.inkCoverage > 0.9, 'a funded ledger holds full coverage');
+});
+
+test('ink tax: with NO ledger the rent goes unpaid even with a rich pool', () => {
+  const w = createWorld(INK_TUNING);
+  addLoose(w, valueOf(1e12));
+  addLoose(w, valueOf(50), 0, 0, 200); // plenty of in-band wealth — but unrouted
+  run(w, 150);
+  assert.equal(poolCountOf(w, 50), 200, 'the pool is never auto-pulled — the office must be wired');
+  assert.ok(w.inkCoverage < 0.1, 'unrouted wealth pays nothing');
 });
 
 test('ink tax: starved ink throttles the write — but wealth never shrinks', () => {
@@ -723,15 +735,57 @@ test('recentBurn lights when a cell is fuelled and decays without more fuel', ()
 
 // --- The Mill (additive splitter) ------------------------------------------
 
-test('Mill splits a block into pieces summing to the same value (conserved)', () => {
+test('Mill partitions a block by its gear into pieces summing to the same value', () => {
   const w = createWorld();
   const m = placeCell(w, 'mill');
   while (!getCell(w, m)!.built) tick(w, 1);
-  feedOperand(w, m, 0, valueOf(800));
+  feedOperand(w, m, 0, valueOf(800)); // factory gear ÷16
   const before = score(w); // 800 staged
   run(w, 50); // grind (cheap) + emit
-  assert.equal(poolCountOf(w, 100), 8, '800 → 8 × 100');
-  assert.equal(score(w), before, 'milling conserves score (additive split)');
+  assert.equal(poolCountOf(w, 50), 16, '800 ÷16 → 16 × 50');
+  assert.equal(score(w), before, 'milling conserves score (partition, not division)');
+});
+
+test('Mill re-gears by feeding a number into port 1 (consumed, retained)', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'mill');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  assert.ok(feedOperand(w, m, 1, valueOf(4)), 'the gear is a number you feed');
+  assert.ok(getCell(w, m)!.millDivisor.eq(4));
+  feedOperand(w, m, 0, valueOf(800));
+  run(w, 50);
+  assert.equal(poolCountOf(w, 200), 4, '800 ÷4 → 4 × 200');
+  // re-gear again: the divisor persists across firings until replaced
+  feedOperand(w, m, 0, valueOf(80));
+  run(w, 50);
+  assert.equal(poolCountOf(w, 20), 4, 'the gear is retained, not consumed per firing');
+});
+
+test('Mill: a too-fine cut is refused (pieces below 1 pass the block through)', () => {
+  const w = createWorld();
+  const m = placeCell(w, 'mill');
+  while (!getCell(w, m)!.built) tick(w, 1);
+  feedOperand(w, m, 1, valueOf(100)); // gear ÷100
+  feedOperand(w, m, 0, valueOf(8)); // 8/100 < 1 — refuse to dust
+  run(w, 50);
+  assert.equal(poolCountOf(w, 8), 1, 'the dividend passes through uncut');
+});
+
+test('Mill: the divisor has NO cap — the write-time of the pieces is the limit', () => {
+  // Scale-invariance: a ÷1000 gear is legal; with a write floor it costs
+  // 1000 numerals of ink time. The law throttles; no constant does.
+  const w = createWorld({ ...UNIFIED_TUNING, writeSpeed: 10 });
+  const m = placeCell(w, 'mill', 0, 0, { built: true });
+  // pay the mill's first bill (a 64) so it operates
+  if (getCell(w, m)!.materialNeed) injectFuel(w, m, valueOf(64));
+  feedOperand(w, m, 1, valueOf(1000));
+  feedOperand(w, m, 0, valueOf(80000));
+  tick(w, 1);
+  const op = getCell(w, m)!.op!;
+  // 1000 pieces × 2 digits each = 2000 digits → 200 ticks at 10 d/s
+  assert.ok(op.minTicks >= 200, `a big gear writes for a long time (${op.minTicks})`);
+  run(w, 250);
+  assert.equal(poolCountOf(w, 80), 1000, 'one stack of a thousand pieces');
 });
 
 // --- The warehouse (any-block store) ---------------------------------------

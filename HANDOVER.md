@@ -115,6 +115,35 @@ agent), the no-floor frontier-loss forensic, notation-ladder tax for
 tetration scales (digits itself goes astronomical at layer 2), and the
 cancel-op verb before any of this reaches GAME_TUNING.
 
+**Follow-up 2 (2026-06-12) — the LEDGER, the continuous throttle, and the
+DIVISOR-MILL (engine+view shipped; agent hit its ceiling).** (1) Upkeep is now
+paid from a wired **`ledger`** cell's store, never auto-pulled from the pool
+(deposits by pipe / drag / `feedOperand`; oversized deposits sit visibly and
+withdrawable; rent pays largest-in-band-first across all built ledgers; the
+office glows as it spends). (2) Throttle is continuous: `floor + (1−floor)·
+coverage^γ` (γ=2, floor 5%) — near-full coverage barely hurts, an empty
+ledger is dramatic. (3) The Mill is the **divisor-mill**: port 0 = dividend,
+port 1 = the GEAR (a fed number, consumed on set, retained across firings,
+factory default ÷16; `millDivisor`); output = ONE stack of ⌈gear⌉ pieces
+(conserved partition, `emitMany` fills attached pipes then piles the rest).
+**No divisor cap — scale-invariance comes from the write floor: a mill WRITES
+every piece** (minTicks = Σ digits·count), so ÷16 is quick, ÷10⁶ is a
+million numerals; cascades pipeline, giant gears serialize. View: § Ledger
+tool/glyph/role/inspector (rent · coverage · pays-with) + monitor "ink
+(rent)" row + bottleneck line; mill shows its ÷gear. Dev preset
+**`inkdistrict`** switches `world.tuning` onto unified+write+ink rules
+(loadPreset now resets tuning to GAME_TUNING first). Verified end-to-end in
+the browser: rent 3/s, coverage 6%→84% on funding. 81 unit + 11 e2e, check
+0/0. **Agent verdict: the organically-grown challenger cannot play the
+three-way economy** — rent vs launch-notes vs bills compete for the same
+denominations, and it deadlocked three distinct ways (hostage mandatory op
+starved by rent priority; action leak; float-dust denominations from mill
+pieces). Decision: STOP patching; next session writes a fresh
+**`sim/player.ts`** (unified-era only, subsystems: builder / ink keeper /
+machinist / launch director; challenger frozen as the legacy benchmark),
+then produces the natural agent-snapshot presets + arc data the design
+review needs.
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

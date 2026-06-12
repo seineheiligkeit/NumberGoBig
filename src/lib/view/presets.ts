@@ -142,4 +142,39 @@ export const PRESETS: Preset[] = [
       addLoose(world, valueOf(1e20), 1700, -320, 1); // the reigning frontier block
     },
   },
+  {
+    key: 'inkdistrict',
+    label: 'Ink district',
+    blurb: 'THE UNIFIED LAW live: the ink tax is ON — a mill cascade feeds the Ledger; starve it and the writes slow',
+    build(world) {
+      // This preset switches the running world onto the unified-law rules so
+      // the new machinery actually operates: tier-indexed needs, the write-time
+      // floor (2 digits/s), and the ink tax (×1, paid from the Ledger).
+      world.tuning = {
+        ...world.tuning,
+        unifiedCosts: true,
+        writeSpeed: 2,
+        upkeepCoeff: 1,
+      };
+      // The production base: two fuel trees (the small-number economy).
+      fuelBackbone(world, 3, 0, -340);
+      fuelBackbone(world, 2, 0, 260);
+      // THE INK DISTRICT: an oversized-debris pile → a ÷16 mill → the Ledger.
+      // The mill's pieces flow by pipe into the tax office; the rent is paid
+      // from its store. Re-gear the mill by feeding port 2 a number.
+      const mill = placeCell(world, 'mill', 1500, 200, BUILT);
+      const ledger = placeCell(world, 'ledger', 1900, 200, BUILT);
+      placePipe(world, mill, 0, ledger, 0);
+      addLoose(world, valueOf(12800), 1350, 320, 8); // debris: feed the mill → 800-pieces
+      addLoose(world, valueOf(16), 1350, 420, 4); // spare gears (port 2 re-gears)
+      // The frontier wing: a working mult + an exp with its first bill paid.
+      frontierMult(world, 1500, -160, 2 ** 20);
+      placeCell(world, 'exponentiation', 1500, 0, BUILT);
+      addLoose(world, valueOf(2 ** 20), 1700, -160, 3); // operand + note stock
+      addLoose(world, valueOf(2), 1700, -60, 3); // exponents
+      // Wealth above the 10⁶ floor so the rent is actually due — watch the
+      // Ledger's "rent N/s · ink %" line, then let it run dry to feel the law.
+      addLoose(world, valueOf(1e9), 1700, -320, 1);
+    },
+  },
 ];

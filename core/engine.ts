@@ -59,12 +59,13 @@ export type CellKind =
   | 'exponentiation'
   | 'tetration'
   | 'pentation'
-  | 'mill' // additive splitter — liquefies a block into a graded fuel stream
+  | 'mill' // divisor-mill: partitions a block into ⌈divisor⌉ pieces (conserved)
   | 'accelerator' // beacon — burns fuel to boost surrounding pipe throughput
-  | 'warehouse'; // any-block store — pipe blocks in to stockpile, pipe out later for fuel
+  | 'warehouse' // any-block store — pipe blocks in to stockpile, pipe out later for fuel
+  | 'ledger'; // THE INK TAX office — upkeep is paid from its store, nowhere else
 
 /** Non-operator kinds (don't go through core `operate()`). */
-type NonOperator = 'mill' | 'accelerator' | 'warehouse';
+type NonOperator = 'mill' | 'accelerator' | 'warehouse' | 'ledger';
 /** Operator kinds that go through core `operate()` (== the `CellType` union). */
 type OperatorKind = Exclude<CellKind, NonOperator>;
 
@@ -76,15 +77,16 @@ function isOperator(kind: CellKind): kind is OperatorKind {
 /** Operand ports a kind exposes (Successor taps the free river — 0 operands). */
 export function operandArity(kind: CellKind): number {
   if (kind === 'successor' || kind === 'accelerator') return 0;
-  if (kind === 'mill' || kind === 'warehouse') return 1; // one deposit/input port
-  return 2;
+  if (kind === 'warehouse' || kind === 'ledger') return 1; // one deposit/input port
+  return 2; // mill: port 0 = dividend, port 1 = divisor (re-gears, retained)
 }
 
-/** The Mill splits toward this fuel grade (value per piece), capped at
- *  MILL_MAX_PIECES per pass. So a small/medium block liquefies in one pass; a
- *  huge block is coarsened (chain mills to grind finer). Score-conserved. */
-export const MILL_TARGET_GRADE = 100;
-export const MILL_MAX_PIECES = 16;
+/** The Mill's factory gearing: ⌈divisor⌉ pieces per split until re-geared by
+ *  feeding a number into port 1. There is NO divisor cap — the limit is
+ *  scale-invariant: the mill WRITES its pieces, so a ÷1e6 split costs a
+ *  million numerals of ink time. Cascades of small divisors pipeline;
+ *  one giant divisor serializes. The law throttles; no constant does. */
+export const MILL_DEFAULT_DIVISOR = 16;
 
 const ACCEL_RADIUS = 260; // pipes within this distance of an accelerator are boosted
 const ACCEL_GAIN = 2.5; // boost = 1 + GAIN·log10(charge+1), capped
@@ -105,8 +107,9 @@ interface ActiveOp {
   /** Inputs consumed when the op started — held (counted toward score) until
    *  the result replaces them on emit, so score never dips mid-computation. */
   heldInputs: Value[];
-  /** The emit events the op will produce once progress reaches work. */
-  emits: { portIndex: number; value: Value }[];
+  /** The emit events the op will produce once progress reaches work. `count`
+   *  is a stack multiplier (the mill's pieces); absent = 1. */
+  emits: { portIndex: number; value: Value; count?: number }[];
   work: Decimal;
   progress: Decimal;
   /** Minimum fuel denomination this op accepts (fuel grade). */
@@ -184,6 +187,10 @@ export interface SimCell {
    *  Null = paid (or waived/legacy). An unpaid cell neither builds nor holds
    *  a pencil slot. */
   materialNeed: { min: Decimal; max: Decimal } | null;
+  /** Mill only: the retained gearing — pieces per split. Re-geared by feeding
+   *  a number into port 1 (the block is consumed; its magnitude becomes the
+   *  divisor). Always ≥ 2. */
+  millDivisor: Decimal;
 }
 
 export interface SimPipe {
@@ -347,6 +354,7 @@ export function placeCell(
     outputStalled: false,
     recentBurn: 0,
     materialNeed: material,
+    millDivisor: new Decimal(MILL_DEFAULT_DIVISOR),
   });
   return id;
 }
@@ -371,7 +379,7 @@ export function depositToWarehouse(world: World, id: number, value: Value, count
  *  block from the stockpile and set it loose beside the cell. */
 export function withdrawFromWarehouse(world: World, id: number): boolean {
   const c = world.cells.get(id);
-  if (!c || c.kind !== 'warehouse' || !c.built) return false;
+  if (!c || (c.kind !== 'warehouse' && c.kind !== 'ledger') || !c.built) return false;
   const v = withdrawLargest(c);
   if (!v) return false;
   pushLoose(world, v, c.x + 90, c.y + 50);
@@ -466,6 +474,19 @@ export function feedOperand(world: World, cellId: number, port: number, value: V
   const cell = world.cells.get(cellId);
   if (!cell || !cell.built) return false;
   if (port < 0 || port >= cell.operands.length) return false;
+  // Ledger: every deposit goes to the store — upkeep is paid from there.
+  // Anything is accepted; only in-band blocks ever pay rent, so an oversized
+  // deposit just sits (visible, withdrawable — a mistake, never a loss).
+  if (cell.kind === 'ledger') {
+    depositToStore(cell, value);
+    return true;
+  }
+  // Mill port 1 = the gearing: the fed number is CONSUMED and its magnitude
+  // becomes the retained divisor (≥ 2). The mill keeps this gear until re-fed.
+  if (cell.kind === 'mill' && port === 1) {
+    cell.millDivisor = Decimal.max(new Decimal(2), valueMagnitude(value).floor());
+    return true;
+  }
   if (cell.operands[port] !== null) return false;
   cell.operands[port] = value;
   return true;
@@ -510,13 +531,16 @@ export function tick(world: World, dt = 1): void {
 }
 
 /** THE INK TAX. Holding wealth demands a flow of small numbers: demand =
- *  upkeepCoeff · max(0, digits(score) − floor) magnitude per tick, auto-pulled
- *  from the loose pool — largest in-band blocks first (fewest blocks burned),
- *  where in-band means magnitude ≤ upkeepBandRatio · demand. Big blocks can
- *  NEVER pay the rent: only a broad small-number economy covers the tax.
- *  Coverage is smoothed into world.inkCoverage (EMA); the throttle it drives
- *  lives in tickOperations. Wealth is never confiscated beyond the pull —
- *  underfunding slows the factory, it never shrinks the score. */
+ *  upkeepCoeff · max(0, digits(score) − floor) magnitude per tick, paid from
+ *  the LEDGER cells' stores — nowhere else. The player wires production into
+ *  ledgers; no ledger (or an empty one) means the rent goes unpaid in plain
+ *  sight. Only blocks of magnitude ≤ upkeepBandRatio · demand ever pay
+ *  (largest in-band first); oversized deposits sit in the store, visible and
+ *  withdrawable. Big blocks can NEVER pay the rent: only a broad small-number
+ *  economy covers the tax. Coverage is smoothed into world.inkCoverage (EMA);
+ *  the throttle it drives lives in tickOperations. Wealth is never
+ *  confiscated beyond the pull — underfunding slows the factory, it never
+ *  shrinks the score. */
 function tickInk(world: World, dt: number): void {
   const T = world.tuning;
   if (T.upkeepCoeff <= 0) {
@@ -536,29 +560,34 @@ function tickInk(world: World, dt: number): void {
   const demand = over.mul(T.upkeepCoeff).mul(dt);
   world.inkDemand = over.mul(T.upkeepCoeff);
   const cap = demand.mul(T.upkeepBandRatio);
-  // pull largest-in-band first until the demand is covered (each pass burns
-  // at least one block item, so this terminates)
+  // pay largest-in-band first across every built ledger's store (each pass
+  // burns at least one block item, so this terminates)
   let paid = Decimal.dZero;
   while (paid.lt(demand)) {
+    let bc: SimCell | null = null;
     let bi = -1;
     let bm = Decimal.dZero;
-    for (let i = 0; i < world.pool.length; i++) {
-      const m = valueMagnitude(world.pool[i].value);
-      if (m.lt(Decimal.dOne) || m.gt(cap)) continue;
-      if (bi < 0 || m.gt(bm)) {
-        bi = i;
-        bm = m;
+    for (const cell of world.cells.values()) {
+      if (cell.kind !== 'ledger' || !cell.built) continue;
+      for (let i = 0; i < cell.store.length; i++) {
+        const m = valueMagnitude(cell.store[i].value);
+        if (m.lt(Decimal.dOne) || m.gt(cap)) continue;
+        if (bi < 0 || m.gt(bm)) {
+          bc = cell;
+          bi = i;
+          bm = m;
+        }
       }
     }
-    if (bi < 0) break;
-    const b = world.pool[bi];
-    const have = b.count ?? 1;
+    if (bc === null || bi < 0) break;
+    const e = bc.store[bi];
     const need = Decimal.max(Decimal.dOne, demand.sub(paid).div(bm).ceil()).toNumber();
-    const take = Math.min(have, Number.isFinite(need) ? need : have);
+    const take = Math.min(e.count, Number.isFinite(need) ? need : e.count);
     paid = paid.add(bm.mul(take));
-    if (take >= have) world.pool.splice(bi, 1);
-    else b.count = have - take;
+    if (take >= e.count) bc.store.splice(bi, 1);
+    else e.count -= take;
     world.burned = world.burned.add(bm.mul(take));
+    bc.recentBurn = 1; // the ledger glows while it spends
   }
   const sample = Decimal.min(Decimal.dOne, paid.div(demand)).toNumber();
   world.inkCoverage += alpha * (sample - world.inkCoverage);
@@ -646,10 +675,15 @@ function tickConstruction(world: World, base: number): void {
 function tickOperations(world: World, base: number): void {
   // THE INK THROTTLE: an underfunded ink supply slows the expensive machinery —
   // amplifier clocks and writing speed — but NEVER the leaves (successor/
-  // addition keep producing ink, so recovery is always possible).
+  // addition keep producing ink, so recovery is always possible). The curve
+  // is continuous: throttle = floor + (1−floor)·coverage^γ — near-full
+  // coverage barely hurts, an empty ledger is DRAMATIC (γ=2, floor 5%:
+  // coverage 0.9 → 0.82×, coverage 0.5 → 0.29×, coverage 0 → 0.05×).
+  const Tt = world.tuning;
   const throttle =
-    world.tuning.upkeepCoeff > 0
-      ? Math.max(world.tuning.upkeepThrottleFloor, world.inkCoverage)
+    Tt.upkeepCoeff > 0
+      ? Tt.upkeepThrottleFloor +
+        (1 - Tt.upkeepThrottleFloor) * Math.pow(world.inkCoverage, Tt.upkeepThrottleGamma)
       : 1;
   for (const cell of world.cells.values()) {
     if (!cell.built) continue;
@@ -669,11 +703,18 @@ function tickOperations(world: World, base: number): void {
       continue;
     }
 
-    // Start an op if idle and ready.
+    // Start an op if idle and ready. The mill fires on its dividend alone —
+    // port 1 is the gearing, retained, never staged.
     if (cell.op === null) {
       if (cell.kind === 'successor') {
         // Taps the river: a free zero in, a 1 out. Always ready.
         startOp(world, cell, [VALUE_ZERO]);
+      } else if (cell.kind === 'mill') {
+        if (cell.operands[0] !== null) {
+          const dividend = cell.operands[0];
+          cell.operands[0] = null;
+          startOp(world, cell, [dividend]);
+        }
       } else if (cell.operands.length > 0 && cell.operands.every((o) => o !== null)) {
         const inputs = cell.operands as Value[];
         cell.operands = new Array(cell.operands.length).fill(null);
@@ -690,32 +731,32 @@ function tickOperations(world: World, base: number): void {
       // the write advances at full speed only when the ink flows
       cell.op.elapsed += cell.op.amplifier ? throttle : 1;
       if (opSatisfied(cell.op)) {
-        for (const e of cell.op.emits) emit(world, cell, e.portIndex, e.value);
+        for (const e of cell.op.emits) emitMany(world, cell, e.portIndex, e.value, e.count ?? 1);
         cell.op = null;
       }
     }
   }
 }
 
-/** The Mill's additive split: N equal pieces summing to the input (conserved).
- *  Pieces below value 1 aren't worth splitting further — pass through. */
-function millEmits(v: Value): { portIndex: number; value: Value }[] {
+/** The divisor-mill's split: ⌈divisor⌉ equal pieces summing to the input
+ *  (conserved — partition, not arithmetic division; the mill never prints or
+ *  destroys score). Pieces below value 1 aren't worth cutting — pass through.
+ *  The piece COUNT is unbounded by rule: the limit is the write-time of
+ *  emitting that many numerals (scale-invariant; see MILL_DEFAULT_DIVISOR). */
+function millEmits(v: Value, divisor: Decimal): { portIndex: number; value: Value; count?: number }[] {
   const mag = valueMagnitude(v);
-  if (mag.lte(Decimal.dOne)) return [{ portIndex: 0, value: v }];
-  // Aim for ~MILL_TARGET_GRADE per piece; cap the count so we never explode.
-  const want = mag.div(MILL_TARGET_GRADE).ceil().toNumber();
-  const count = Math.max(2, Math.min(MILL_MAX_PIECES, Number.isFinite(want) ? want : MILL_MAX_PIECES));
-  const piece = mag.div(count);
-  const out: { portIndex: number; value: Value }[] = [];
-  for (let i = 0; i < count; i++) out.push({ portIndex: 0, value: { kind: 'real', n: piece } });
-  return out;
+  const n = Decimal.max(new Decimal(2), divisor.floor());
+  if (mag.div(n).lt(Decimal.dOne)) return [{ portIndex: 0, value: v }]; // too fine a cut — refuse to dust
+  const count = n.toNumber();
+  if (!Number.isFinite(count)) return [{ portIndex: 0, value: v }]; // a divisor beyond counting is no gear at all
+  return [{ portIndex: 0, value: { kind: 'real', n: mag.div(n) }, count }];
 }
 
 function startOp(world: World, cell: SimCell, inputs: Value[]): void {
-  let emits: { portIndex: number; value: Value }[];
+  let emits: { portIndex: number; value: Value; count?: number }[];
   if (cell.kind === 'mill') {
-    // Liquefy: split the input into a graded fuel stream (score-conserved).
-    emits = millEmits(inputs[0]);
+    // Partition: split the dividend by the retained gear (score-conserved).
+    emits = millEmits(inputs[0], cell.millDivisor);
   } else if (isOperator(cell.kind)) {
     emits = operate(cell.kind, inputs).emits.map((e) => ({ portIndex: e.portIndex, value: e.value }));
   } else {
@@ -771,12 +812,21 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
     }
   }
   // WRITE-TIME FLOOR: even a fully paid op must spend the ticks to WRITE its
-  // output's digits. Fuel buys down the work; it cannot buy ink speed.
+  // output's digits. Fuel buys down the work; it cannot buy ink speed. A
+  // multi-piece emit (the mill) writes EVERY numeral — that per-piece cost is
+  // the scale-invariant divisor limit: ÷16 is quick, ÷10⁶ takes a million
+  // numerals' worth of ticks. Cascades pipeline; giant gears serialize.
   let minTicks = 0;
   if (world.tuning.writeSpeed > 0 && emits.length) {
+    let totalDigits = Decimal.dZero;
     let maxDigits = Decimal.dZero;
-    for (const e of emits) maxDigits = Decimal.max(maxDigits, magnitudeDigits(e.value));
-    minTicks = maxDigits.div(world.tuning.writeSpeed).ceil().toNumber(); // Infinity for towers — that's tet-era ink tech's problem
+    for (const e of emits) {
+      const d = magnitudeDigits(e.value);
+      maxDigits = Decimal.max(maxDigits, d);
+      totalDigits = totalDigits.add(d.mul(e.count ?? 1));
+    }
+    const written = cell.kind === 'mill' ? totalDigits : maxDigits;
+    minTicks = written.div(world.tuning.writeSpeed).ceil().toNumber(); // Infinity for towers — that's tet-era ink tech's problem
   }
   cell.op = {
     heldInputs: inputs,
@@ -792,6 +842,28 @@ function startOp(world: World, cell: SimCell, inputs: Value[]): void {
     elapsed: 0,
     minTicks,
   };
+}
+
+/** Route an emitted block: into an attached empty pipe, else the loose pool.
+ *  A multi-piece emit (the mill's stack) fills each empty attached pipe with
+ *  one piece and piles the remainder loose beside the cell — the realistic
+ *  "heap next to the machine" the next firings keep topping up. */
+function emitMany(world: World, cell: SimCell, port: number, value: Value, count: number): void {
+  if (count <= 1) {
+    emit(world, cell, port, value);
+    return;
+  }
+  let remaining = count;
+  for (const pipe of world.pipes.values()) {
+    if (remaining <= 0) break;
+    if (pipe.fromCell !== cell.id || pipe.fromPort !== port || pipe.inFlight !== null) continue;
+    pipe.inFlight = { value, work: pipedTransitWork(world, pipe, value), progress: Decimal.dZero };
+    remaining -= 1;
+  }
+  world.produced += remaining;
+  world.peakMagnitude = Decimal.max(world.peakMagnitude, valueMagnitude(value));
+  if (remaining > 0) pushLoose(world, value, cell.x + OUTPUT_SPILL_OFFSET, cell.y, remaining);
+  cell.outputStalled = false;
 }
 
 /** Route an emitted block: into an attached empty pipe, else the loose pool. */
@@ -846,8 +918,9 @@ function deliver(world: World, pipe: SimPipe, value: Value): void {
     pushLoose(world, value, 0, 0);
     return;
   }
-  // Any pipe INTO a warehouse is a deposit — stockpile it (no operand staging).
-  if (dest.kind === 'warehouse') {
+  // Any pipe INTO a warehouse or ledger is a deposit — stockpile it (no
+  // operand staging). The ledger's store is where upkeep is paid from.
+  if (dest.kind === 'warehouse' || dest.kind === 'ledger') {
     depositToStore(dest, value);
     pipe.stalled = false;
     return;

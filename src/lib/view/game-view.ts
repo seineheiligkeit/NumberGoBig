@@ -99,6 +99,7 @@ const GLYPH: Record<CellKind, string> = {
   mill: 'M',
   accelerator: '»',
   warehouse: 'W',
+  ledger: '§',
 };
 
 // --- Per-entity visual caches ----------------------------------------------
@@ -377,7 +378,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   let shiftHeld = false;
   // The canonical toolbar order — hotkeys 1–8 map to the UNLOCKED tools in this
   // order (matching what the shelf displays). Mirrored from the store.
-  const TOOL_ORDER: Tool[] = ['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'pipe'];
+  const TOOL_ORDER: Tool[] = ['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'ledger', 'pipe'];
   let unlockedList: Tool[] = [];
   const unsubUnlocked = unlockedTools.subscribe((l) => (unlockedList = TOOL_ORDER.filter((t) => l.includes(t))));
   const SPEED_STEPS = [0, 1, 3, 10, 30];
@@ -521,9 +522,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     addition: 'plumbing — consolidates small numbers into fewer, larger operands',
     multiplication: 'amplifier — the product is score AND future fuel',
     exponentiation: 'the jump operator — demands working notes (show your work)',
-    mill: 'splits a block into ≤16 equal pieces, value conserved — the note right-sizer',
+    mill: 'partitions a block into ÷gear equal pieces, value conserved — feed port 2 a number to re-gear',
     accelerator: 'a power plant — its charge carries blocks on covered pipes',
     warehouse: 'a stockpile — pipes deposit; output pipes withdraw largest-first',
+    ledger: 'the tax office — upkeep is paid from its store; an empty ledger slows the machinery',
   };
 
   /** Largest op-work this block one-shots under the overpay law (the grade-fit
@@ -563,7 +565,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       } else if (c.kind === 'accelerator') {
         lines.push({ k: 'charge', v: formatScore(c.charge) });
         lines.push({ k: 'carries', v: c.charge.gt(1) ? `blocks ≤ ${formatScore(c.charge)} on covered pipes` : 'nothing (feed it)' });
-      } else if (c.kind === 'warehouse') {
+      } else if (c.kind === 'warehouse' || c.kind === 'ledger') {
         let n = 0;
         let biggest = valueOf(0);
         for (const e of c.store) {
@@ -571,18 +573,26 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           if (valueMagnitude(e.value).gt(valueMagnitude(biggest))) biggest = e.value;
         }
         lines.push({ k: 'stockpile', v: n === 0 ? 'empty' : `${n} blocks · ≤ ${formatScore(valueMagnitude(biggest))}` });
+        if (c.kind === 'ledger') {
+          lines.push({ k: 'rent due', v: world.inkDemand.gt(0) ? `${formatScore(world.inkDemand)}/s` : 'nothing (yet)' });
+          lines.push({ k: 'ink coverage', v: `${Math.round(world.inkCoverage * 100)}%` });
+          if (world.inkDemand.gt(0))
+            lines.push({ k: 'pays with', v: `blocks ≤ ${formatScore(world.inkDemand.mul(world.tuning.upkeepBandRatio))}` });
+        }
         const wid = c.id;
+        const actions = [
+          { label: 'withdraw largest', run: (): void => void withdrawFromWarehouse(world, wid) },
+        ];
+        if (c.kind === 'warehouse')
+          actions.push({ label: 'collect nearby', run: () => {
+              const got = collectNearby(world, wid);
+              if (got > 0) note(`Swept ${got} loose block${got === 1 ? '' : 's'} into the stockpile.`);
+            } });
         inspectorStore.set({
           title: GLYPH[c.kind] + '  ' + c.kind,
           role: CELL_ROLE[c.kind] ?? '',
           lines,
-          actions: [
-            { label: 'withdraw largest', run: () => withdrawFromWarehouse(world, wid) },
-            { label: 'collect nearby', run: () => {
-                const got = collectNearby(world, wid);
-                if (got > 0) note(`Swept ${got} loose block${got === 1 ? '' : 's'} into the stockpile.`);
-              } },
-          ],
+          actions,
         });
         return;
       } else if (c.op) {
@@ -893,10 +903,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
       // more, or carry it off). Feels right for a pile of fuel/operands.
       const stack = takeLooseById(world, id);
       if (stack) {
-        // Dropping a pile onto a warehouse stockpiles the WHOLE stack (de-clutter).
+        // Dropping a pile onto a warehouse/ledger stockpiles the WHOLE stack.
         const destCell = world.cells.get(target.cellId);
         if (destCell && destCell.kind === 'warehouse') {
           depositToWarehouse(world, target.cellId, stack.value, stack.count);
+          return;
+        }
+        if (destCell && destCell.kind === 'ledger') {
+          for (let k = 0; k < stack.count; k++) feedOperand(world, target.cellId, 0, stack.value);
           return;
         }
         let consumed = true;
@@ -968,7 +982,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     const fv = valueMagnitude(value);
     for (const cell of world.cells.values()) {
       if (!cell.built) continue;
-      if (cell.kind === 'accelerator' || cell.kind === 'warehouse') {
+      if (cell.kind === 'accelerator' || cell.kind === 'warehouse' || cell.kind === 'ledger') {
         // Whole-body sinks: always-willing drop targets.
         dashedRect(dragHintG, cell.x - CELL_W / 2 - 5, cell.y - CELL_H / 2 - 5, CELL_W + 10, CELL_H + 10);
         continue;
@@ -982,7 +996,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     dragHintG.stroke({ color: GRAPHITE, width: 1.4, alpha: 0.55 });
     // Fuel sockets second, color-split by acceptance.
     for (const cell of world.cells.values()) {
-      if (!cell.built || cell.kind === 'accelerator' || cell.kind === 'warehouse') continue;
+      if (!cell.built || cell.kind === 'accelerator' || cell.kind === 'warehouse' || cell.kind === 'ledger') continue;
       if (!cell.op) continue; // idle cells bounce fuel — no invitation
       const L = portLayout(cell.kind);
       const fx = cell.x + L.fuel.x;
@@ -1308,7 +1322,7 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
     // A readout line below the cell — accelerator boost or warehouse contents.
     let halo: Graphics | null = null;
     let info: Text | null = null;
-    if (cell.kind === 'accelerator' || cell.kind === 'warehouse') {
+    if (cell.kind === 'accelerator' || cell.kind === 'warehouse' || cell.kind === 'ledger' || cell.kind === 'mill') {
       info = new Text({ text: '', style: { fontFamily: PENCIL_FONT_FAMILY, fontSize: 14, fill: GRAPHITE } });
       info.anchor.set(0.5);
       info.position.set(0, CELL_H / 2 + 16);
@@ -1518,6 +1532,22 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         if (!biggest || valueMagnitude(e.value).gt(valueMagnitude(biggest))) biggest = e.value;
       }
       vis.info.text = n === 0 ? 'empty' : `${n} · ≤${formatScore(valueMagnitude(biggest!))}`;
+      return;
+    }
+
+    // Mill: the gear line (÷N). The op ghost/meter still run below it.
+    if (cell.kind === 'mill' && vis.info) {
+      vis.info.text = `÷${formatScore(cell.millDivisor)}`;
+    }
+
+    // Ledger: the rent line — coverage tells the whole story at a glance.
+    if (cell.kind === 'ledger' && vis.info) {
+      if (world.inkDemand.lte(0)) vis.info.text = 'no rent due';
+      else {
+        let n = 0;
+        for (const e of cell.store) n += e.count;
+        vis.info.text = `rent ${formatScore(world.inkDemand)}/s · ink ${Math.round(world.inkCoverage * 100)}% · ${n} held`;
+      }
       return;
     }
 
@@ -1911,11 +1941,14 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
           unbuilt++;
           continue;
         }
-        if (c.kind === 'warehouse' || c.kind === 'accelerator' || c.kind === 'successor') continue;
+        if (c.kind === 'warehouse' || c.kind === 'accelerator' || c.kind === 'successor' || c.kind === 'ledger')
+          continue;
         if (!c.op) idleOps++;
         else if (c.op.amplifier && c.recentBurn < 0.05) crawling++;
       }
       const bottleneckParts: string[] = [];
+      if (world.tuning.upkeepCoeff > 0 && world.inkDemand.gt(0) && world.inkCoverage < 0.75)
+        bottleneckParts.push(`ink at ${Math.round(world.inkCoverage * 100)}% — the ledger runs dry`);
       if (idleOps > 0) bottleneckParts.push(`${idleOps} idle for operands`);
       if (crawling > 0) bottleneckParts.push(`${crawling} crawling unfuelled`);
       // Windowed per-game-second rates (≥2 ticks between samples; survive pause).
@@ -1952,6 +1985,10 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
         scoreRate: lastScoreRate,
         produceRate: lastProduceRate,
         bottleneck: bottleneckParts.join(' · '),
+        ink:
+          world.tuning.upkeepCoeff > 0 && world.inkDemand.gt(0)
+            ? `${formatScore(world.inkDemand)}/s · ${Math.round(world.inkCoverage * 100)}% covered`
+            : '',
       });
       refreshInspector(); // the open card tracks live state
       // Toolbar build-cost previews (U1.6c): the next cell of each kind costs
@@ -2070,11 +2107,12 @@ export async function setupGameView(host: HTMLElement): Promise<GameViewHandle> 
   /** Clear, then build a named factory snapshot and frame it. */
   function loadPreset(key: string): void {
     reset();
+    world.tuning = GAME_TUNING; // a preset may switch rule-sets (ink district) — start each from the house rules
     const preset = PRESETS.find((p) => p.key === key);
     if (!preset) return;
     preset.build(world);
     // A loaded factory: unlock the whole toolbar so you can extend it freely.
-    unlockedTools.set(['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'pipe']);
+    unlockedTools.set(['successor', 'addition', 'multiplication', 'exponentiation', 'mill', 'accelerator', 'warehouse', 'ledger', 'pipe']);
     note(`Loaded snapshot: ${preset.label}.`);
     frameWorld();
   }
@@ -2202,8 +2240,8 @@ function drawPortMarkers(g: Graphics, kind: CellKind): void {
     g.circle(op.x, op.y, PORT_R).stroke({ color: GRAPHITE, width: 1.2, alpha: 0.6 });
   }
   // Fuel socket — a small open square at the bottom (distinct from round operands).
-  // Warehouses have no fuel port (their one input is the deposit operand).
-  if (kind !== 'warehouse') {
+  // Warehouses/ledgers have no fuel port (their one input is the deposit operand).
+  if (kind !== 'warehouse' && kind !== 'ledger') {
     g.rect(L.fuel.x - 9, L.fuel.y - 9, 18, 18).stroke({ color: GRAPHITE, width: 1.1, alpha: 0.5 });
   }
   // Output nub (not for the Mill's many-piece output — still useful as a hint).

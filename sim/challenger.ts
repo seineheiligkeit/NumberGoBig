@@ -387,6 +387,7 @@ export function runChallenger(
   const world = createWorld(T, { stacking: true });
   const hands: number[] = [];
   let millId: number | null = null;
+  let ledgerId: number | null = null; // the tax office (ink upkeep)
   let handAdder: number | null = null; // the machining bench (unified bills)
 
   // Backbone builder; `run` either executes immediately (the pre-built
@@ -459,6 +460,11 @@ export function runChallenger(
       r2(() => {
         millId = placeCell(world, 'mill', 1400, 260); // bills need right-sizing early
       });
+      if (T.upkeepCoeff > 0) {
+        r2(() => {
+          ledgerId = placeCell(world, 'ledger', 1400, 380); // the rent comes due past 10⁶
+        });
+      }
     }
     if (useExp) {
       // exp arrives when its first bill (1e6) is plausibly machinable —
@@ -737,8 +743,8 @@ export function runChallenger(
     let biM: Decimal | null = null;
     for (let i = 0; i < world.pool.length; i++) {
       const v = mag(world.pool[i].value);
-      // oversized for the band, but within 3 mill passes of it
-      if (v.gt(sStar) && v.lte(sStar.mul(4096)) && (biM === null || v.lt(biM))) {
+      // oversized for the band, but ONE ÷16 pass lands its pieces inside it
+      if (v.gt(sStar) && v.lte(sStar.mul(16)) && (biM === null || v.lt(biM))) {
         bi = i;
         biM = v;
       }
@@ -751,6 +757,51 @@ export function runChallenger(
       return false;
     }
     return true;
+  }
+
+  /** Fund the tax office: keep the ledger stocked with ~a minute of rent in
+   *  in-band blocks. One action deposits a WHOLE pool stack (mirrors the
+   *  player's drag-drop), so a healthy small-number economy covers the ink
+   *  with a few actions per minute — the cost of holding wealth is real but
+   *  never frantic. Largest-in-band stack first (fewest trips). */
+  function fundLedger(): boolean {
+    if (T.upkeepCoeff <= 0 || ledgerId === null) return false;
+    const led = world.cells.get(ledgerId);
+    if (!led || !led.built || world.inkDemand.lte(0)) return false;
+    const cap = world.inkDemand.mul(T.upkeepBandRatio);
+    let held = Decimal.dZero;
+    for (const e of led.store) {
+      const m = mag(e.value);
+      if (m.lte(cap)) held = held.add(m.mul(e.count));
+    }
+    if (held.gte(world.inkDemand.mul(60))) return false; // a minute buffered — enough
+    // The rent must never eat a reserved note: skip blocks inside any active
+    // scaffold/bill/mint band (rent and launch notes COMPETE for the same
+    // denominations — that contention is the game; this is the arbitration).
+    const { reserves, mintBand } = currentReserves();
+    const isReserved = (m: Decimal): boolean => {
+      if (mintBand && m.gte(mintBand.min) && m.lte(mintBand.cap)) return true;
+      return reserves.some((r) => m.gte(r.min) && m.lte(r.cap));
+    };
+    let bi = -1;
+    let best = Decimal.dZero; // stack VALUE (magnitude × count) — biggest deposit per action
+    for (let i = 0; i < world.pool.length; i++) {
+      const m = mag(world.pool[i].value);
+      if (m.lt(Decimal.dOne) || m.gt(cap) || isReserved(m)) continue;
+      const worth = m.mul(world.pool[i].count ?? 1);
+      if (bi < 0 || worth.gt(best)) {
+        bi = i;
+        best = worth;
+      }
+    }
+    if (bi < 0) return false;
+    const stack = world.pool[bi];
+    world.pool.splice(bi, 1);
+    const ok = act(() => {
+      for (let k = 0; k < (stack.count ?? 1); k++) feedOperand(world, ledgerId!, 0, stack.value);
+    });
+    if (!ok) world.pool.push(stack); // out of budget — restore untouched
+    return ok;
   }
 
   /** Pay outstanding MATERIAL bills (unified law): a one-block deposit in the
@@ -991,6 +1042,13 @@ export function runChallenger(
         }
       }
       if (acted) continue;
+      // 1.5) the rent: an underfunded ledger throttles everything — top it up.
+      // AFTER working ops: a started mandatory op holds operands hostage (a
+      // deadlock if starved); a rent dip is merely a throttle (recoverable).
+      if (fundLedger()) {
+        acted = true;
+        continue;
+      }
       // 2) start the globally best affordable op on a matching idle hand cell
       if (startBest()) acted = true;
       // 3) campaign stocking: mill an oversized block into in-band notes

@@ -23,9 +23,10 @@
     { tool: 'addition', label: '+  Addition', desc: 'Plumbing: consolidates small numbers into fewer, larger operands.' },
     { tool: 'multiplication', label: '×  Multiplication', desc: 'The amplifier: the product is score AND future fuel.' },
     { tool: 'exponentiation', label: '^  Exponentiation', desc: 'The jump operator: a^b. Big jumps demand working notes — show your work.' },
-    { tool: 'mill', label: 'M  Mill', desc: 'Splits a block into ≤16 equal pieces (value conserved) — right-sizes fuel and notes.' },
+    { tool: 'mill', label: 'M  Mill', desc: 'Partitions a block into ÷gear equal pieces (value conserved). Feed port 2 a number to re-gear it.' },
     { tool: 'accelerator', label: '»  Accelerator', desc: 'A power plant: its charge carries blocks on covered pipes. Feed it to keep logistics flowing.' },
     { tool: 'warehouse', label: 'W  Warehouse', desc: 'A stockpile: pipes deposit; output pipes withdraw largest-first. Click it for hand-verbs.' },
+    { tool: 'ledger', label: '§  Ledger', desc: 'The tax office: upkeep is paid from its store. Keep it fed or the machinery slows.' },
     { tool: 'pipe', label: '↳  Pipe', desc: 'Wire an output to a port. Tip: drag straight from an output nub — no tool needed.' },
   ];
 
@@ -75,6 +76,9 @@
       {#if $statsStore.scoreRate}
         <div class="row"><span>Σ rate</span><b>{$statsStore.scoreRate}</b></div>
         <div class="row"><span>production</span><b>{$statsStore.produceRate}</b></div>
+      {/if}
+      {#if $statsStore.ink}
+        <div class="row"><span>ink (rent)</span><b>{$statsStore.ink}</b></div>
       {/if}
       {#if $statsStore.bottleneck}
         <p class="bottleneck">{$statsStore.bottleneck}</p>

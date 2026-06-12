@@ -201,6 +201,9 @@ export interface TimeTuning {
   upkeepFloorDigits: number;
   upkeepBandRatio: number;
   upkeepThrottleFloor: number;
+  /** Curvature of the ink throttle: throttle = floor + (1−floor)·coverage^γ.
+   *  γ=2 makes near-full coverage nearly free and an empty ledger DRAMATIC. */
+  upkeepThrottleGamma: number;
   /** WRITE-TIME FLOOR (digits per tick; 0 = off). An op can never complete
    *  faster than writing its output's digits: minTicks = digits(output)/
    *  writeSpeed. Fuel buys down the WORK, but the cell still has to write the
@@ -271,11 +274,13 @@ export const DEFAULT_TUNING: TimeTuning = {
   scaffoldBand: 64,
   // Ink tax OFF by default (coeff 0). Exploratory shape: free below 7 digits
   // (the 10⁶ pocket-lint floor), payable in blocks up to 16× the demand, and
-  // an underfunded factory crawls at 25% — never 0 (anti-death-spiral).
+  // a continuous quadratic throttle — an underfunded factory crawls at 5%,
+  // never 0 (anti-death-spiral; leaves are never throttled at all).
   upkeepCoeff: 0,
   upkeepFloorDigits: 7,
   upkeepBandRatio: 16,
-  upkeepThrottleFloor: 0.25,
+  upkeepThrottleFloor: 0.05,
+  upkeepThrottleGamma: 2,
   // Write-time floor OFF by default (instant completion stays the baseline
   // until the unified-law experiments dial it in).
   writeSpeed: 0,
@@ -337,6 +342,7 @@ export const UNIFIED_FIRST_BILL: Record<string, number> = {
   multiplication: 16,
   mill: 64,
   warehouse: 256,
+  ledger: 0, // the tax office is never itself taxed into existence
   accelerator: 1024,
   exponentiation: 1e6,
   tetration: 1e12,
@@ -353,6 +359,8 @@ export const UNIFIED_BUILD_TIME: Record<string, number> = {
   mill: 24,
   warehouse: 24,
   accelerator: 24,
+  ledger: 16, // the tax office goes up quickly — the rent is already due
+
   exponentiation: 48,
   tetration: 96,
   pentation: 96,
