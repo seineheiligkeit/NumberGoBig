@@ -144,6 +144,32 @@ machinist / launch director; challenger frozen as the legacy benchmark),
 then produces the natural agent-snapshot presets + arc data the design
 review needs.
 
+**Follow-up 3 (2026-06-12) — THE PLAYER (`sim/player.ts`), the fresh ink-era
+agent + gameplay snapshot presets.** Clean rewrite around a CLAIMS BOARD
+(every need registers {band, amount, prio}: 0 op-notes, 1 bills, 2 rent,
+3 stock; nobody takes a pool block a stricter claim still needs) with four
+subsystems: BUILDER (staged program + reactive widening — one mult per ~2
+frontier digits; pads are pools, not single benches), MACHINIST ("make
+blocks in [a,b]": mill-with-re-gear → mult pair → adder doubling),
+INK KEEPER (a PREPENDED ÷16 mill cascade piped into the Ledger — bulk debris
+first, hand top-ups second), LAUNCH DIRECTOR (apex⁴ plans, full-coverage
+starts only). Hard-won agent rules: take BOTH operands before feeding either
+(a half-fed pad is dead); 2-act moves set `wantBudget` so 1-act spenders
+stand down (at 1 act/s the budget never reaches 2 otherwise); blocked grows
+register their fuel want as a claim (the goal gap that froze v0).
+`INK_TUNING` (unified + write 2 d/s + tax ×1) is the named candidate ruleset
+in `core/time.ts`. **4 h @ 1 act/s: mult 1.9m → ledger 11.6m → mill 12m →
+exp 22.7m → launch 55m → TOWER at 192m (launches 2–6 in three minutes,
+e14→e212), worst ink 18%.** `--snapshots` freezes the run at its landmarks →
+`sim/snapshots/player-*.json` → copied to `src/lib/view/snapshots/` and
+rehydrated as dev presets (Player: first machines / the rent begins / launch
+pads / first launch / the tower) under INK_TUNING. Open findings for the
+next tuning pass: the 55→192m rebuild trough (intrinsic 3-copies pyramid
+cost — is it an era or a desert?); **pace sensitivity is now superlinear**
+(1/3 act/s: exp 5.5 h, ink hit 0%; 1/10: stuck at 4096 — the throttle
+compounds slowness; against the "capped from APM" goal, wants a rent-floor/
+coeff pass); engine mill pieces get a near-integer snap (dust guard).
+
 ## 0a-prev. The original sim-tuning agenda (superseded by the unified law)
 
 1. **Harden the sweep agent, then lock the scaffold values.** The α/C/band

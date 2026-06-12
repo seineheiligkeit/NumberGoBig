@@ -1,0 +1,826 @@
+{
+ "key": "player-launch",
+ "label": "Player: first launch",
+ "blurb": "the first paid leap, notes milled from a second apex",
+ "cells": [
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 0,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 14,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 28,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 42,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 0,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 36,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 0,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 72,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 108,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 36,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 500,
+   "y": 0,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 1100,
+   "y": -160,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1100,
+   "y": -40,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1250,
+   "y": -40,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1400,
+   "y": -40,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1100,
+   "y": 70,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 950,
+   "y": -70,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 560,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 574,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 588,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 602,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 616,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 630,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 644,
+   "built": true
+  },
+  {
+   "kind": "successor",
+   "x": 0,
+   "y": 658,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 560,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 596,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 560,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 632,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 668,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 596,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 500,
+   "y": 560,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 704,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 740,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 632,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 776,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 200,
+   "y": 812,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 350,
+   "y": 668,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 500,
+   "y": 596,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 650,
+   "y": 560,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1100,
+   "y": 80,
+   "built": true
+  },
+  {
+   "kind": "mill",
+   "x": 1100,
+   "y": 200,
+   "built": true,
+   "divisor": 2
+  },
+  {
+   "kind": "ledger",
+   "x": 1500,
+   "y": 320,
+   "built": true,
+   "store": [
+    {
+     "n": "1",
+     "count": 454
+    }
+   ]
+  },
+  {
+   "kind": "mill",
+   "x": 1300,
+   "y": 320,
+   "built": true,
+   "divisor": 16
+  },
+  {
+   "kind": "exponentiation",
+   "x": 1500,
+   "y": -40,
+   "built": true
+  },
+  {
+   "kind": "exponentiation",
+   "x": 1500,
+   "y": 80,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1400,
+   "y": 70,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1100,
+   "y": 180,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 950,
+   "y": 20,
+   "built": true
+  },
+  {
+   "kind": "multiplication",
+   "x": 1250,
+   "y": 180,
+   "built": true
+  },
+  {
+   "kind": "addition",
+   "x": 950,
+   "y": 110,
+   "built": true
+  }
+ ],
+ "pipes": [
+  {
+   "from": 0,
+   "fromPort": 0,
+   "to": 4,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 1,
+   "fromPort": 0,
+   "to": 4,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 2,
+   "fromPort": 0,
+   "to": 4,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 3,
+   "fromPort": 0,
+   "to": 5,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 0,
+   "fromPort": 0,
+   "to": 5,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 1,
+   "fromPort": 0,
+   "to": 5,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 4,
+   "fromPort": 0,
+   "to": 6,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 5,
+   "fromPort": 0,
+   "to": 6,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 2,
+   "fromPort": 0,
+   "to": 7,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 3,
+   "fromPort": 0,
+   "to": 7,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 0,
+   "fromPort": 0,
+   "to": 7,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 1,
+   "fromPort": 0,
+   "to": 8,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 2,
+   "fromPort": 0,
+   "to": 8,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 3,
+   "fromPort": 0,
+   "to": 8,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 7,
+   "fromPort": 0,
+   "to": 9,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 8,
+   "fromPort": 0,
+   "to": 9,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 6,
+   "fromPort": 0,
+   "to": 10,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 9,
+   "fromPort": 0,
+   "to": 10,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 17,
+   "fromPort": 0,
+   "to": 25,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 18,
+   "fromPort": 0,
+   "to": 25,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 19,
+   "fromPort": 0,
+   "to": 25,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 20,
+   "fromPort": 0,
+   "to": 26,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 21,
+   "fromPort": 0,
+   "to": 26,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 22,
+   "fromPort": 0,
+   "to": 26,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 25,
+   "fromPort": 0,
+   "to": 27,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 26,
+   "fromPort": 0,
+   "to": 27,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 23,
+   "fromPort": 0,
+   "to": 28,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 24,
+   "fromPort": 0,
+   "to": 28,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 17,
+   "fromPort": 0,
+   "to": 28,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 18,
+   "fromPort": 0,
+   "to": 29,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 19,
+   "fromPort": 0,
+   "to": 29,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 20,
+   "fromPort": 0,
+   "to": 29,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 28,
+   "fromPort": 0,
+   "to": 30,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 29,
+   "fromPort": 0,
+   "to": 30,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 27,
+   "fromPort": 0,
+   "to": 31,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 30,
+   "fromPort": 0,
+   "to": 31,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 21,
+   "fromPort": 0,
+   "to": 32,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 22,
+   "fromPort": 0,
+   "to": 32,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 23,
+   "fromPort": 0,
+   "to": 32,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 24,
+   "fromPort": 0,
+   "to": 33,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 17,
+   "fromPort": 0,
+   "to": 33,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 18,
+   "fromPort": 0,
+   "to": 33,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 32,
+   "fromPort": 0,
+   "to": 34,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 33,
+   "fromPort": 0,
+   "to": 34,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 19,
+   "fromPort": 0,
+   "to": 35,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 20,
+   "fromPort": 0,
+   "to": 35,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 21,
+   "fromPort": 0,
+   "to": 35,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 22,
+   "fromPort": 0,
+   "to": 36,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 23,
+   "fromPort": 0,
+   "to": 36,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 24,
+   "fromPort": 0,
+   "to": 36,
+   "toPort": -1,
+   "fuel": true
+  },
+  {
+   "from": 35,
+   "fromPort": 0,
+   "to": 37,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 36,
+   "fromPort": 0,
+   "to": 37,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 34,
+   "fromPort": 0,
+   "to": 38,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 37,
+   "fromPort": 0,
+   "to": 38,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 31,
+   "fromPort": 0,
+   "to": 39,
+   "toPort": 0,
+   "fuel": false
+  },
+  {
+   "from": 38,
+   "fromPort": 0,
+   "to": 39,
+   "toPort": 1,
+   "fuel": false
+  },
+  {
+   "from": 43,
+   "fromPort": 0,
+   "to": 42,
+   "toPort": 0,
+   "fuel": false
+  }
+ ],
+ "pool": [
+  {
+   "n": "1",
+   "x": 140,
+   "y": 108,
+   "count": 16
+  },
+  {
+   "n": "1",
+   "x": 140,
+   "y": 560,
+   "count": 47
+  },
+  {
+   "n": "1",
+   "x": 140,
+   "y": 668,
+   "count": 29
+  },
+  {
+   "n": "1",
+   "x": 140,
+   "y": 740,
+   "count": 33
+  },
+  {
+   "n": "1",
+   "x": 140,
+   "y": 812,
+   "count": 27
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 148,
+   "count": 44
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 744,
+   "count": 48
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 672,
+   "count": 67
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 76,
+   "count": 53
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 816,
+   "count": 30
+  },
+  {
+   "n": "16",
+   "x": 590,
+   "y": 560,
+   "count": 2
+  },
+  {
+   "n": "16",
+   "x": 600,
+   "y": 0,
+   "count": 3
+  },
+  {
+   "n": "4",
+   "x": 440,
+   "y": 560,
+   "count": 12
+  },
+  {
+   "n": "4",
+   "x": 440,
+   "y": 0,
+   "count": 5
+  },
+  {
+   "n": "2048",
+   "x": 1200,
+   "y": 200,
+   "count": 1
+  },
+  {
+   "n": "1",
+   "x": 200,
+   "y": 600,
+   "count": 3
+  },
+  {
+   "n": "1024",
+   "x": 1200,
+   "y": 70,
+   "count": 1
+  }
+ ]
+}

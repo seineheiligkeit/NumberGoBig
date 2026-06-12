@@ -19,8 +19,17 @@
  * so the correct number of build slots comes along for free.
  */
 
-import { placeCell, placePipe, feedOperand, addLoose, depositToWarehouse, type World } from '../../../core/engine';
-import { valueOf } from '../../../core/value';
+import { placeCell, placePipe, feedOperand, addLoose, depositToWarehouse, type World, type CellKind } from '../../../core/engine';
+import { INK_TUNING } from '../../../core/time';
+import { valueOf, type Value } from '../../../core/value';
+import Decimal from 'break_eternity.js';
+// The player agent's own gameplay, frozen at its landmark moments
+// (`node sim/player.ts --snapshots` → sim/snapshots/ → copied here).
+import snapMill from './snapshots/player-mill.json';
+import snapLedger from './snapshots/player-ledger.json';
+import snapExp from './snapshots/player-exp.json';
+import snapLaunch from './snapshots/player-launch.json';
+import snapTower from './snapshots/player-tower.json';
 
 const BUILT = { built: true } as const;
 
@@ -67,6 +76,42 @@ export interface Preset {
   label: string;
   blurb: string;
   build(world: World): void;
+}
+
+/** A serialized world from the player agent (`sim/player.ts --snapshots`). */
+interface Snapshot {
+  key: string;
+  label: string;
+  blurb: string;
+  cells: { kind: string; x: number; y: number; built: boolean; divisor?: number; store?: { n: string; count: number }[] }[];
+  pipes: { from: number; fromPort: number; to: number; toPort: number; fuel: boolean }[];
+  pool: { n: string; x: number; y: number; count: number }[];
+}
+
+const realOf = (s: string): Value => ({ kind: 'real', n: new Decimal(s) });
+
+/** Rehydrate an agent snapshot under the INK ERA rules — what the player
+ *  agent's factory actually looked like at that moment of its run. */
+function snapshotPreset(snap: Snapshot): Preset {
+  return {
+    key: snap.key,
+    label: snap.label,
+    blurb: snap.blurb,
+    build(world) {
+      world.tuning = INK_TUNING;
+      const ids: number[] = [];
+      for (const c of snap.cells) {
+        const id = placeCell(world, c.kind as CellKind, c.x, c.y, { built: c.built });
+        ids.push(id);
+        const cell = world.cells.get(id)!;
+        if (c.divisor) cell.millDivisor = new Decimal(c.divisor);
+        if (c.built) cell.materialNeed = null; // snapshots capture paid, standing machinery
+        if (c.store) for (const e of c.store) cell.store.push({ value: realOf(e.n), count: e.count });
+      }
+      for (const pi of snap.pipes) placePipe(world, ids[pi.from], pi.fromPort, ids[pi.to], pi.toPort, { fuel: pi.fuel });
+      for (const b of snap.pool) addLoose(world, realOf(b.n), b.x, b.y, b.count);
+    },
+  };
 }
 
 export const PRESETS: Preset[] = [
@@ -147,15 +192,10 @@ export const PRESETS: Preset[] = [
     label: 'Ink district',
     blurb: 'THE UNIFIED LAW live: the ink tax is ON — a mill cascade feeds the Ledger; starve it and the writes slow',
     build(world) {
-      // This preset switches the running world onto the unified-law rules so
-      // the new machinery actually operates: tier-indexed needs, the write-time
+      // This preset switches the running world onto the INK ERA rules so the
+      // new machinery actually operates: tier-indexed needs, the write-time
       // floor (2 digits/s), and the ink tax (×1, paid from the Ledger).
-      world.tuning = {
-        ...world.tuning,
-        unifiedCosts: true,
-        writeSpeed: 2,
-        upkeepCoeff: 1,
-      };
+      world.tuning = INK_TUNING;
       // The production base: two fuel trees (the small-number economy).
       fuelBackbone(world, 3, 0, -340);
       fuelBackbone(world, 2, 0, 260);
@@ -177,4 +217,10 @@ export const PRESETS: Preset[] = [
       addLoose(world, valueOf(1e9), 1700, -320, 1);
     },
   },
+  // ── The player agent's own run, frozen at its landmarks ───────────────────
+  snapshotPreset(snapMill as Snapshot),
+  snapshotPreset(snapLedger as Snapshot),
+  snapshotPreset(snapExp as Snapshot),
+  snapshotPreset(snapLaunch as Snapshot),
+  snapshotPreset(snapTower as Snapshot),
 ];

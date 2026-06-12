@@ -749,7 +749,12 @@ function millEmits(v: Value, divisor: Decimal): { portIndex: number; value: Valu
   if (mag.div(n).lt(Decimal.dOne)) return [{ portIndex: 0, value: v }]; // too fine a cut — refuse to dust
   const count = n.toNumber();
   if (!Number.isFinite(count)) return [{ portIndex: 0, value: v }]; // a divisor beyond counting is no gear at all
-  return [{ portIndex: 0, value: { kind: 'real', n: mag.div(n) }, count }];
+  // Snap near-integer pieces: Decimal division leaves float dust (…0.000001)
+  // that fractures denominations — stacks stop merging and band tests misfire.
+  let piece = mag.div(n);
+  const r = piece.round();
+  if (r.gt(0) && piece.sub(r).abs().lte(piece.mul(1e-12))) piece = r;
+  return [{ portIndex: 0, value: { kind: 'real', n: piece }, count }];
 }
 
 function startOp(world: World, cell: SimCell, inputs: Value[]): void {

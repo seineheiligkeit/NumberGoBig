@@ -317,6 +317,17 @@ export const UNIFIED_TUNING: TimeTuning = {
   accelChargeCarry: 1,
 };
 
+/** THE INK ERA — the converged candidate ruleset (2026-06-12): the unified
+ *  law + the write-time floor (2 digits/s — a 2,466-digit launch writes for
+ *  ~20 minutes) + the ink tax (×1, paid from the Ledger). This is what the
+ *  player agent plays and what the `inkdistrict` dev preset installs; promote
+ *  to GAME_TUNING only after the cancel-op verb exists. */
+export const INK_TUNING: TimeTuning = {
+  ...UNIFIED_TUNING,
+  writeSpeed: 2,
+  upkeepCoeff: 1,
+};
+
 // --- The unified law's constants -------------------------------------------
 
 /** The universal denomination band ratio: payments live in [need/16, need].
